@@ -673,3 +673,99 @@ Not shipped as a migration — opt in via SQL editor if useful.
 - Signup → onboarding → dashboard completes without an RLS error.
 - Stripe OAuth completes, token row is encrypted and stored, Finance chip reads "Stripe connected" (green) via the client-side status hook.
 - Test-mode Stripe account with no balance transactions renders $0 across `FinanceKpiRow`, `RevenueChart`, `RecentTransactions` — confirming the live-data path runs and the "Sample data" badge is correctly suppressed. `ExpenseBreakdown`, `CashFlow`, `ProfitMargin`, `RevenueVsExpenses` remain sample-data widgets by design (see "Explicitly not built" above).
+
+## Session 5.11 — First Vercel deployment
+
+Getting the same code running on `https://signalgent.vercel.app` after it was verified locally. Three separate issues, each caught in sequence.
+
+### 5.11.1 `middleware.ts` → `proxy.ts` (Next.js 16 file-convention rename)
+
+Next.js 16 deprecated the `middleware.ts` file convention and replaced it with `proxy.ts`. Critically, they default to different runtimes:
+
+- `middleware.ts` → **Edge runtime** (Web APIs only; no `node:*` modules, no Node `Buffer`, no most of `@supabase/ssr`'s transitive deps)
+- `proxy.ts` → **Node.js runtime** (full Node APIs available; `runtime` config option is not settable on proxy.ts — Node is fixed)
+
+The dev server had been emitting this warning since the Next 16 upgrade:
+
+> The "middleware" file convention is deprecated. Please use "proxy" instead.
+
+First Vercel build failed with:
+
+```
+The Edge Function "middleware" is referencing unsupported modules:
+ - __vc__ns__/0/middleware.js: @lib/supabase/middleware.ts
+```
+
+Fix: rename the root `middleware.ts` to `proxy.ts` and rename the exported function `middleware` → `proxy`. Body identical; matcher identical. The helper file at `lib/supabase/middleware.ts` (which `proxy.ts` imports from) keeps its name — the Next.js file convention only treats the *root-level* file specially.
+
+Next.js ships a codemod for this: `npx @next/codemod@canary middleware-to-proxy .`. Doing it by hand is also a two-line diff.
+
+### 5.11.2 Vercel Framework Preset (the one that caused hours of confusion)
+
+After the `proxy.ts` rename, Vercel reported **Status: Ready** and the Build Logs showed every route generated correctly (`/login`, `/signup`, `/dashboard`, etc.). But every URL — the main alias, the deployment-pinned hash URL, every path — returned Vercel's platform `404: NOT_FOUND`. Runtime logs were empty because no function was being invoked.
+
+Root cause: Vercel's **Framework Preset** was not set to `Next.js` for the project. It was set to "Other" / generic. Vercel ran `npm run build`, produced Next.js's `.next/` output, but had no routing metadata for what to do with it. Requests hit Vercel's edge, matched no registered route, and returned 404.
+
+The misleading part: the build *succeeded* because `npm run build` exited 0. There's no build-time check that the preset matches the tooling. This is a silent misconfiguration.
+
+Fix: **Vercel dashboard → Project → Settings → General → Framework Preset → Next.js → Save → Redeploy.** Environment variable changes don't auto-reapply to existing deployments either — any time you change preset, framework, envs, or build command, you need a fresh deploy for it to take effect.
+
+**Lesson for fresh Vercel projects:** verify the preset immediately after connecting the Git repo, before adding any env vars or debugging anything else. It's the first thing to check when seeing blanket 404s on a successful build.
+
+### 5.11.3 Defensive `proxy.ts` (can't take down the whole site)
+
+The original `proxy.ts` (matching the Session 5 code drop for `middleware.ts`) called `updateSession(request)` with no try/catch. `updateSession` calls `supabase.auth.getUser()` which makes a network request to Supabase's `/auth/v1/user` endpoint. If Supabase is unreachable — transient outage, DNS hiccup, rate limit — the unhandled promise rejection propagates up and Vercel's Node runtime returns 500 for every request until it recovers.
+
+The final `proxy.ts` wraps the call:
+
+```ts
+export async function proxy(request: NextRequest) {
+  try {
+    return await updateSession(request)
+  } catch (err) {
+    console.error('[proxy] updateSession failed, falling through:', err)
+    return NextResponse.next({ request })
+  }
+}
+```
+
+If Supabase is down, the proxy falls through instead of crashing. The redirect-based URL gating stops working (an unauthenticated user could hit `/dashboard` directly), but the pages themselves still enforce access server-side — `/api/onboarding` validates the session before touching the DB, and every client-side Supabase query is RLS-gated. The degraded mode is "pages render empty instead of erroring" — a vastly better failure mode than "every page 500s."
+
+### 5.11.4 Diagnostic detour worth recording
+
+During 5.11.2 debugging, I also pushed a temporary `next build --webpack` to rule out a Turbopack-on-Vercel issue (documented escape hatch in Next.js 16). It wasn't the cause; the fix was the preset. Reverted back to Turbopack once the preset was corrected. Next.js 16 ships Turbopack as the default production builder — on Vercel (which ships Turbopack itself) this is the fast, supported path. Only fall back to `--webpack` if a real incompatibility turns up.
+
+### 5.11.5 Environment variables on Vercel
+
+All 8 envs from local `.env.local` must be set in **Settings → Environment Variables** for all three environments (Production, Preview, Development). Same values as local, with two exceptions:
+
+| Var | Local value | Vercel value |
+|---|---|---|
+| `NEXT_PUBLIC_APP_URL` | `http://localhost:3001` | `https://signalgent.vercel.app` |
+| *(everything else)* | *(same)* | *(same)* |
+
+And in Stripe Dashboard → Connect → Onboarding options → Redirects, register **both**:
+
+- `http://localhost:3001/api/integrations/stripe/callback` (local dev)
+- `https://signalgent.vercel.app/api/integrations/stripe/callback` (prod)
+
+Stripe requires exact-match, so both must be present before either flow works.
+
+### 5.11.6 Commits landed during deployment
+
+| Commit | Purpose |
+|---|---|
+| `e2950b4` | Session 5 code drop + local fixes (RLS, status enum, onboarding service route) |
+| `92f2c2b` | Merge commit joining local history with GitHub's initial stub README |
+| `046c94d` | Rename `middleware.ts` → `proxy.ts` (fixes Edge Function build error) |
+| `3570dcb` | *Diagnostic, later reverted:* remove `proxy.ts` entirely to isolate the 404 cause |
+| `e74de26` | *Diagnostic, later reverted:* switch build to `next build --webpack` |
+| `7737c95` | Restore Turbopack + restore `proxy.ts` with defensive try/catch (final state) |
+
+### 5.11.7 Verified live
+
+- `https://signalgent.vercel.app/` → 307 → `/login` (proxy gating)
+- `https://signalgent.vercel.app/login` → renders login page
+- Signup → onboarding → dashboard works end-to-end against the production Supabase project
+- Stripe Connect OAuth completes from prod URL with the production callback registered
+- Finance widgets flip "Sample data" → live when a test-mode Stripe account is connected
