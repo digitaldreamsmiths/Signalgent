@@ -1,18 +1,137 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts'
 import { COMMS_MOCK } from '@/lib/widgets/mock-data'
+import { useCommunicationsSnapshot } from '@/contexts/communications-snapshot-context'
+import { useWidgetLiveIndicator } from '../widget-live-indicator'
+import type {
+  CommunicationsMessage,
+  CommunicationsSnapshot,
+} from '@/lib/integrations/comms/model'
 
 const m = COMMS_MOCK
 
+// ------------------------------------------------------------
+// helpers
+// ------------------------------------------------------------
+
+function formatReceivedAt(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  const now = new Date()
+  const sameDay =
+    d.getUTCFullYear() === now.getUTCFullYear() &&
+    d.getUTCMonth() === now.getUTCMonth() &&
+    d.getUTCDate() === now.getUTCDate()
+  if (sameDay) {
+    return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+  }
+  const diffDays = Math.floor((now.getTime() - d.getTime()) / (24 * 60 * 60 * 1000))
+  if (diffDays === 1) return 'Yesterday'
+  if (diffDays < 7) return d.toLocaleDateString(undefined, { weekday: 'short' })
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+}
+
+function senderLabel(msg: CommunicationsMessage): string {
+  return msg.sender.name?.trim() || msg.sender.email
+}
+
+// ------------------------------------------------------------
+// EmailClient
+// ------------------------------------------------------------
+
 export function EmailClient() {
+  const { snapshot } = useCommunicationsSnapshot()
+  const { markLive } = useWidgetLiveIndicator()
+
+  useEffect(() => {
+    if (snapshot) markLive()
+  }, [snapshot, markLive])
+
+  if (snapshot && snapshot.messages.length > 0) {
+    return <EmailClientLive snapshot={snapshot} />
+  }
+  return <EmailClientMock />
+}
+
+function EmailClientLive({ snapshot }: { snapshot: CommunicationsSnapshot }) {
+  const [active, setActive] = useState(0)
+  const messages = snapshot.messages
+  const selected = messages[Math.min(active, messages.length - 1)]
+
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, minHeight: 220 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 0, overflow: 'hidden' }}>
+        {messages.map((msg, i) => (
+          <button
+            key={msg.id}
+            onClick={() => setActive(i)}
+            style={{
+              textAlign: 'left',
+              padding: '8px 10px',
+              borderLeft: i === active ? '2px solid #1D9E75' : '2px solid transparent',
+              background: i === active ? 'rgba(255,255,255,0.02)' : 'transparent',
+              borderBottom: '1px solid #272727',
+              cursor: 'pointer',
+              border: 'none',
+              display: 'block',
+              width: '100%',
+            }}
+          >
+            <div style={{ borderLeft: i === active ? '2px solid #1D9E75' : '2px solid transparent', paddingLeft: 8 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: 11, fontWeight: msg.unread ? 600 : 500, color: '#ffffff' }}>
+                  {senderLabel(msg)}
+                </span>
+                <span style={{ fontSize: 9, color: '#999999' }}>{formatReceivedAt(msg.receivedAt)}</span>
+              </div>
+              <div style={{ fontSize: 10, color: '#ffffff', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.7 }}>
+                {msg.subject}
+              </div>
+              <span style={{ fontSize: 8, color: '#5DCAA5', background: '#031a12', borderRadius: 3, padding: '1px 5px', marginTop: 3, display: 'inline-block' }}>
+                {msg.tag}
+              </span>
+            </div>
+          </button>
+        ))}
+      </div>
+
+      <div style={{ padding: '0 8px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div style={{ fontSize: 13, fontWeight: 500, color: '#5DCAA5' }}>{senderLabel(selected)}</div>
+        <div style={{ fontSize: 11, color: '#ffffff', lineHeight: 1.6, opacity: 0.8 }}>
+          <div style={{ marginBottom: 6, fontWeight: 500, opacity: 1 }}>{selected.subject}</div>
+          {selected.snippet || '(no preview available)'}
+        </div>
+        <div style={{ display: 'flex', gap: 6, marginTop: 'auto' }}>
+          <a
+            href={`https://mail.google.com/mail/u/0/#inbox/${selected.id}`}
+            target="_blank"
+            rel="noreferrer"
+            style={{
+              fontSize: 10,
+              background: '#1D9E75',
+              color: '#fff',
+              border: 'none',
+              borderRadius: 5,
+              padding: '4px 10px',
+              textDecoration: 'none',
+            }}
+          >
+            Open in Gmail
+          </a>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function EmailClientMock() {
   const [active, setActive] = useState(0)
   const selected = m.emails[active]
 
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, minHeight: 220 }}>
-      {/* Email list */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 0, overflow: 'hidden' }}>
         {m.emails.map((email, i) => (
           <button
@@ -46,7 +165,6 @@ export function EmailClient() {
         ))}
       </div>
 
-      {/* Preview */}
       <div style={{ padding: '0 8px', display: 'flex', flexDirection: 'column', gap: 10 }}>
         <div style={{ fontSize: 13, fontWeight: 500, color: '#5DCAA5' }}>{selected.sender}</div>
         <div style={{ fontSize: 11, color: '#ffffff', lineHeight: 1.6, opacity: 0.8 }}>
@@ -65,12 +183,40 @@ export function EmailClient() {
   )
 }
 
+// ------------------------------------------------------------
+// ResponseStats
+// ------------------------------------------------------------
+
 export function ResponseStats() {
+  const { snapshot } = useCommunicationsSnapshot()
+  const { markLive } = useWidgetLiveIndicator()
+
+  useEffect(() => {
+    if (snapshot) markLive()
+  }, [snapshot, markLive])
+
+  // Response rate + avg reply time aren't computed yet (null in v1 snapshot).
+  // Fall back to mock for those; keep totalUnread and threadsActive live.
   const stats = [
-    { label: 'Response rate', value: m.responseRate },
-    { label: 'Avg reply time', value: m.avgResponseTime },
-    { label: 'Total unread', value: String(m.totalUnread) },
-    { label: 'Threads active', value: '18' },
+    {
+      label: 'Response rate',
+      value: snapshot?.responseRate != null ? `${snapshot.responseRate}%` : m.responseRate,
+    },
+    {
+      label: 'Avg reply time',
+      value:
+        snapshot?.avgResponseTimeHours != null
+          ? `${snapshot.avgResponseTimeHours.toFixed(1)}h`
+          : m.avgResponseTime,
+    },
+    {
+      label: 'Total unread',
+      value: snapshot != null ? String(snapshot.totalUnread) : String(m.totalUnread),
+    },
+    {
+      label: 'Threads active',
+      value: snapshot != null ? String(snapshot.threadsActive) : '18',
+    },
   ]
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
@@ -84,7 +230,21 @@ export function ResponseStats() {
   )
 }
 
+// ------------------------------------------------------------
+// UnreadSummary
+// ------------------------------------------------------------
+
 export function UnreadSummary() {
+  const { snapshot } = useCommunicationsSnapshot()
+  const { markLive } = useWidgetLiveIndicator()
+
+  useEffect(() => {
+    if (snapshot) markLive()
+  }, [snapshot, markLive])
+
+  // Only the top-line unread count goes live for now. Urgent/Opportunity/
+  // Can-wait buckets require LLM triage, which is deferred.
+  const totalUnread = snapshot != null ? snapshot.totalUnread : m.totalUnread
   const items = [
     { label: 'Urgent', count: m.urgentCount, color: '#e55' },
     { label: 'Opportunity', count: m.opportunityCount, color: '#5DCAA5' },
@@ -92,7 +252,7 @@ export function UnreadSummary() {
   ]
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      <div style={{ fontSize: 20, fontWeight: 500, color: '#5DCAA5', marginBottom: 4 }}>{m.totalUnread} unread</div>
+      <div style={{ fontSize: 20, fontWeight: 500, color: '#5DCAA5', marginBottom: 4 }}>{totalUnread} unread</div>
       {items.map((item) => (
         <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <div style={{ width: 8, height: 8, borderRadius: '50%', background: item.color, flexShrink: 0 }} />
@@ -103,6 +263,10 @@ export function UnreadSummary() {
     </div>
   )
 }
+
+// ------------------------------------------------------------
+// PriorityBreakdown — stays mock until we wire LLM triage
+// ------------------------------------------------------------
 
 export function PriorityBreakdown() {
   const data = [

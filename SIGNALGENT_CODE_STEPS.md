@@ -769,3 +769,170 @@ Stripe requires exact-match, so both must be present before either flow works.
 - Signup → onboarding → dashboard works end-to-end against the production Supabase project
 - Stripe Connect OAuth completes from prod URL with the production callback registered
 - Finance widgets flip "Sample data" → live when a test-mode Stripe account is connected
+
+## Session 6 — Gmail Integration (Pass 1)
+
+**Goal**: End-to-end Gmail integration for the communications mode. Replace mock email data with the user's real inbox in the headline widgets. Reuse the Session 5 integration infrastructure verbatim wherever it fits, extend it only where Google's OAuth model diverges from Stripe's.
+
+**Locked scope agreed before build**: Gmail-specific tokens/fetch/normalize/snapshot modules, hardened OAuth routes (connect + callback) shadowing the legacy generic `[service]` handler, status/disconnect flows, connect chip + popover, live-data path for `EmailClient` + live counters in `ResponseStats` + `UnreadSummary`. Deferred: `PriorityBreakdown` (needs LLM triage), response-rate and avg-reply-time computation (needs thread traversal). Legacy generic `[service]/connect` and `[service]/callback` routes kept untouched for Outlook/LinkedIn/Facebook/QuickBooks until those are migrated.
+
+### Architectural continuity from Session 5
+
+Every Session 5 primitive reused without modification:
+- `lib/integrations/crypto.ts` — same AES-256-GCM, same `INTEGRATION_ENCRYPTION_KEY`.
+- `lib/integrations/accounts.ts` — same typed CRUD on `connected_accounts`.
+- `lib/integrations/cache.ts` — same in-memory `CacheStore` interface. Gmail keys are `gmail:snapshot:{companyId}`.
+- `lib/integrations/auth.ts` — `requireCompanyAccess` runs at the top of every new Gmail route, action, and fetcher.
+- `lib/integrations/oauth-state.ts` — same HMAC-SHA256 signed stateless state tokens, same 10-minute TTL. `service: 'gmail'` instead of `'stripe_account'`.
+- `components/widgets/widget-live-indicator.tsx` — widgets still call `markLive()` via effect; `WidgetShell` hides the "Sample data" badge the same way.
+- Provider pattern: a dedicated context (`CommunicationsSnapshotProvider`) loads a normalized snapshot via a server action; widgets branch on `isLive`.
+- Connect is still a plain `<a href={getGmailConnectUrl(companyId)}>` — not a hook method. The hook reads status only.
+- Disconnect is still the four-step flow: provider revoke → mark row disconnected + null tokens → invalidate cache → revalidate paths.
+
+### Divergences from Stripe (real, small)
+
+- **Token refresh.** Google access tokens expire in ~1h. `loadGmailCredentials` checks `token_expires_at`, transparently calls `refreshAccessToken` when within 60s of expiry, and persists the new access token back before returning. Callers always get a usable token. Stripe has no equivalent — its Connect tokens don't expire.
+- **Single scope.** Only `https://www.googleapis.com/auth/gmail.readonly` is requested. The mailbox email address comes from Gmail's own `users.getProfile` endpoint, not a separate `userinfo.email` call. See §6.1 for why this matters.
+- **Cache TTL.** 2 minutes (vs. Stripe's 5). Email feels fresher than revenue; a user expects new mail to show up sooner than a new payout.
+- **Callback redirect** lands on `/communications` (vs. `/finance` for Stripe), and sets `?integration=gmail&status=...` for parity.
+
+### New infrastructure files
+
+| File | Purpose |
+|---|---|
+| `lib/integrations/comms/model.ts` | Normalized `CommunicationsSnapshot` shape: `generatedAt`, `mailbox.emailAddress`, `totalUnread`, `threadsActive`, `responseRate` (nullable), `avgResponseTimeHours` (nullable), `messages`. `CommunicationsMessage` carries `id`, `sender.{name,email}`, `subject`, `snippet`, `receivedAt`, `unread`, `priority: 'urgent' \| 'opportunity' \| 'low'`, `tag`. |
+| `lib/integrations/comms/read.ts` | `'use server'` wrapper around `getCommunicationsSnapshot`. Runs `requireCompanyAccess` first. |
+
+### Gmail-specific files
+
+| File | Purpose |
+|---|---|
+| `lib/integrations/gmail/fetch.ts` | Raw Google OAuth + Gmail REST via `fetch` (no SDK). `buildAuthorizeUrl`, `exchangeCode`, `refreshAccessToken`, `revokeToken`, `getGmailProfile`, `listMessages`, `getMessage`. `GMAIL_SCOPES = 'https://www.googleapis.com/auth/gmail.readonly'` (one scope — see §6.1). Uses `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`. |
+| `lib/integrations/gmail/tokens.ts` | `saveGmailCredentials`, `loadGmailCredentials` (refresh-aware), `loadGmailRefreshToken`, `getGmailAccountRow`, `markGmailDisconnected`, `markGmailError`. Exports `GMAIL_SERVICE = 'gmail'`. The refresh path: if `token_expires_at` is within 60s, call `refreshAccessToken`, persist new access_token + new expiry, return the fresh token. If refresh fails, `markError` and return null so the chip can show a reconnect prompt. |
+| `lib/integrations/gmail/normalize.ts` | `normalizeToSnapshot({ profile, messages, totalUnread, threadsActive })`. Parses RFC 5322 `From` headers into `{name, email}`. Derives priority from Gmail labels: `IMPORTANT` or `STARRED` → `urgent`; `CATEGORY_PROMOTIONS/SOCIAL/UPDATES/FORUMS` → `low`; else `opportunity`. Decodes HTML entities out of snippets. `responseRate` and `avgResponseTimeHours` are left null — widgets fall back to mock for those. |
+| `lib/integrations/gmail/snapshot.ts` | `getCommunicationsSnapshot(companyId)` orchestrates cache → credentials (with refresh) → 4 parallel Gmail reads (`users.getProfile`, `messages.list` with `in:inbox` × 15, `is:unread in:inbox` × 1 for count, `newer_than:7d in:inbox` × 100 for distinct thread count) → per-message `metadata` fetches in parallel → normalize → cache write → `markSynced`. On error: `markGmailError` and return null. 2-minute TTL. `invalidateCommunicationsSnapshot` for cache clearing. |
+
+### OAuth routes
+
+| Route | Method | Behavior |
+|---|---|---|
+| `/api/integrations/gmail/connect?companyId=<uuid>` | GET | Verifies access, issues signed state, redirects to `https://accounts.google.com/o/oauth2/v2/auth` with `access_type=offline&prompt=consent` (required to get a refresh token). **Shadows** the legacy `[service]/connect` handler for Gmail specifically — other services still use the generic legacy path. |
+| `/api/integrations/gmail/callback` | GET | Handles Google redirect. Verifies state signature + expiry, re-verifies company access, checks userId matches state payload, exchanges code (passes the exact same `redirect_uri` as the authorize step — Google enforces match), calls `getGmailProfile` for the mailbox email address, saves encrypted credentials via `saveGmailCredentials`, invalidates snapshot cache, redirects to `/communications?integration=gmail&status=connected`. Handles `?error=` from Google and state tampering gracefully. |
+
+### Client-side integration surface
+
+| File | Purpose |
+|---|---|
+| `hooks/use-gmail-connection.ts` | `useGmailConnectionStatus(companyId)` returns `{ status, isLoading, error, refresh }`. Exports `getGmailConnectUrl(companyId)` — pure URL builder, used as an href. |
+| `contexts/communications-snapshot-context.tsx` | `CommunicationsSnapshotProvider` + `useCommunicationsSnapshot()`. Loads `CommunicationsSnapshot` via `readCommunicationsSnapshot` server action. Snapshot null when there's no Gmail connection or the fetch errors. |
+| `components/integrations/gmail-connection-chip.tsx` | Three-state chip (not connected / connected / error). Same 280px popover shape as the Stripe chip, with the Gmail mailbox email as the account label. Disconnect runs via `useTransition` then `refresh()`. |
+
+### Files modified
+
+| File | Change |
+|---|---|
+| `lib/integrations/actions.ts` | Added `getGmailStatus` and `disconnectGmail`. `disconnectGmail` revokes at Google (`revokeToken` on the refresh token — kills both it and any derived access token) then falls through to the standard local cleanup. `ConnectionStatusView.service` widened from the literal `'stripe_account'` to `ConnectedService` so a single shape serves both providers. |
+| `components/widgets/content/communications-widgets.tsx` | `EmailClient` split into Live / Mock variants. Live uses real sender (name or email), subject, snippet preview, `receivedAt`-derived time label, Gmail's own label-derived `tag`, and an "Open in Gmail" link pointing at the selected message id. `ResponseStats` reads `snapshot.totalUnread` and `snapshot.threadsActive` from live; `responseRate` and `avgResponseTimeHours` stay mock for now (null in v1). `UnreadSummary`'s top-line count goes live; urgent/opportunity/can-wait buckets stay mock (need LLM triage). `PriorityBreakdown` unchanged. |
+| `app/(app)/communications/page.tsx` | Wrapped in `CommunicationsSnapshotProvider`. Renders `GmailConnectionChip` in a right-aligned header row above `WidgetGrid`. |
+
+### Environment variables required
+
+| Var | Purpose | How to obtain |
+|---|---|---|
+| `GOOGLE_CLIENT_ID` | OAuth 2.0 Web client ID. | Google Cloud Console → APIs & Services → Credentials → OAuth 2.0 Client IDs |
+| `GOOGLE_CLIENT_SECRET` | OAuth 2.0 Web client secret. | Same credential. |
+
+Also: register redirect URIs `http://localhost:3001/api/integrations/gmail/callback` and `https://signalgent.vercel.app/api/integrations/gmail/callback` under the OAuth 2.0 Client ID's **Authorized redirect URIs**. Google enforces exact match on the redirect step.
+
+`INTEGRATION_ENCRYPTION_KEY` and `OAUTH_STATE_SECRET` from Session 5 are reused.
+
+### Data flow end-to-end
+
+1. User visits `/communications`. `CommunicationsSnapshotProvider` mounts, calls `readCommunicationsSnapshot(activeCompany.id)`.
+2. Server action runs `requireCompanyAccess`, then `getCommunicationsSnapshot(companyId)`.
+3. Cache check (`gmail:snapshot:{companyId}`, 2 min TTL). Hit → return.
+4. `loadGmailCredentials`: decrypt tokens, check expiry. If `token_expires_at` within 60s → call Google's `/token` endpoint with `grant_type=refresh_token`, persist new access token, return fresh one. No refresh token on file → flag the row with `markError` and return null.
+5. Fire 4 parallel Gmail calls: `users.getProfile`, recent inbox list (15), unread count, last-7d thread list (up to 100).
+6. Fetch `metadata` for each of the 15 recent messages in parallel (From, Subject, Date, To headers + snippet).
+7. Normalize into `CommunicationsSnapshot`. Priority derived from Gmail labels.
+8. Cache the snapshot. `markSynced`.
+9. Widgets render from snapshot and call `markLive()`. Shell hides the "Sample data" badge.
+10. Chip shows "Gmail connected". Click → popover with mailbox email + Disconnect.
+11. Disconnect: revoke refresh token at Google (best-effort), `markDisconnected` (nulls tokens), `invalidateCommunicationsSnapshot`, `revalidatePath('/communications')` + `/dashboard`.
+
+### Security properties (unchanged from Session 5)
+
+- HMAC-signed stateless state tokens with nonce + 10-min expiry.
+- Callback re-validates authenticated user against state payload.
+- AES-256-GCM at rest with random IV and auth tag.
+- Disconnect nulls tokens and clears cache; `provider_account_id` retained for audit.
+
+### Caching properties (unchanged shape; different TTL)
+
+- Per-instance in-memory. Key pattern `gmail:snapshot:{companyId}`. TTL 2 minutes. Invalidated on `disconnectGmail`, `saveGmailCredentials` (via callback), and via the same `CacheStore.invalidate` prefix match.
+
+### Explicitly not built (for clarity when pass 2 lands)
+
+- **`PriorityBreakdown`** — requires LLM triage across the inbox. Locked mock-only in pass 1.
+- **`responseRate` and `avgResponseTimeHours`** — require thread traversal and Sent-label matching. Null in v1 snapshots; widgets fall back to the mock values for those two specific stats.
+- **Incoming message webhooks / push notifications.** Polling only; every snapshot read hits Gmail within the cache TTL.
+- **Outgoing actions** (Reply, Archive, etc.). Pass 1 is read-only — would require upgrading scope beyond `gmail.readonly`.
+- **Multi-mailbox per company.** One Gmail account per company.
+- **Outlook, LinkedIn, Facebook, QuickBooks migration to the hardened pattern.** They continue to use the legacy generic `[service]/connect` and `[service]/callback` route handlers. Those routes store tokens in plaintext and use a cookie-based plain-base64 state — acceptable as an interim state, flagged for a future migration pass.
+
+### Build verification
+
+- `tsc --noEmit` with strict mode: zero errors.
+- Dev server (port 3001) starts clean, no console or server errors.
+- 4 communications widgets render; the 2.5 live-capable ones (EmailClient + the two counters in ResponseStats + the top line of UnreadSummary) degrade to mock when snapshot is null. `PriorityBreakdown` unchanged.
+- No schema migration required — Gmail uses the `connected_accounts` shape already added in Session 5's `20260417000000_integration_accounts_extension.sql`.
+- Legacy `[service]` routes untouched; other services still flow through them unchanged.
+
+### Files summary
+
+| Action | Count | Files |
+|---|---|---|
+| **NEW — infra** | 2 | `lib/integrations/comms/{model,read}.ts` |
+| **NEW — gmail** | 4 | `lib/integrations/gmail/{fetch,tokens,normalize,snapshot}.ts` |
+| **NEW — routes** | 2 | `app/api/integrations/gmail/{connect,callback}/route.ts` |
+| **NEW — client** | 3 | `hooks/use-gmail-connection.ts`, `contexts/communications-snapshot-context.tsx`, `components/integrations/gmail-connection-chip.tsx` |
+| **MODIFIED** | 3 | `lib/integrations/actions.ts`, `components/widgets/content/communications-widgets.tsx`, `app/(app)/communications/page.tsx` |
+| **Total** | 14 files |
+
+## Session 6 retrospective — fixes applied during first real Gmail connect
+
+### 6.1 Google OAuth 403 `access_denied` — caused by OIDC scope auto-expansion
+
+**Symptom.** First connect attempts bounced to Google's consent screen with `Error 403: access_denied`. Test user was added to the Audience tab, Gmail API was enabled, scopes were listed in the Data Access tab, redirect URIs matched — yet every attempt failed before the user could even grant consent.
+
+**Smoking gun.** The scope parameter in Google's error URL showed:
+```
+scope=https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/userinfo.email openid
+```
+The `openid` was not in our request. Google was auto-expanding `userinfo.email` into the full OIDC triple (`openid` + `email`). The Data Access tab's listed scopes did not include `openid`, so Google rejected.
+
+**Root cause.** `https://www.googleapis.com/auth/userinfo.email` is the legacy URL form of the modern OIDC `email` scope. When Google receives that scope, it treats the request as OpenID Connect and implicitly requires `openid` to also be listed in the consent screen's Data Access configuration.
+
+**Fix.** Dropped `userinfo.email` entirely. The mailbox email address is available from Gmail's own `users.getProfile` endpoint (returns `emailAddress`), which only requires `gmail.readonly` — a scope we already need anyway. Code changes:
+
+| File | Fix |
+|---|---|
+| `lib/integrations/gmail/fetch.ts` | `GMAIL_SCOPES` reduced to the single `gmail.readonly` URL. Removed `include_granted_scopes=true` from `buildAuthorizeUrl` (it was pulling in previously-granted scopes on retries and adding to the noise). Deleted the now-unused `getUserInfo` function + `GoogleUserInfo` type + `GOOGLE_USERINFO_URL` constant. |
+| `app/api/integrations/gmail/callback/route.ts` | Replaced `getUserInfo(accessToken)` call with `getGmailProfile(accessToken)`; read `profile.emailAddress` instead of `info.email`. |
+
+After this change — plus the Data Access tab holding only `gmail.readonly` — the consent screen rendered and authorization completed.
+
+### 6.2 Google Auth Platform UI — test users silently fail to save
+
+Reproduced twice during setup: the new tabs-based Google Auth Platform UI (the replacement for the 4-step wizard) drops test-user writes if you click **SAVE AND CLOSE** too quickly after entering the email. The email must first be converted into a chip (press `Enter` / `Tab` or wait for blur validation) before SAVE. Hard refresh (⌘+Shift+R) sometimes reveals that the user was already saved but the stale console UI hadn't picked it up.
+
+Not a code issue — documented here as a troubleshooting note for future integrations that use Google OAuth (Google Analytics next).
+
+### 6.3 Session verification
+
+- Local smoke test from `digitaldreamsmiths@gmail.com`: signup → dashboard → `/communications` → `Connect Gmail` → Google consent (only `gmail.readonly` listed) → approve → redirected back with `?integration=gmail&status=connected`.
+- Within a second the chip flipped to green **"Gmail connected"**.
+- `EmailClient` populated with real inbox senders/subjects/snippets; "Open in Gmail" links resolve to the corresponding message.
+- `ResponseStats`' `Total unread` and `Threads active` numbers match Gmail's own counts.
+- `UnreadSummary` top-line unread count reflects the real inbox; priority buckets remain mock.
+- `PriorityBreakdown` unchanged (as scoped).
