@@ -928,7 +928,7 @@ Reproduced twice during setup: the new tabs-based Google Auth Platform UI (the r
 
 Not a code issue — documented here as a troubleshooting note for future integrations that use Google OAuth (Google Analytics next).
 
-### 6.3 Session verification
+### 6.3 Local verification
 
 - Local smoke test from `digitaldreamsmiths@gmail.com`: signup → dashboard → `/communications` → `Connect Gmail` → Google consent (only `gmail.readonly` listed) → approve → redirected back with `?integration=gmail&status=connected`.
 - Within a second the chip flipped to green **"Gmail connected"**.
@@ -936,3 +936,25 @@ Not a code issue — documented here as a troubleshooting note for future integr
 - `ResponseStats`' `Total unread` and `Threads active` numbers match Gmail's own counts.
 - `UnreadSummary` top-line unread count reflects the real inbox; priority buckets remain mock.
 - `PriorityBreakdown` unchanged (as scoped).
+
+### 6.4 Commit + production deployment
+
+Single commit for the full Session 6 drop: **`f2f0c37`** — `Session 6: Gmail integration + live Communications snapshot` (15 files, +1796/−10). Pushed to `origin/main`, Vercel auto-deployed.
+
+Production env vars added before the deploy ran against real traffic:
+
+| Var | Scope | Source |
+|---|---|---|
+| `GOOGLE_CLIENT_ID` | Production + Preview + Development | Google Cloud Console → OAuth 2.0 Client IDs → Web client 1 |
+| `GOOGLE_CLIENT_SECRET` | Production + Preview + Development | Same credential |
+
+Google Cloud OAuth client had both redirect URIs registered ahead of time:
+- `http://localhost:3001/api/integrations/gmail/callback` (dev)
+- `https://signalgent.vercel.app/api/integrations/gmail/callback` (prod)
+
+**Verified live** on `https://signalgent.vercel.app`:
+- Login → `/communications` → `Connect Gmail` → Google consent → approve → callback lands at `?integration=gmail&status=connected` with the chip flipped to green.
+- `EmailClient` populates with real inbox messages; `Total unread` and `Threads active` match Gmail.
+- Disconnect + reconnect cycle works; tokens re-encrypt cleanly on re-save.
+
+OAuth consent screen publishing status is still `Testing` — only `digitaldreamsmiths@gmail.com` can complete the prod OAuth flow. Adding additional test users or submitting for Google verification is deferred until we're ready for external beta users.
