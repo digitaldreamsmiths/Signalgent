@@ -21,6 +21,7 @@ import {
 } from './fetch'
 import { normalizeToSnapshot } from './normalize'
 import { GMAIL_SERVICE, loadGmailCredentials, markGmailError } from './tokens'
+import { triageMessages } from './triage'
 
 const SNAPSHOT_TTL_SEC = 2 * 60 // 2 minutes — email feels more "live" than finance
 const RECENT_MESSAGE_COUNT = 15 // enough for the list widget preview
@@ -92,6 +93,17 @@ export async function getCommunicationsSnapshot(
       totalUnread: unreadList.resultSizeEstimate ?? 0,
       threadsActive: threadIds.size,
     })
+
+    // LLM triage — classify each recent message into urgent/opportunity/
+    // canWait. Returns null if disabled or failed; widgets fall back to
+    // mock buckets in that case.
+    const triage = await triageMessages(companyId, snapshot.messages)
+    if (triage) {
+      for (const msg of snapshot.messages) {
+        msg.triagedPriority = triage.byId[msg.id] ?? null
+      }
+      snapshot.priorityBreakdown = triage.breakdown
+    }
 
     await cache.set(snapshotKey(companyId), snapshot, SNAPSHOT_TTL_SEC)
     await markSynced(companyId, GMAIL_SERVICE)

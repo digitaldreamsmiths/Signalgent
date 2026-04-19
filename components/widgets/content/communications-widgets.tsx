@@ -242,13 +242,26 @@ export function UnreadSummary() {
     if (snapshot) markLive()
   }, [snapshot, markLive])
 
-  // Only the top-line unread count goes live for now. Urgent/Opportunity/
-  // Can-wait buckets require LLM triage, which is deferred.
   const totalUnread = snapshot != null ? snapshot.totalUnread : m.totalUnread
+  // Buckets reflect the LLM-triaged recent messages when triage ran; fall
+  // back to mock counts otherwise.
+  const breakdown = snapshot?.priorityBreakdown
   const items = [
-    { label: 'Urgent', count: m.urgentCount, color: '#e55' },
-    { label: 'Opportunity', count: m.opportunityCount, color: '#5DCAA5' },
-    { label: 'Can wait', count: m.canWaitCount, color: '#666666' },
+    {
+      label: 'Urgent',
+      count: breakdown != null ? breakdown.urgent : m.urgentCount,
+      color: '#e55',
+    },
+    {
+      label: 'Opportunity',
+      count: breakdown != null ? breakdown.opportunity : m.opportunityCount,
+      color: '#5DCAA5',
+    },
+    {
+      label: 'Can wait',
+      count: breakdown != null ? breakdown.canWait : m.canWaitCount,
+      color: '#666666',
+    },
   ]
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -265,14 +278,22 @@ export function UnreadSummary() {
 }
 
 // ------------------------------------------------------------
-// PriorityBreakdown — stays mock until we wire LLM triage
+// PriorityBreakdown
 // ------------------------------------------------------------
 
 export function PriorityBreakdown() {
+  const { snapshot } = useCommunicationsSnapshot()
+  const { markLive } = useWidgetLiveIndicator()
+
+  useEffect(() => {
+    if (snapshot?.priorityBreakdown) markLive()
+  }, [snapshot, markLive])
+
+  const source = snapshot?.priorityBreakdown ?? m.priorityBreakdown
   const data = [
-    { name: 'Urgent', value: m.priorityBreakdown.urgent },
-    { name: 'Opportunity', value: m.priorityBreakdown.opportunity },
-    { name: 'Can wait', value: m.priorityBreakdown.canWait },
+    { name: 'Urgent', value: source.urgent },
+    { name: 'Opportunity', value: source.opportunity },
+    { name: 'Can wait', value: source.canWait },
   ]
   const COLORS = ['#1D9E75', '#5DCAA5', '#0F6E56']
   return (

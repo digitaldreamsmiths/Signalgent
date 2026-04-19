@@ -30,11 +30,29 @@ export interface CommunicationsMessage {
   /**
    * Broad priority bucket. Heuristic-derived from provider labels for v1
    * (Gmail IMPORTANT/STARRED → urgent, CATEGORY_UPDATES/PROMOTIONS → low,
-   * otherwise opportunity). LLM-driven triage will replace this later.
+   * otherwise opportunity). Kept as the fallback when LLM triage is
+   * unavailable.
    */
   priority: 'urgent' | 'opportunity' | 'low'
   /** Short human-readable label shown on the card (e.g. "Urgent", "Can wait"). */
   tag: string
+  /**
+   * LLM-triaged bucket for the unread-summary / priority-breakdown widgets.
+   * Null when triage was skipped (no API key, error, or non-unread message
+   * not included in the triage batch).
+   */
+  triagedPriority: 'urgent' | 'opportunity' | 'canWait' | null
+}
+
+/**
+ * Count of messages in each triaged bucket. Computed over the recent
+ * messages the normalizer pulled, not the whole inbox. Null when triage
+ * didn't run (no API key, upstream error).
+ */
+export interface PriorityBreakdown {
+  urgent: number
+  opportunity: number
+  canWait: number
 }
 
 export interface CommunicationsSnapshot {
@@ -61,4 +79,9 @@ export interface CommunicationsSnapshot {
   avgResponseTimeHours: number | null
   /** Recent messages, newest first. Capped by the normalizer. */
   messages: CommunicationsMessage[]
+  /**
+   * Count of recent messages in each LLM-triaged bucket. Null when triage
+   * didn't run — widgets fall back to mock.
+   */
+  priorityBreakdown: PriorityBreakdown | null
 }

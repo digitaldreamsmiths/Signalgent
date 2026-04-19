@@ -958,3 +958,69 @@ Google Cloud OAuth client had both redirect URIs registered ahead of time:
 - Disconnect + reconnect cycle works; tokens re-encrypt cleanly on re-save.
 
 OAuth consent screen publishing status is still `Testing` — only `digitaldreamsmiths@gmail.com` can complete the prod OAuth flow. Adding additional test users or submitting for Google verification is deferred until we're ready for external beta users.
+
+---
+
+## Session 7 — LLM-driven email triage
+
+**Goal**: Flip the last two mock surfaces in the Communications mode — `PriorityBreakdown` pie and `UnreadSummary` urgent/opportunity/canWait buckets — to live data via Claude-powered classification. Ship the LLM infrastructure (client, task→model map, token/cost logging) that every future summary and recommendation feature will reuse.
+
+**Locked scope agreed before build**: Triage only. Claude API singleton, static task→model map with an override hook, per-batch cache, one Anthropic call per snapshot fetch, structured output via tool use. Deferred: per-message reasoning surfaced in the UI, summaries, reply drafts, adaptive model escalation.
+
+### Architectural choices
+
+- **Model selection is a map, not a toggle.** `lib/llm/models.ts` exports a static `LLMTask → modelId` table (`triage → claude-haiku-4-5`, `summary → claude-sonnet-4-6`, `recommendation → claude-sonnet-4-6`) plus `pickModel(task, override?)`. Call sites declare the task; the map picks the model; the optional override exists for evals/debugging. No adaptive escalation (second call on low confidence) — not worth the latency hit until we have data showing Haiku misclassifies a meaningful slice.
+- **One SDK instance.** `lib/llm/client.ts` is a lazy singleton. Reads `ANTHROPIC_API_KEY` on first use and throws a human-readable error if missing. Exposes `logUsage({task, model, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, durationMs})` — every LLM caller logs a single grep-able line per request for cost/latency visibility.
+- **Triage is batched, not per-message.** One call classifies the whole 15-message recent set. Model-side `tool_choice: {type: 'tool', name: 'classify_emails'}` forces Claude to return `{classifications: [{id, priority}, ...]}` in one shot. No text parsing, no retries.
+- **Fingerprint-keyed cache.** `lib/integrations/gmail/triage.ts` hashes the sorted message IDs (`sha256`, first 16 hex chars) into the cache key: `gmail:triage:{companyId}:{idHash}`. Any new inbound message changes the hash and the entry doesn't exist, so triage re-runs automatically; identical inbox state within 5 min reuses the cached classification. TTL is 5 min (longer than the snapshot's 2 min — same messages usually triage identically).
+- **Null is a first-class degraded mode.** Missing API key → `getAnthropicClient` throws → `triageMessages` catches, logs a warning, returns null. Network error → caught, returns null. Malformed tool output → returns null. The snapshot sets `priorityBreakdown` to null and widgets fall back to mock counts — same "live or mock" switch the rest of the app already uses.
+- **Types extended, not branched.** `CommunicationsMessage` gains `triagedPriority: 'urgent' | 'opportunity' | 'canWait' | null`; `CommunicationsSnapshot` gains `priorityBreakdown: PriorityBreakdown | null`. The heuristic `priority` field stays as-is for backward compatibility and as a fallback signal.
+
+### New infrastructure files
+
+| File | Purpose |
+|---|---|
+| `lib/llm/models.ts` | `LLMTask` union (`triage \| summary \| recommendation`), static `TASK_MODELS` map, `pickModel(task, override?)`. Bump entries here when real cost/quality data argues for a different default. |
+| `lib/llm/client.ts` | `getAnthropicClient()` lazy singleton reading `ANTHROPIC_API_KEY`, `LLMUsage` shape, `logUsage(u)` single-line emitter. Throws a specific error if the key is missing. |
+| `lib/integrations/gmail/triage.ts` | `triageMessages(companyId, messages, {modelOverride?})` — batched classification via tool use. Builds user prompt with `{id, from, subject, snippet, receivedAt, unread}` for each message, forces `classify_emails` tool, parses `{classifications}`, validates every entry, returns `{byId: Record<id, bucket>, breakdown: {urgent, opportunity, canWait}}` or null. Cache-keyed by sorted-IDs hash, 5-min TTL. Logs usage per call. |
+
+### Files modified
+
+| File | Change |
+|---|---|
+| `lib/integrations/comms/model.ts` | Added `triagedPriority` to `CommunicationsMessage`, `priorityBreakdown: PriorityBreakdown \| null` to `CommunicationsSnapshot`, new `PriorityBreakdown` interface. Heuristic `priority` field comment updated to call it a fallback. |
+| `lib/integrations/gmail/normalize.ts` | Seeds `triagedPriority: null` on every message and `priorityBreakdown: null` on the snapshot. Triage fills them in afterward in `snapshot.ts`. |
+| `lib/integrations/gmail/snapshot.ts` | After `normalizeToSnapshot`, calls `triageMessages(companyId, snapshot.messages)`. On non-null result: assigns `msg.triagedPriority` from `triage.byId[msg.id]` and sets `snapshot.priorityBreakdown = triage.breakdown`. Cached snapshot already includes the triage output — no separate cache write for triage beyond the fingerprint cache. |
+| `components/widgets/content/communications-widgets.tsx` | `UnreadSummary` now reads `snapshot?.priorityBreakdown` for the Urgent/Opportunity/Can wait bucket counts (mock fallback when null). `PriorityBreakdown` converted from a static mock pie to a snapshot-reading live widget with `useCommunicationsSnapshot()` + `useWidgetLiveIndicator()` — reads `snapshot?.priorityBreakdown` for the pie, falls back to mock when null. Both widgets call `markLive()` when live data is present. |
+| `package.json` / `package-lock.json` | `@anthropic-ai/sdk` ^0.x added to dependencies. |
+
+### Triage prompt + tool
+
+System prompt names the three buckets, gives concrete examples per bucket ("urgent" = customer problems, contract deadlines, investor asks; "opportunity" = warm intros, prospect replies, press; "canWait" = promos, newsletters, receipts), tells the model to be skeptical of marketing emails that pretend to be personal, and requires a single `classify_emails` tool call containing every input id exactly once. Tool schema enforces `priority ∈ ['urgent','opportunity','canWait']` via JSON schema `enum`.
+
+No `cache_control` markers in v1 — the short system prompt + short tool schema + dynamic message payload together don't clear Haiku's 4096-token cache minimum. `logUsage` surfaces `cacheReadTokens` and `cacheWriteTokens` per call so we can tune once we have volume.
+
+### Local verification
+
+- `@anthropic-ai/sdk` installed; `ANTHROPIC_API_KEY` added to `.env.local`.
+- `tsc --noEmit` clean across the project after the type extensions.
+- Dev server restarted; `/communications` loaded against the real Gmail-connected inbox (`digitaldreamsmiths@gmail.com`, 201 unread).
+- Two triage calls observed in logs (context + follow-up nav):
+  - `[llm] task=triage model=claude-haiku-4-5 in=5549 out=515 cacheRead=0 cacheWrite=0 ms=4206`
+  - `[llm] task=triage model=claude-haiku-4-5 in=4889 out=524 cacheRead=0 cacheWrite=0 ms=4293`
+  - ~4.2s per call, ~$0.008 per call at Haiku pricing.
+- `UnreadSummary` flipped live: **201 unread** top-line, buckets **0 urgent / 0 opportunity / 15 can wait**. Correct for the actual inbox contents (Temu, Canva, Instagram, magic links, Planet Fitness — all promotional/transactional). Claude correctly rejected "urgent" for every item.
+- `PriorityBreakdown` pie flipped live: full "Can wait" slice, legend `Urgent (0), Opportunity (0), Can wait (15)`.
+- No console errors, no server errors.
+
+### Residuals heading into Session 8
+
+- `ResponseStats.responseRate` and `ResponseStats.avgReplyTime` are still mock — still need thread traversal and Sent-label matching (scoped out intentionally).
+- No prompt caching yet. Once a stable instruction prefix grows past ~4096 tokens (or we switch triage to Sonnet 4.6 with its 2048-token minimum), adding `cache_control: {type: 'ephemeral'}` on the system block should cut input cost ~10× on steady-state reruns.
+- Triage runs inline inside `getCommunicationsSnapshot`, so the first uncached snapshot fetch now takes ~4s instead of ~1.5s. Acceptable at 2-min snapshot TTL; revisit if users notice.
+- In-memory `CacheStore` still resets on every Vercel deploy — triage entries evaporate alongside snapshots. The Redis/Upstash swap mentioned in the Session 6 handoff now has one more consumer (`gmail:triage:*`), all under the same `CacheStore` interface.
+- `lib/llm/client.ts` is Claude-specific but the shape (`pickModel`, `logUsage`) is provider-agnostic. If we ever want to A/B test another model family, the abstraction is already in the right place.
+
+### Production env
+
+`ANTHROPIC_API_KEY` added to Vercel (Production + Preview + Development) before the next deploy. Rotation policy is the user's to define — for dev, the key in `.env.local` is reused locally.

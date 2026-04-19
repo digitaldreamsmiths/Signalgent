@@ -122,6 +122,7 @@ export function normalizeToSnapshot(input: NormalizeInput): CommunicationsSnapsh
       unread,
       priority: priorityFromLabels(m.labelIds),
       tag: tagFromMessage(m.labelIds, unread),
+      triagedPriority: null,
     }
   })
 
@@ -136,5 +137,6 @@ export function normalizeToSnapshot(input: NormalizeInput): CommunicationsSnapsh
     responseRate: null,
     avgResponseTimeHours: null,
     messages,
+    priorityBreakdown: null,
   }
 }
