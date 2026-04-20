@@ -252,3 +252,79 @@ export async function getMessage(args: {
   }
   return JSON.parse(text) as GmailMessage
 }
+
+export interface GmailThreadRef {
+  id: string
+  historyId?: string
+  snippet?: string
+}
+
+export interface GmailThreadListResponse {
+  threads?: GmailThreadRef[]
+  nextPageToken?: string
+  resultSizeEstimate: number
+}
+
+/**
+ * List threads matching a Gmail search query. Uses the same DSL as
+ * listMessages. Returns thread IDs only — the full thread (with all
+ * messages) must be fetched separately via getThread.
+ */
+export async function listThreads(args: {
+  accessToken: string
+  q?: string
+  maxResults?: number
+  pageToken?: string
+  labelIds?: string[]
+}): Promise<GmailThreadListResponse> {
+  const params = new URLSearchParams()
+  params.set('maxResults', String(args.maxResults ?? 100))
+  if (args.q) params.set('q', args.q)
+  if (args.pageToken) params.set('pageToken', args.pageToken)
+  for (const label of args.labelIds ?? []) {
+    params.append('labelIds', label)
+  }
+
+  const res = await fetch(`${GMAIL_API}/users/me/threads?${params}`, {
+    headers: { Authorization: `Bearer ${args.accessToken}` },
+  })
+  const text = await res.text()
+  if (!res.ok) {
+    throw new Error(`Gmail list threads failed (${res.status}): ${text}`)
+  }
+  return JSON.parse(text) as GmailThreadListResponse
+}
+
+export interface GmailThread {
+  id: string
+  historyId: string
+  messages: GmailMessage[]
+}
+
+/**
+ * Fetch a single thread with every message inline. `format=minimal` returns
+ * each message's `internalDate` + `labelIds` without payload/headers — the
+ * cheapest format that still lets us do timing + direction analysis.
+ */
+export async function getThread(args: {
+  accessToken: string
+  id: string
+  format?: 'metadata' | 'full' | 'minimal'
+  metadataHeaders?: string[]
+}): Promise<GmailThread> {
+  const format = args.format ?? 'minimal'
+  const params = new URLSearchParams({ format })
+  if (format === 'metadata') {
+    const headers = args.metadataHeaders ?? ['From', 'Subject', 'Date', 'To']
+    for (const h of headers) params.append('metadataHeaders', h)
+  }
+
+  const res = await fetch(`${GMAIL_API}/users/me/threads/${args.id}?${params}`, {
+    headers: { Authorization: `Bearer ${args.accessToken}` },
+  })
+  const text = await res.text()
+  if (!res.ok) {
+    throw new Error(`Gmail get thread failed (${res.status}): ${text}`)
+  }
+  return JSON.parse(text) as GmailThread
+}

@@ -195,8 +195,9 @@ export function ResponseStats() {
     if (snapshot) markLive()
   }, [snapshot, markLive])
 
-  // Response rate + avg reply time aren't computed yet (null in v1 snapshot).
-  // Fall back to mock for those; keep totalUnread and threadsActive live.
+  // All four stats resolve to live data when the snapshot is present; any
+  // field that returns null (traversal failed, empty sample) falls back to
+  // the mock value so the widget never renders a blank cell.
   const stats = [
     {
       label: 'Response rate',

@@ -12,9 +12,10 @@
  *     UPDATES, FORUMS               → 'low'
  *   - otherwise                     → 'opportunity'
  *
- * The responseRate and avgResponseTimeHours fields are null in v1 —
- * computing them requires thread traversal and Sent-label matching,
- * which is deferred. Widgets fall back to the mock value when null.
+ * The responseRate and avgResponseTimeHours fields are left null here.
+ * They're computed by lib/integrations/gmail/responseStats.ts (per-thread
+ * traversal + Sent-label matching) and overlaid in snapshot.ts after
+ * normalize runs. Widgets fall back to mock if the overlay also fails.
  */
 
 import type {

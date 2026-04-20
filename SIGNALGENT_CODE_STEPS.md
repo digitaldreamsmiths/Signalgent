@@ -1024,3 +1024,64 @@ No `cache_control` markers in v1 — the short system prompt + short tool schema
 ### Production env
 
 `ANTHROPIC_API_KEY` added to Vercel (Production + Preview + Development) before the next deploy. Rotation policy is the user's to define — for dev, the key in `.env.local` is reused locally.
+
+## Session 8 — Communications mode goes 100% live (response-stats via Gmail thread traversal)
+
+**Goal**: Flip the last mock surface in Communications mode — `ResponseStats.responseRate` and `ResponseStats.avgReplyTime` — to live data computed from the real mailbox. After Session 8 the whole mode is live; zero mock fallbacks render when the user is Gmail-connected.
+
+**Locked scope agreed before build**: Per-thread traversal over a 30-day inbound window with `SENT`-label matching for the reply test. `threads.list` + `threads.get` (format=minimal) rather than per-message `messages.get` — one thread call returns every message's `internalDate` + `labelIds`, the cheapest shape that still yields timing + direction. Deferred: response-rate trend deltas, per-contact/per-thread drill-in, partial-sample UI messaging.
+
+### Architectural choices
+
+- **Semantics are per-thread, not per-message.** A thread is in-sample if it has at least one `INBOX`-labeled message whose `internalDate` falls inside the 30-day window. The thread is "responded" when some `SENT`-labeled message in the same thread has `internalDate` strictly greater than the earliest in-window inbound. `responseRate = round(responded / sample × 100)`; `avgResponseTimeHours = mean(firstSent − firstInbound)` across responded threads. Cleaner to reason about than per-message, and matches how standard inbox-analytics dashboards render "response rate" + "time to first reply."
+- **Sent can sit outside the window.** A reply two weeks after an inbound 29 days old still counts — the window constrains the *inbound* side only. This is why we walk full threads instead of just counting sent messages in the last 30d.
+- **Bounded traversal, ceiling-safe concurrency.** `threads.list` capped at 200 threads (covers everyone short of power users; bigger mailboxes get a stable-biased sample). Parallel `threads.get` in chunks of **5** with a 120 ms inter-batch pause — Gmail's undocumented per-user concurrent-request ceiling 429s well before the published QPS quota, and 5+pause tested clean across the full 200 where 25 and 8 both 429ed with `Too many concurrent requests for user`.
+- **429s retry narrowly; permanent per-thread failures degrade.** `fetchThreadWithRetry` retries on `(429)|rateLimitExceeded|RESOURCE_EXHAUSTED` with 600 ms × attempt backoff, up to 3 attempts. Non-429 errors propagate immediately. A thread that still fails after retries is *dropped* from the sample rather than nuking the whole metric — the stat returns null only when the *entire* batch fails, matching the same "live or mock" switch used by triage and the snapshot itself.
+- **Company-scoped cache with a 30-minute TTL.** `gmail:response-stats:{companyId}`. The metric is a 30-day trailing average, so a 30-min refresh is tighter than the noise floor and spares 200 thread.get calls on every snapshot fetch. Snapshot TTL stays at 2 min; response-stats survives 15 snapshot refreshes per hit.
+- **Parallel with triage.** Both are best-effort overlays on `normalizeToSnapshot`. `Promise.all([triageMessages, computeResponseStats])` in `snapshot.ts` keeps end-to-end latency gated by the slower of the two (~7s for first-uncached traversal vs. ~4s for triage). Neither blocks the other's result.
+
+### New infrastructure files
+
+| File | Purpose |
+|---|---|
+| `lib/integrations/gmail/responseStats.ts` | `computeResponseStats(companyId, accessToken)` — list threads for 30d inbound, fetch minimal threads in chunks of 5, `analyzeThread` per thread (earliest inbound + earliest sent-after), aggregate. Returns `{responseRate, avgResponseTimeHours, sampleSize}` or null. Logs one grep-able line per run: `[response-stats] company=… threads=… responded=… rate=…% avg=…h failures=… ms=…`. |
+
+### Files modified
+
+| File | Change |
+|---|---|
+| `lib/integrations/gmail/fetch.ts` | Added `listThreads`, `getThread`, `GmailThreadRef`, `GmailThreadListResponse`, `GmailThread`. `getThread` defaults to `format=minimal` — returns `messages[*].{internalDate, labelIds}` without payload/headers, the cheapest format that supports timing + direction analysis. |
+| `lib/integrations/gmail/snapshot.ts` | Wrapped triage + response-stats in a single `Promise.all`. Overlay pattern: snapshot fields stay null until the respective call resolves non-null, then overwrite. Both cache in their own keys; the outer snapshot cache (2 min TTL) stores the already-overlaid snapshot. |
+| `lib/integrations/gmail/normalize.ts` | Docstring updated — `responseRate`/`avgResponseTimeHours` no longer "deferred," just left null for overlay. |
+| `lib/integrations/comms/model.ts` | `responseRate` + `avgResponseTimeHours` docstrings rewritten to reflect per-thread semantics. |
+| `components/widgets/content/communications-widgets.tsx` | `ResponseStats` comment updated — removed the "not computed yet" note; the widget already reads `snapshot.responseRate` / `snapshot.avgResponseTimeHours` and falls back to mock on null, so no logic change was needed. |
+
+### Rate-limit tuning narrative
+
+First pass: concurrency **25** → all threads 429ed with `Too many concurrent requests for user`. Gmail's concurrent-request ceiling is undocumented but clearly lower than the published QPS quota.
+
+Second pass: concurrency **8** with a 2-attempt 500 ms retry → still 429ed. Retrying 8 threads simultaneously just re-synchronizes the concurrency burst; backoff has to be paired with lowered peak.
+
+Third pass (final): concurrency **5**, 120 ms inter-batch pause, up to 3 retries with 600 ms × attempt backoff → **0 failures across 200 threads**, 7.4 s end-to-end. The pause matters: without it, a slow response in one batch lets the next batch dispatch mid-recovery and stack on top.
+
+### Local verification
+
+- `tsc --noEmit` clean.
+- `.next/` cleared once during debugging when a stopped dev server left artifacts that 404ed every protected route on the fresh start. Clean `.next` + `preview_start` → routes compiled on demand as expected.
+- `/communications` loaded against the real Gmail-connected inbox (`digitaldreamsmiths@gmail.com`, 201 unread, 99 threads active).
+- Response-stats log line:
+  - `[response-stats] company=ce650d4b-5525-44cb-a3fd-e511e5e5bcac threads=200 responded=5 rate=3% avg=14.24h failures=0 ms=7433`
+  - Reads correctly: the user's inbox is dominated by promos/transactional (Temu, Canva, Instagram, magic links, Planet Fitness — see Session 7 notes). 5 real-human responses out of 200 threads in 30 days is an honest read, and a 14-hour avg reply time across those 5 is plausible for a founder's cadence.
+- ResponseStats widget reads live values from the snapshot: **Response rate 3%, Avg reply time 14.2h, Total unread 201, Threads active 99**.
+- Triage still runs cleanly in parallel: `[llm] task=triage model=claude-haiku-4-5 in=5549 out=515 ms=4406`.
+- No console errors, no server errors.
+
+### Residuals heading into Session 9
+
+- **No sample-size UI signal.** A mailbox with 3 inbound threads shows the same "3%" as one with 200 threads, and the widget has no way to flag "low confidence." `responseStats` already returns `sampleSize` internally but snapshot.ts drops it. If this becomes user-visible noise, surface sampleSize on the snapshot and render a "(n threads)" suffix or fade the tile when sample is small.
+- **Single window only.** Trailing 30 days. No week-over-week delta, no sparkline. Product call when we revisit the widget.
+- **200-thread cap.** Power users (thousands of threads/month) get a stable-biased sample — the 200 most recent inbound threads. Paginating past 200 would mean more `threads.list` calls + more `threads.get` fanout. Revisit if the user asks, otherwise the 7.4s latency ceiling stays reasonable.
+- **Cold-path latency.** First-uncached snapshot fetch is now ~7-8 s (was ~4 s before Session 8) since response-stats dominates and runs in parallel with triage. Subsequent 30 min: free. Redis/Upstash swap would also let response-stats survive Vercel redeploys — currently it rebuilds from scratch every deploy.
+- **429 handling is Gmail-specific.** `isRateLimitError` pattern-matches Google's error message text. If we add another provider (Outlook for Session 6.x backlog), that provider will want its own retry predicate.
+- **Workspace-scoped caching.** `gmail:response-stats:{companyId}` is correct for the multi-tenant shape, same as snapshots. If we ever start caching by `userId` anywhere, be consistent.
+- **No prompt caching yet** (carry-over from Session 7). Still waiting on either a longer system prompt or a Sonnet 4.6 migration to hit the cache threshold. Session 9 summaries will be the forcing function — likely Sonnet 4.6 territory.

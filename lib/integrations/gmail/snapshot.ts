@@ -20,6 +20,7 @@ import {
   type GmailMessage,
 } from './fetch'
 import { normalizeToSnapshot } from './normalize'
+import { computeResponseStats } from './responseStats'
 import { GMAIL_SERVICE, loadGmailCredentials, markGmailError } from './tokens'
 import { triageMessages } from './triage'
 
@@ -94,15 +95,23 @@ export async function getCommunicationsSnapshot(
       threadsActive: threadIds.size,
     })
 
-    // LLM triage — classify each recent message into urgent/opportunity/
-    // canWait. Returns null if disabled or failed; widgets fall back to
-    // mock buckets in that case.
-    const triage = await triageMessages(companyId, snapshot.messages)
+    // LLM triage (batched classify of recent messages) + response-stats
+    // (per-thread traversal over the 30d window) run in parallel — they
+    // share nothing and both are best-effort. Either may return null and
+    // the snapshot degrades to mock on that field.
+    const [triage, responseStats] = await Promise.all([
+      triageMessages(companyId, snapshot.messages),
+      computeResponseStats(companyId, accessToken),
+    ])
     if (triage) {
       for (const msg of snapshot.messages) {
         msg.triagedPriority = triage.byId[msg.id] ?? null
       }
       snapshot.priorityBreakdown = triage.breakdown
+    }
+    if (responseStats) {
+      snapshot.responseRate = responseStats.responseRate
+      snapshot.avgResponseTimeHours = responseStats.avgResponseTimeHours
     }
 
     await cache.set(snapshotKey(companyId), snapshot, SNAPSHOT_TTL_SEC)

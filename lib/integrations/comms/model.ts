@@ -67,14 +67,17 @@ export interface CommunicationsSnapshot {
   /** Distinct threads with any message in the last 7 days. */
   threadsActive: number
   /**
-   * Percent of inbound messages (last 30d) that received a reply from the
-   * mailbox owner. Null when we choose not to compute it — widgets fall
-   * back to mock for that stat.
+   * Per-thread response rate over the last 30d: of threads that had at
+   * least one inbound message in the window, the percent for which the
+   * mailbox owner sent at least one reply afterward. Null when we choose
+   * not to compute it or upstream traversal failed — widgets fall back to
+   * mock for that stat.
    */
   responseRate: number | null
   /**
-   * Average time (in hours) between an inbound message and the mailbox
-   * owner's first reply on that thread, last 30d. Null when unknown.
+   * Average time (in hours) between the first inbound message in a thread
+   * and the mailbox owner's first subsequent reply, averaged across
+   * responded threads in the last 30d window. Null when unknown.
    */
   avgResponseTimeHours: number | null
   /** Recent messages, newest first. Capped by the normalizer. */
