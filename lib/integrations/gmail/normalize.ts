@@ -116,6 +116,7 @@ export function normalizeToSnapshot(input: NormalizeInput): CommunicationsSnapsh
 
     return {
       id: m.id,
+      threadId: m.threadId,
       sender: from,
       subject,
       snippet: decodeSnippet(m.snippet ?? ''),

@@ -1085,3 +1085,73 @@ Third pass (final): concurrency **5**, 120 ms inter-batch pause, up to 3 retries
 - **429 handling is Gmail-specific.** `isRateLimitError` pattern-matches Google's error message text. If we add another provider (Outlook for Session 6.x backlog), that provider will want its own retry predicate.
 - **Workspace-scoped caching.** `gmail:response-stats:{companyId}` is correct for the multi-tenant shape, same as snapshots. If we ever start caching by `userId` anywhere, be consistent.
 - **No prompt caching yet** (carry-over from Session 7). Still waiting on either a longer system prompt or a Sonnet 4.6 migration to hit the cache threshold. Session 9 summaries will be the forcing function — likely Sonnet 4.6 territory.
+
+## Session 9 — LLM summaries + reply drafts (text-only V1)
+
+**Goal**: Ship the two interactive LLM surfaces — per-thread **Summarize** and **Draft reply** — that the mock `EmailClient` has been teasing since Session 2. On-demand (button click in the preview pane), Sonnet 4.6-powered, inline render. No Gmail-native draft push yet; the user copies the generated text.
+
+**Locked scope agreed before build**: Per-thread, on-demand, text-only. User clicks → server action → Sonnet 4.6 → plaintext back → inline panel. Summaries cached per-thread fingerprint (10 min TTL) so re-clicking the same thread is instant; drafts NOT cached (user explicitly wants fresh angles). Full message bodies required — `format=metadata` only returned a ~200 char snippet, worthless for summary quality, so Session 9 had to add a `format=full` path and MIME-part walker. Deferred: Gmail-native draft creation (needs `gmail.compose` scope + fresh consent + send path), streaming responses, prompt caching, per-turn draft refinement.
+
+### Architectural choices
+
+- **Single LLM call per action, no tool use.** Summary and draft are both plain-text outputs — using `tools` + forced tool choice (Session 7's pattern) would add serialization overhead without gaining structure we care about. The summary prompt returns a paragraph; the draft prompt returns the reply body or the literal string `NONE`. The `NONE` sentinel is parsed server-side into `{draft: null}` and rendered as a friendly empty-state ("Nothing to reply to here — the thread is promotional or already handled.") in the UI.
+- **Sonnet 4.6 with adaptive thinking + `effort: "medium"`.** Both tasks benefit from the model thinking before writing. Adaptive thinking dynamically picks the budget — no `budget_tokens` to tune. `effort: "medium"` is the favorable point for an interactive UI call where latency matters more than maximum thoroughness; `high` pushed summaries to ~6 s with no measurable quality lift in our sample. Observed end-to-end: summary ~3.5–4.5 s, draft ~1–10 s (wider range since the model thinks more when it actually has something to write).
+- **Structured type layering.** Added `threadId` to `CommunicationsMessage` so the widget can pass thread IDs back to the server action without the LLM call having to re-derive them from message IDs. Extended `GmailMessagePart` to describe the full MIME tree (`mimeType`, `body.data`, recursive `parts`, `filename`) so `getThread({format: 'full'})` responses deserialize cleanly.
+- **MIME walker prefers plain, falls back to HTML.** `lib/integrations/gmail/threadContext.ts` → `extractFromPart` recurses into `multipart/*` containers and decodes `text/plain` parts verbatim; `text/html` parts go through a bare-bones tag strip + entity decode. Attachments (`filename` present) are not read — their filenames are captured separately and surfaced to the model as `Attachments: foo.jpg, bar.pdf` so it at least knows they exist. Per-message body capped at 8,000 chars (prompt-size guard — a typical thread stays well under this).
+- **Thread context cache is the expensive shared layer.** `gmail:thread-context:{companyId}:{threadId}:{idHash}` with 10-min TTL. Summary reuses it (same fingerprint → same context). Draft reuses it too. This means a Summarize click followed by a Draft click only pays for one Gmail fetch, not two — the second call hits the context cache and only pays Sonnet. Any new message in the thread changes the ID hash and the context rebuilds automatically (same pattern as triage).
+- **Summary cached; draft not.** Summary result cached per the same thread fingerprint. Draft not cached — the UX is "give me a draft, I didn't love that one, give me another" and a cache defeats that immediately. A cheap future optimization: cache drafts keyed on `{threadId, idHash, regenerationCount}` and increment on a "regenerate" button.
+- **Null is a first-class degraded mode (Session 7 pattern, carried forward).** Missing `ANTHROPIC_API_KEY` → throws → caught → returns null. API error → caught → returns null. Malformed response → returns null. The server action surfaces null as `{ok: false, error: "Couldn't summarize this thread. Try again in a moment."}` which the widget renders in a red-tinted panel.
+- **Thread ID flows through the type system, not out-of-band.** The alternative — have the server action re-fetch the message by ID and pull the `threadId` off that — would double the Gmail round-trips on every click for no reason. Putting `threadId` on `CommunicationsMessage` is the smaller, more honest change.
+
+### New infrastructure files
+
+| File | Purpose |
+|---|---|
+| `lib/integrations/gmail/threadContext.ts` | `getThreadContext(companyId, threadId)` — loads Gmail creds, fetches the thread with `format=full`, walks each message's MIME tree, extracts plaintext bodies with HTML fallback + entity decode, truncates at 8k chars/message, returns `ThreadContext = {threadId, ownerEmail, messages: [{id, receivedAt, sentByOwner, from, to, subject, body, attachments}]}`. Cached per company+thread+message-id-hash for 10 min. |
+| `lib/integrations/gmail/assist.ts` | Both LLM entry points: `summarizeThread(companyId, threadId) → {summary} \| null` and `draftReply(companyId, threadId) → {draft: string \| null} \| null`. Shared `callClaudeText()` helper handles Sonnet 4.6 invocation, adaptive thinking, `effort: 'medium'`, usage logging, typed `Anthropic.APIError` catch, text-block extraction. Summary cached in `gmail:thread-summary:{companyId}:{threadId}:{ids}`, draft uncached. |
+| `lib/integrations/comms/assist.ts` | `'use server'` — server actions `summarizeEmailThread` + `draftEmailReply`. Both enforce `requireCompanyAccess` before touching the mailbox. Return `AssistResult<T> = {ok: true, body: T \| null} \| {ok: false, error: string}` — the client renders `error` verbatim, so the string has to be user-facing (not an upstream exception). |
+
+### Files modified
+
+| File | Change |
+|---|---|
+| `lib/integrations/gmail/fetch.ts` | Extended `GmailMessage.payload` to `GmailMessagePart & {headers}`. Added the full `GmailMessagePart` interface (`mimeType`, `filename`, optional `body.data` base64url, recursive `parts`) so `format=full` responses type-check. |
+| `lib/integrations/comms/model.ts` | Added `threadId: string` to `CommunicationsMessage`. |
+| `lib/integrations/gmail/normalize.ts` | Seeds `threadId` from `m.threadId` when building each `CommunicationsMessage`. |
+| `components/widgets/content/communications-widgets.tsx` | `EmailClientLive` now has Summarize + Draft Reply buttons, per-thread `AssistState` machines (idle \| loading \| success \| empty \| error), `AssistPanel` rendering with `whiteSpace: pre-wrap` and a Copy button on the draft panel, auto-reset on `selected.threadId` change. Calls `useCompany()` to get `companyId`. |
+
+### Prompt design
+
+Both prompts are plain-text, under 400 tokens each — deliberately short so they don't cross Sonnet 4.6's 2048-token cache minimum. The system prompt does the heavy lifting; the user prompt is just the rendered thread.
+
+**Summary prompt**: "2–4 short sentences. Newsletter-length. Lead with what the counterparty wants. Mention deadlines or dollar figures verbatim. If the founder replied, note where the ball sits. Skip pleasantries, signatures, unsubscribe footers. Don't invent facts. Plain text, no 'Summary:' prefix."
+
+**Draft prompt**: "Match the thread's tone. Address the ask. 2–5 short sentences unless the thread calls for more. Sign off with the owner's first name if inferrable. No subject line, no 'Dear …'. Don't invent facts — use [confirm date] placeholders. If the thread is promotional / transactional / already handled, return the single word NONE."
+
+The `NONE` sentinel is load-bearing — without it, the model would write a useless "Thanks for the notification!" reply to every Venmo statement. Tested as expected on a Venmo quarterly statement (returned `NONE`, 5 output tokens, 1.1 s).
+
+### Local verification
+
+- `tsc --noEmit` clean.
+- Test 1 — **Venmo Quarterly Statement** (automated):
+  - Summary: *"Automated quarterly statement from Venmo notifying that the Jan–Mar 2026 transaction history for @thedvegroup is now available. No action required and no ask from a counterparty — this is a system notification. Nothing time-sensitive or dollar-specific is mentioned. No reply needed."* — correctly identifies as automated, no invented facts.
+  - Draft: model returned `NONE` → UI shows "Nothing to reply to here — the thread is promotional or already handled."
+  - Logs: `[llm] task=summary model=claude-sonnet-4-6 in=727 out=67 ms=3579` and `[llm] task=recommendation model=claude-sonnet-4-6 in=790 out=5 ms=1113`.
+- Test 2 — **Marvin C. Jones / National Day of Prayer** (real-human sender with an image-only body):
+  - Summary: correctly flags the image-attachment limitation ("the image content isn't readable here, so the actual ask or details are unclear") — the prompt's "don't invent facts" rule held under ambiguity.
+  - Draft: *"Hey Marvin, thanks for reaching out — we got your message, but unfortunately the image attachment didn't render clearly on our end. Could you resend the details or paste the info as text so we can take a look and follow up properly? The DVE Group"* — casual tone matched, addresses the ask, no invented commitments. Copy button worked.
+  - Logs: `[llm] task=summary in=369 out=135 ms=4459` and `[llm] task=recommendation in=432 out=244 ms=9604` (draft thought longer because it actually had something to write).
+- Thread context cache verified: a second Summarize click on the same thread returned instantly without a new Gmail fetch (context cache hit) — a fresh Sonnet call still ran because the summary cache had the same fingerprint as the first successful result, served instantly from summary cache too.
+- No server errors. Console warnings present (React complaining about `borderLeft` + `border: 'none'` shorthand mix in the message-list buttons) — **pre-existing** in `EmailClientLive` since Session 6, unrelated to Session 9. Flagged as residual.
+
+### Residuals heading into Session 10
+
+- **Text-only drafts.** Gmail-native draft creation (writing to the user's Drafts folder via `gmail.compose` / `gmail.modify` scope + the `users.drafts.create` endpoint) is the obvious next step, but it means re-requesting consent and migrating every existing Gmail token. Scope-expansion session; not bundled with this one.
+- **No streaming.** A 9.6 s draft feels slow without a stream. Sonnet 4.6 supports `messages.stream()` and `finalMessage()` — a future pass can stream text deltas into the panel as they arrive. Structurally straightforward; deferred because the pure-text panel was simpler to ship first and latency is tolerable for one-off clicks.
+- **No draft regeneration UX.** User can click Draft Reply again to re-roll, but since drafts aren't cached every click costs a fresh Sonnet call. A "Regenerate with a different angle" prompt variation would be more useful than random re-sampling.
+- **Attachments stay invisible.** The walker surfaces attachment filenames to the model but never reads them. PDFs and images go unread; for a founder's inbox where attachments carry the payload (contracts, decks, invoices), this is a meaningful gap. The Anthropic SDK's Files API + `document`/`image` content blocks can handle this — track as a Session 11+ candidate.
+- **Prompt caching still off.** Both system prompts are under 500 tokens each, well below Sonnet 4.6's 2048-token minimum. A future extension (richer persona config, longer rule sets, few-shot examples) would push us over and justify `cache_control: {type: 'ephemeral'}` on the system block. `logUsage` already reports `cacheRead`/`cacheWrite` so the hit rate will be visible the moment it crosses.
+- **Pre-existing React warning.** `EmailClientLive` message-list buttons mix `border: 'none'` with `borderLeft` — harmless but noisy in dev-mode console. Low-priority style cleanup; not Session 9 fallout.
+- **Styling is inline everywhere.** The `AssistPanel` + `AssistButton` components are inline-styled to match the rest of the widget. Once the widget system moves to CSS modules or a design-token layer (not currently scoped), these should migrate alongside.
+- **Single-company assumption.** The widget pulls `activeCompany` and uses it for every click. Multi-company orgs switching mid-session are handled by `useEffect([selected.threadId])` which resets panel state — but if `activeCompany` changes the panels hold their stale result until the user reselects a message. Minor edge case; revisit if it becomes user-visible.
+- **No retry UI.** On `{ok: false, error: ...}` the panel shows the error but there's no retry button — user has to click Summarize/Draft again. One-liner to add a retry button; deferred in favor of shipping.

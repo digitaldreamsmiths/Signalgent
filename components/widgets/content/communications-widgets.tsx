@@ -1,10 +1,15 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts'
 import { COMMS_MOCK } from '@/lib/widgets/mock-data'
 import { useCommunicationsSnapshot } from '@/contexts/communications-snapshot-context'
+import { useCompany } from '@/contexts/company-context'
 import { useWidgetLiveIndicator } from '../widget-live-indicator'
+import {
+  draftEmailReply,
+  summarizeEmailThread,
+} from '@/lib/integrations/comms/assist'
 import type {
   CommunicationsMessage,
   CommunicationsSnapshot,
@@ -55,10 +60,58 @@ export function EmailClient() {
   return <EmailClientMock />
 }
 
+type AssistState =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'success'; text: string }
+  | { status: 'empty' } // model returned "NONE" for draft — nothing to write
+  | { status: 'error'; message: string }
+
 function EmailClientLive({ snapshot }: { snapshot: CommunicationsSnapshot }) {
   const [active, setActive] = useState(0)
   const messages = snapshot.messages
   const selected = messages[Math.min(active, messages.length - 1)]
+  const { activeCompany } = useCompany()
+  const companyId = activeCompany?.id ?? null
+
+  const [summary, setSummary] = useState<AssistState>({ status: 'idle' })
+  const [draft, setDraft] = useState<AssistState>({ status: 'idle' })
+
+  // Reset assist state whenever the selected thread changes.
+  useEffect(() => {
+    setSummary({ status: 'idle' })
+    setDraft({ status: 'idle' })
+  }, [selected?.threadId])
+
+  const runSummarize = useCallback(async () => {
+    if (!companyId || !selected) return
+    setSummary({ status: 'loading' })
+    const result = await summarizeEmailThread(companyId, selected.threadId)
+    if (!result.ok) {
+      setSummary({ status: 'error', message: result.error })
+      return
+    }
+    if (!result.body) {
+      setSummary({ status: 'error', message: 'No summary available.' })
+      return
+    }
+    setSummary({ status: 'success', text: result.body.summary })
+  }, [companyId, selected])
+
+  const runDraft = useCallback(async () => {
+    if (!companyId || !selected) return
+    setDraft({ status: 'loading' })
+    const result = await draftEmailReply(companyId, selected.threadId)
+    if (!result.ok) {
+      setDraft({ status: 'error', message: result.error })
+      return
+    }
+    if (!result.body) {
+      setDraft({ status: 'empty' })
+      return
+    }
+    setDraft({ status: 'success', text: result.body.draft })
+  }, [companyId, selected])
 
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, minHeight: 220 }}>
@@ -103,7 +156,25 @@ function EmailClientLive({ snapshot }: { snapshot: CommunicationsSnapshot }) {
           <div style={{ marginBottom: 6, fontWeight: 500, opacity: 1 }}>{selected.subject}</div>
           {selected.snippet || '(no preview available)'}
         </div>
-        <div style={{ display: 'flex', gap: 6, marginTop: 'auto' }}>
+
+        <AssistPanel title="Summary" state={summary} />
+        <AssistPanel title="Draft reply" state={draft} copyable />
+
+        <div style={{ display: 'flex', gap: 6, marginTop: 'auto', flexWrap: 'wrap' }}>
+          <AssistButton
+            label="Summarize"
+            loadingLabel="Summarizing\u2026"
+            state={summary}
+            onClick={runSummarize}
+            disabled={!companyId}
+          />
+          <AssistButton
+            label="Draft reply"
+            loadingLabel="Drafting\u2026"
+            state={draft}
+            onClick={runDraft}
+            disabled={!companyId}
+          />
           <a
             href={`https://mail.google.com/mail/u/0/#inbox/${selected.id}`}
             target="_blank"
@@ -121,6 +192,113 @@ function EmailClientLive({ snapshot }: { snapshot: CommunicationsSnapshot }) {
             Open in Gmail
           </a>
         </div>
+      </div>
+    </div>
+  )
+}
+
+function AssistButton({
+  label,
+  loadingLabel,
+  state,
+  onClick,
+  disabled,
+}: {
+  label: string
+  loadingLabel: string
+  state: AssistState
+  onClick: () => void
+  disabled?: boolean
+}) {
+  const loading = state.status === 'loading'
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled || loading}
+      style={{
+        fontSize: 10,
+        background: '#1a1a1a',
+        color: loading ? '#777' : '#e9e9e9',
+        border: '1px solid #2a2a2a',
+        borderRadius: 5,
+        padding: '4px 10px',
+        cursor: disabled || loading ? 'default' : 'pointer',
+      }}
+    >
+      {loading ? loadingLabel : label}
+    </button>
+  )
+}
+
+function AssistPanel({
+  title,
+  state,
+  copyable,
+}: {
+  title: string
+  state: AssistState
+  copyable?: boolean
+}) {
+  if (state.status === 'idle') return null
+  const isError = state.status === 'error'
+  const isEmpty = state.status === 'empty'
+  const isLoading = state.status === 'loading'
+  const text =
+    state.status === 'success'
+      ? state.text
+      : isError
+      ? state.message
+      : isEmpty
+      ? 'Nothing to reply to here \u2014 the thread is promotional or already handled.'
+      : 'Thinking\u2026'
+  return (
+    <div
+      style={{
+        background: isError ? '#1f0f0f' : '#031a12',
+        border: `1px solid ${isError ? '#3a1515' : '#082e1e'}`,
+        borderRadius: 6,
+        padding: '8px 10px',
+      }}
+    >
+      <div
+        style={{
+          fontSize: 9,
+          fontWeight: 500,
+          color: isError ? '#ef7b7b' : '#5DCAA5',
+          marginBottom: 4,
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+        }}
+      >
+        <span>{title}</span>
+        {copyable && state.status === 'success' ? (
+          <button
+            onClick={() => navigator.clipboard?.writeText(state.text)}
+            style={{
+              fontSize: 9,
+              background: 'transparent',
+              color: '#5DCAA5',
+              border: '1px solid #0f3a26',
+              borderRadius: 4,
+              padding: '1px 6px',
+              cursor: 'pointer',
+            }}
+          >
+            Copy
+          </button>
+        ) : null}
+      </div>
+      <div
+        style={{
+          fontSize: 10,
+          color: '#ffffff',
+          opacity: isLoading ? 0.6 : 0.85,
+          whiteSpace: 'pre-wrap',
+          lineHeight: 1.55,
+        }}
+      >
+        {text}
       </div>
     </div>
   )

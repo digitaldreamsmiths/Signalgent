@@ -14,8 +14,14 @@
 
 /** One message surfaced in the email list / preview. */
 export interface CommunicationsMessage {
-  /** Provider-assigned ID — opaque to widgets. */
+  /** Provider-assigned message ID — opaque to widgets. */
   id: string
+  /**
+   * Provider-assigned thread ID. Multiple messages in the same conversation
+   * share this. Drives the summarize / draft-reply flows (LLM reads the
+   * whole thread, not just the selected message).
+   */
+  threadId: string
   /** Sender display info. `name` may be null when only an email address is known. */
   sender: {
     name: string | null

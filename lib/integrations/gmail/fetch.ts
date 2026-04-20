@@ -213,15 +213,35 @@ export interface GmailHeader {
   value: string
 }
 
+/**
+ * One node in Gmail's MIME tree. `format=full` returns the full tree;
+ * `format=minimal`/`metadata` return only the outer payload with headers
+ * (and for metadata, `parts` may be present but `body.data` is absent).
+ *
+ * Bodies are base64url-encoded (Gmail's non-standard variant with `-` and
+ * `_` instead of `+` and `/`). The MIME extractor decodes from there.
+ */
+export interface GmailMessagePart {
+  partId?: string
+  mimeType?: string
+  filename?: string
+  headers?: GmailHeader[]
+  body?: {
+    size: number
+    data?: string // base64url — only present when format=full
+    attachmentId?: string
+  }
+  parts?: GmailMessagePart[]
+}
+
 export interface GmailMessage {
   id: string
   threadId: string
   labelIds?: string[]
   snippet: string
   internalDate: string // unix ms as string
-  payload: {
+  payload: GmailMessagePart & {
     headers: GmailHeader[]
-    mimeType?: string
   }
   sizeEstimate?: number
 }
