@@ -1155,3 +1155,78 @@ The `NONE` sentinel is load-bearing — without it, the model would write a usel
 - **Styling is inline everywhere.** The `AssistPanel` + `AssistButton` components are inline-styled to match the rest of the widget. Once the widget system moves to CSS modules or a design-token layer (not currently scoped), these should migrate alongside.
 - **Single-company assumption.** The widget pulls `activeCompany` and uses it for every click. Multi-company orgs switching mid-session are handled by `useEffect([selected.threadId])` which resets panel state — but if `activeCompany` changes the panels hold their stale result until the user reselects a message. Minor edge case; revisit if it becomes user-visible.
 - **No retry UI.** On `{ok: false, error: ...}` the panel shows the error but there's no retry button — user has to click Summarize/Draft again. One-liner to add a retry button; deferred in favor of shipping.
+
+## Session 10 — Google Analytics (GA4) integration + shared Google OAuth
+
+**Goal**: Bring the Analytics mode to parity with Communications / Finance — live GA4 data flowing into `TrafficChart`, `EngagementChart`, `PerformanceTable`, `TopPages`, `ConversionStats`, `BounceRate`, `ReferralSources`. First step in a multi-integration future: extract the Google OAuth primitives Gmail has been carrying since Session 6 into a shared module so GA4 (and any future Google-product) reuses them instead of forking.
+
+**Locked scope agreed before build**: OAuth refactor bundled with the GA4 ship. Auto-pick the first GA4 property the user's account has access to (no picker UI in v1). Trailing 7d window for every widget. Reuse the existing analytics widgets — normalize GA4 responses into the exact shapes the widgets already wanted from mock data. Deferred: multi-property picker, date-range picker, real-time API, custom metric/dimension UI, sparklines/deltas beyond the "this week vs last week" ones already on the widgets.
+
+### Architectural choices
+
+- **Shared Google OAuth module is the seam.** `lib/integrations/google/fetch.ts` owns the scope-agnostic primitives (`buildAuthorizeUrl({state, redirectUri, scope})`, `exchangeCode`, `refreshAccessToken`, `revokeToken`) and `lib/integrations/google/tokens.ts` owns the generic `loadGoogleCredentials(companyId, service)` loader with transparent refresh. Gmail's `buildAuthorizeUrl` is now a one-liner that injects `GMAIL_SCOPES`; GA4's connect route calls the shared function with `GA_SCOPES` directly. Same OAuth client ID + secret (`GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`) covers both products — one client in Google Cloud Console handles both with per-service redirect URIs added to its Authorized Redirect URIs list.
+- **Per-service token wrappers stay thin.** `lib/integrations/gmail/tokens.ts` and `lib/integrations/ga/tokens.ts` are now mostly encrypt-on-save + a rename on load (Gmail's `accountIdentifier` → `emailAddress`, GA's → `propertyResourceName`). The refresh-and-persist loop lives once in the shared loader. No duplication, no drift risk.
+- **Property storage uses the existing schema.** The GA4 property resource name (`properties/123456789`) lives in the `account_identifier` column — same shape Gmail uses for the mailbox email. The human-readable display name lives in `account_label` (shown in the chip popover). No schema migration needed; the `metadata` JSON column stays unused for now.
+- **Auto-pick the first property.** On the OAuth callback we call `accountSummaries.list` (Admin API), flatten the tree into a `{resourceName, displayName}` list, and take `[0]`. If the user has five GA4 properties, we pick whichever Google returns first. A multi-property picker is a Session 10.5 candidate — the storage model already supports a per-connection property ID, so the picker just needs UI + a server action to update it.
+- **Seven parallel `runReport` calls, one cache entry.** `lib/integrations/ga/snapshot.ts` fires seven reports in parallel (daily traffic, daily engagement, daily bounce, top pages, referrals, headline current week, headline previous week) and caches the assembled `AnalyticsSnapshot` for 5 minutes. Headline metrics run as two separate single-row reports rather than one two-date-range report — simpler response parsing, no special-case `dateRange` dimension column to key into.
+- **Widget shapes stay stable; normalizer adapts.** The existing widgets expected `{trafficBars, topPages, conversionRate, bounceRate, avgSession, ...}` from mock. The new `AnalyticsSnapshot` shape in `lib/integrations/analytics/model.ts` is a superset — widgets read `snapshot?.trafficBars ?? mock.trafficBars` and flip the live indicator via `markLive()` when snapshot is present. No widget logic branches except on null. This matches the Communications pattern from Session 6.
+- **MetricWithDelta is pre-formatted.** Display-ready strings (`"3.8%"`, `"2m 14s"`, `"+14%"`) are computed in the normalizer, not in the widget. Widgets stay dumb; anyone adding a new widget that wants a different format has to ask for it from the snapshot rather than parse `.rawValue`. Raw numbers are also exposed on `MetricWithDelta.rawValue` for charts that need math.
+- **GA4-specific quirks handled once.** `bounceRate` and `engagementRate` come back as 0–1 ratios (not 0–100 percents); converted in the normalizer. `date` dimension comes back as `YYYYMMDD` strings; converted to three-letter weekday labels in the normalizer. `averageSessionDuration` comes back in seconds; formatted as `"Xm YYs"` in the normalizer. The widgets never see raw GA4 shapes.
+- **Null is a first-class degraded mode (Session 6–9 pattern, carried forward).** No credentials → null. Any `runReport` failure → caught, row marked `error` with the message, returns null. Empty `rows` → returns a snapshot with empty arrays (widgets render a friendly "No page data in the last 7 days" rather than crashing). Same "live or mock" switch the rest of the app already uses.
+
+### New infrastructure files
+
+| File | Purpose |
+|---|---|
+| `lib/integrations/google/fetch.ts` | Shared Google OAuth primitives: `buildAuthorizeUrl({state, redirectUri, scope})`, `exchangeCode`, `refreshAccessToken`, `revokeToken`, `GoogleTokenResponse`. Reads `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`. |
+| `lib/integrations/google/tokens.ts` | Shared loader `loadGoogleCredentials(companyId, service)` — returns a fresh access token + the row's `account_identifier`, refreshing silently if inside the 60 s expiry skew. `loadGoogleRefreshToken` for disconnect flows. |
+| `lib/integrations/ga/fetch.ts` | GA4 API wrappers: `listAccountSummaries` + `flattenProperties` (Admin API, used once at connect time) and `runReport` (Data API, used per snapshot). `GA_SCOPES` constant. Typed request/response shapes for Data API reports. |
+| `lib/integrations/ga/tokens.ts` | `saveGoogleAnalyticsCredentials`, `loadGoogleAnalyticsCredentials`, `loadGoogleAnalyticsRefreshToken`, `getGoogleAnalyticsAccountRow`, `markGoogleAnalyticsDisconnected/Error`, `GOOGLE_ANALYTICS_SERVICE` constant. Thin wrappers around the shared Google helpers. |
+| `lib/integrations/ga/normalize.ts` | `assembleSnapshot` + per-report extractors (`extractDailySessions`, `extractDailyEngagement`, `extractDailyBounceRate`, `extractTopPages`, `extractReferralSources`, `buildHeadlineMetrics`). Converts GA4 0–1 ratios to 0–100 percents, `YYYYMMDD` to weekday labels, seconds to `"Xm YYs"`, raw numbers to display-ready strings with deltas. |
+| `lib/integrations/ga/snapshot.ts` | `getAnalyticsSnapshot(companyId)` — fires seven parallel `runReport` calls, assembles, caches as `ga:snapshot:{companyId}` for 5 min. `invalidateAnalyticsSnapshot` for disconnect. |
+| `lib/integrations/analytics/model.ts` | `AnalyticsSnapshot`, `DailyDatum`, `TopPageDatum`, `ReferralDatum`, `MetricWithDelta`. The shape every analytics widget reads. |
+| `lib/integrations/analytics/read.ts` | `'use server'` — `readAnalyticsSnapshot(companyId)` with `requireCompanyAccess` guard. |
+| `app/api/integrations/google_analytics/connect/route.ts` | Issues signed state, builds authorize URL with GA_SCOPES, redirects. Mirrors Gmail's connect route. |
+| `app/api/integrations/google_analytics/callback/route.ts` | Verifies state, exchanges code, lists GA4 properties, auto-picks the first, saves encrypted tokens + property resource name + display name, invalidates snapshot cache, redirects to `/analytics`. |
+| `hooks/use-google-analytics-connection.ts` | `useGoogleAnalyticsConnectionStatus(companyId)` + `getGoogleAnalyticsConnectUrl(companyId)`. |
+| `components/integrations/google-analytics-connection-chip.tsx` | Three-state chip (not_connected / connected / error) with detail popover, Reconnect + Disconnect buttons. |
+| `contexts/analytics-snapshot-context.tsx` | `AnalyticsSnapshotProvider` + `useAnalyticsSnapshot()`. Client context that loads the snapshot for the active company. |
+
+### Files modified
+
+| File | Change |
+|---|---|
+| `lib/integrations/gmail/fetch.ts` | Stripped ~130 lines of Google OAuth primitives. Now imports + re-exports them from `lib/integrations/google/fetch.ts`, keeping only Gmail-specific `buildAuthorizeUrl` (wraps shared fn with `GMAIL_SCOPES`), `getGmailProfile`, `listMessages`, `listThreads`, `getMessage`, `getThread`. The Gmail connect + callback routes continue to import from this file without knowing the refactor happened. |
+| `lib/integrations/gmail/tokens.ts` | `loadGmailCredentials` is now a 4-line wrapper over `loadGoogleCredentials(companyId, 'gmail')`. `loadGmailRefreshToken` is a 1-line wrapper. Save-side and status helpers unchanged. |
+| `lib/integrations/actions.ts` | `revokeToken` import moved from `gmail/fetch` to `google/fetch` (now the canonical home). Added `getGoogleAnalyticsStatus` + `disconnectGoogleAnalytics` — same shape as the Gmail equivalents. |
+| `components/widgets/content/analytics-widgets.tsx` | Rewrote every widget to pull from `useAnalyticsSnapshot()`. Shared `useLiveSnapshot()` helper flips `markLive()` when present. Mock fallback inline on each widget (same pattern Communications uses). `BounceRate` domain made dynamic (was hardcoded 35–55). `TopPages` renders a friendly empty state when live data has no pages. |
+| `app/(app)/analytics/page.tsx` | Wrapped in `AnalyticsSnapshotProvider`. Renders `GoogleAnalyticsConnectionChip` in the top-right, same layout as `/communications`. |
+
+### Google Cloud Console prerequisites
+
+Three changes the user controls, required once before the first real connection:
+
+1. **Authorized Redirect URIs** (OAuth client, Credentials page): add both `http://localhost:3001/api/integrations/google_analytics/callback` (dev) and `https://<production-domain>/api/integrations/google_analytics/callback` (Vercel).
+2. **Consent screen Data Access** (Google Auth Platform): add `https://www.googleapis.com/auth/analytics.readonly`. Without this, consent screen fails validation at authorize time.
+3. **Enable APIs** in the Cloud project: **Google Analytics Data API** AND **Google Analytics Admin API**. The connect route hits the Admin API (`accountSummaries.list`) at callback time; the snapshot hits the Data API (`properties/{id}:runReport`). Both have their own enablement toggle.
+
+No env vars added — `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` are shared with Gmail.
+
+### Local verification
+
+- `tsc --noEmit` clean across the full codebase after the refactor + new module. Gmail connect / callback / snapshot / widgets all continue to compile against the thinned `lib/integrations/gmail/fetch.ts` (because the OAuth exports are re-exported).
+- `/analytics` loaded in dev; widgets render with mock fallback because the user has not yet connected GA4. "Sample data" indicator visible on each widget. `GoogleAnalyticsConnectionChip` renders with the "Connect Google Analytics" call-to-action in the top-right. No console errors, no server errors.
+- Gmail side: `/communications` loaded after the refactor, snapshot cache still works, triage + response-stats + summaries + drafts all behave identically. No observable regression from the OAuth extraction.
+- OAuth round-trip itself NOT verified end-to-end — Google Cloud Console prerequisites above need the user's action. Once the three changes are live, the flow is: click Connect → consent → callback lists properties → first property's resource name + display name saved → redirect to `/analytics?integration=google_analytics&status=connected` → snapshot fires → widgets flip live.
+
+### Residuals heading into Session 11
+
+- **Multi-property picker.** Auto-picking `[0]` is the simplest-sane default. If the user has multiple GA4 properties, they currently have no way to swap to a different one without disconnecting + reconnecting (and even that just re-picks `[0]`). A picker UI would call `listAccountSummaries` on demand, show the list, and update `account_identifier` in-place. Storage + fetch already support it; only the UI is missing.
+- **No date-range picker.** Trailing 7d is hardcoded in every `runReport` request. The widgets' shapes are range-agnostic, so this is purely UI + server-action plumbing. Expected ask as soon as the user actually looks at data.
+- **Real-time API not used.** GA4 has a separate `runRealtimeReport` for last-30-min data — not called in v1. Useful for a future "Active users right now" tile; low priority since nothing on the current widget grid needs sub-minute freshness.
+- **`services.ts` OAUTH_SCOPES still carries a stale `userinfo.email` entry for Gmail.** That map is only consumed by the legacy `/[service]/connect` handler — my hardened Gmail + GA routes use the constants in `gmail/fetch.ts` and `ga/fetch.ts` directly, so no runtime bug. Flagged as drift; fix when the next of the legacy services (Outlook / LinkedIn / Facebook / QuickBooks) migrates to the hardened pattern.
+- **Admin API call happens inline on the OAuth callback.** Adds ~500 ms to the first-connect redirect. Fine at human UI timescales; if we ever start issuing M2M credentials where latency matters, move property discovery to a background job and land the user on `/analytics` immediately with an "Auto-picking your property…" spinner.
+- **Cache is still in-memory** (Session 6+ carry-over). `ga:snapshot:{companyId}` evaporates on Vercel redeploy along with everything else under the `CacheStore` interface. The Redis/Upstash swap now has four consumer namespaces (`gmail:snapshot:*`, `gmail:triage:*`, `gmail:response-stats:*`, `gmail:thread-context/summary`, `ga:snapshot:*`) — same swap, wider win.
+- **No shared "connection chip" component.** `GmailConnectionChip` and `GoogleAnalyticsConnectionChip` are ~95 % identical. A generic `ConnectionChip` taking service + hook + label + disconnect fn as props would DRY them — but it'd turn into a props-soup for borderline benefit. Revisit when a third chip lands (Outlook, probably).
+- **No end-to-end live verification yet.** Needs user to complete the three Google Cloud Console prerequisites. Once done, a single connect click should flip every analytics widget live; record a log line `[ga] snapshot built …` style (not yet emitted — add if the first live run needs observability).
+- **GA4 admin throttling unmonitored.** `accountSummaries.list` has a modest per-user quota. Only called once per connect, so unlikely to hit — but worth watching in the logs when the first few real connects happen.

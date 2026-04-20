@@ -17,7 +17,7 @@ import {
   STRIPE_SERVICE,
 } from '@/lib/integrations/stripe/tokens'
 import { invalidateFinanceSnapshot } from '@/lib/integrations/stripe/snapshot'
-import { revokeToken } from '@/lib/integrations/gmail/fetch'
+import { revokeToken } from '@/lib/integrations/google/fetch'
 import {
   getGmailAccountRow,
   loadGmailRefreshToken,
@@ -25,6 +25,13 @@ import {
   GMAIL_SERVICE,
 } from '@/lib/integrations/gmail/tokens'
 import { invalidateCommunicationsSnapshot } from '@/lib/integrations/gmail/snapshot'
+import {
+  getGoogleAnalyticsAccountRow,
+  loadGoogleAnalyticsRefreshToken,
+  markGoogleAnalyticsDisconnected,
+  GOOGLE_ANALYTICS_SERVICE,
+} from '@/lib/integrations/ga/tokens'
+import { invalidateAnalyticsSnapshot } from '@/lib/integrations/ga/snapshot'
 import type { ConnectedAccount } from '@/lib/types'
 import type { ConnectedService } from '@/lib/integrations/accounts'
 
@@ -190,6 +197,87 @@ export async function disconnectGmail(companyId: string): Promise<{ ok: boolean;
 
   // Step 4: rerender
   revalidatePath('/communications')
+  revalidatePath('/dashboard')
+
+  return { ok: true }
+}
+
+// ============================================================================
+// Google Analytics
+// ============================================================================
+
+export async function getGoogleAnalyticsStatus(
+  companyId: string
+): Promise<ConnectionStatusView> {
+  try {
+    await requireCompanyAccess(companyId)
+  } catch (err) {
+    if (err instanceof IntegrationAuthError) {
+      return {
+        service: GOOGLE_ANALYTICS_SERVICE,
+        status: 'not_connected',
+        accountLabel: null,
+        connectedAt: null,
+        lastSyncedAt: null,
+        lastError: null,
+      }
+    }
+    throw err
+  }
+
+  const row = await getGoogleAnalyticsAccountRow(companyId)
+  if (!row) {
+    return {
+      service: GOOGLE_ANALYTICS_SERVICE,
+      status: 'not_connected',
+      accountLabel: null,
+      connectedAt: null,
+      lastSyncedAt: null,
+      lastError: null,
+    }
+  }
+  return {
+    service: GOOGLE_ANALYTICS_SERVICE,
+    status: row.status,
+    accountLabel: row.account_label,
+    connectedAt: row.created_at,
+    lastSyncedAt: row.last_synced_at,
+    lastError: row.last_error,
+  }
+}
+
+/**
+ * GA4 disconnect flow — same shape as Gmail:
+ *   1. Revoke refresh token at Google (best effort)
+ *   2. Mark row disconnected + null tokens
+ *   3. Invalidate cache
+ *   4. Revalidate /analytics so widgets re-render
+ */
+export async function disconnectGoogleAnalytics(
+  companyId: string
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    await requireCompanyAccess(companyId)
+  } catch (err) {
+    if (err instanceof IntegrationAuthError) {
+      return { ok: false, error: err.message }
+    }
+    throw err
+  }
+
+  try {
+    const refresh = await loadGoogleAnalyticsRefreshToken(companyId)
+    if (refresh) {
+      await revokeToken(refresh)
+    }
+  } catch (err) {
+    console.warn('GA4 revoke failed; continuing with local disconnect', err)
+  }
+
+  await markGoogleAnalyticsDisconnected(companyId)
+  await invalidateAnalyticsSnapshot(companyId)
+
+  revalidatePath('/analytics')
   revalidatePath('/dashboard')
 
   return { ok: true }

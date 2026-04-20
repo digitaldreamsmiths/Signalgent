@@ -1,19 +1,25 @@
 /**
- * Raw Gmail / Google OAuth API access.
+ * Raw Gmail API access.
  *
- * Two kinds of calls live here:
- *   1. Google OAuth: authorize URL, code → token exchange, refresh, revoke.
- *   2. Gmail data reads on behalf of a connected account (that account's
- *      access token).
+ * Google OAuth primitives (authorize URL, code exchange, refresh, revoke)
+ * moved to `lib/integrations/google/fetch.ts` in Session 10 so GA4 can
+ * reuse them. This module now only contains Gmail-specific data reads.
+ * OAuth entry points are re-exported below for the existing Gmail
+ * connect/callback routes, which import them from here.
  *
  * This module knows nothing about our DB. It takes credentials as args and
  * returns raw Google response objects. Normalization happens in
  * lib/integrations/gmail/normalize.ts.
  */
 
-const GOOGLE_AUTHORIZE_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
-const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
-const GOOGLE_REVOKE_URL = 'https://oauth2.googleapis.com/revoke'
+import {
+  buildAuthorizeUrl as buildGoogleAuthorizeUrl,
+  exchangeCode as exchangeGoogleCode,
+  refreshAccessToken as refreshGoogleAccessToken,
+  revokeToken as revokeGoogleToken,
+  type GoogleTokenResponse,
+} from '../google/fetch'
+
 const GMAIL_API = 'https://gmail.googleapis.com/gmail/v1'
 
 /**
@@ -28,122 +34,26 @@ const GMAIL_API = 'https://gmail.googleapis.com/gmail/v1'
  */
 export const GMAIL_SCOPES = 'https://www.googleapis.com/auth/gmail.readonly'
 
-function clientId(): string {
-  const v = process.env.GOOGLE_CLIENT_ID
-  if (!v) {
-    throw new Error('GOOGLE_CLIENT_ID is not set. Get it from Google Cloud Console > APIs & Services > Credentials.')
-  }
-  return v
-}
-
-function clientSecret(): string {
-  const v = process.env.GOOGLE_CLIENT_SECRET
-  if (!v) {
-    throw new Error('GOOGLE_CLIENT_SECRET is not set. Get it from Google Cloud Console > APIs & Services > Credentials.')
-  }
-  return v
-}
-
 /**
- * Build the Google OAuth authorize URL. `access_type=offline` + `prompt=consent`
- * are required to receive a refresh token (Google only returns a refresh token
- * on first consent unless prompt=consent forces re-issue).
+ * Gmail-specific authorize URL. Thin wrapper over the shared Google
+ * helper — injects Gmail scopes so callers don't need to import two
+ * modules.
  */
 export function buildAuthorizeUrl(args: { state: string; redirectUri: string }): string {
-  const url = new URL(GOOGLE_AUTHORIZE_URL)
-  url.searchParams.set('client_id', clientId())
-  url.searchParams.set('redirect_uri', args.redirectUri)
-  url.searchParams.set('response_type', 'code')
-  url.searchParams.set('scope', GMAIL_SCOPES)
-  url.searchParams.set('state', args.state)
-  url.searchParams.set('access_type', 'offline')
-  url.searchParams.set('prompt', 'consent')
-  return url.toString()
+  return buildGoogleAuthorizeUrl({
+    state: args.state,
+    redirectUri: args.redirectUri,
+    scope: GMAIL_SCOPES,
+  })
 }
 
-export interface GoogleTokenResponse {
-  access_token: string
-  refresh_token?: string
-  expires_in: number // seconds
-  scope: string
-  token_type: string // 'Bearer'
-  id_token?: string
-}
-
-/**
- * Exchange an authorization code for access + refresh tokens. The caller
- * passes the same redirectUri used on the authorize step; Google validates
- * it matches.
- */
-export async function exchangeCode(args: {
-  code: string
-  redirectUri: string
-}): Promise<GoogleTokenResponse> {
-  const body = new URLSearchParams({
-    code: args.code,
-    client_id: clientId(),
-    client_secret: clientSecret(),
-    redirect_uri: args.redirectUri,
-    grant_type: 'authorization_code',
-  })
-  const res = await fetch(GOOGLE_TOKEN_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body,
-  })
-  const text = await res.text()
-  if (!res.ok) {
-    throw new Error(`Google token exchange failed (${res.status}): ${text}`)
-  }
-  return JSON.parse(text) as GoogleTokenResponse
-}
-
-/**
- * Refresh an access token using a long-lived refresh token. Google access
- * tokens expire after ~1 hour; we refresh transparently whenever we detect
- * an about-to-expire token.
- *
- * Note: the response does NOT include a new refresh_token. The original
- * refresh token continues to work until explicitly revoked.
- */
-export async function refreshAccessToken(refreshToken: string): Promise<{
-  access_token: string
-  expires_in: number
-  scope: string
-  token_type: string
-}> {
-  const body = new URLSearchParams({
-    client_id: clientId(),
-    client_secret: clientSecret(),
-    refresh_token: refreshToken,
-    grant_type: 'refresh_token',
-  })
-  const res = await fetch(GOOGLE_TOKEN_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body,
-  })
-  const text = await res.text()
-  if (!res.ok) {
-    throw new Error(`Google token refresh failed (${res.status}): ${text}`)
-  }
-  return JSON.parse(text)
-}
-
-/**
- * Revoke a token at Google. Accepts either an access or refresh token.
- * Best-effort: callers proceed with local cleanup regardless of outcome.
- */
-export async function revokeToken(token: string): Promise<void> {
-  const res = await fetch(`${GOOGLE_REVOKE_URL}?token=${encodeURIComponent(token)}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-  })
-  if (!res.ok) {
-    const text = await res.text().catch(() => '')
-    console.warn(`Google revoke returned ${res.status}: ${text}`)
-  }
-}
+// Re-export shared OAuth helpers so consumers (callback route, disconnect
+// flow) only need one import. These are the exact same functions from
+// `lib/integrations/google/fetch.ts`.
+export { exchangeGoogleCode as exchangeCode }
+export { refreshGoogleAccessToken as refreshAccessToken }
+export { revokeGoogleToken as revokeToken }
+export type { GoogleTokenResponse }
 
 // ------------------------------------------------------------------
 // Gmail reads
