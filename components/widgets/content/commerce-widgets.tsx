@@ -1,16 +1,26 @@
 'use client'
 
+import { useEffect } from 'react'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell } from 'recharts'
 import { COMMERCE_MOCK } from '@/lib/widgets/mock-data'
+import { useCommerceSnapshot } from '@/contexts/commerce-snapshot-context'
+import { useWidgetLiveIndicator } from '../widget-live-indicator'
 
 const c = COMMERCE_MOCK
 
 export function OrderStats() {
+  const { snapshot } = useCommerceSnapshot()
+  const { markLive } = useWidgetLiveIndicator()
+  useEffect(() => {
+    if (snapshot) markLive()
+  }, [snapshot, markLive])
+
+  const live = snapshot?.orderStats
   const stats = [
-    { label: 'Total Orders', value: String(c.totalOrders) },
-    { label: 'Revenue', value: c.totalRevenue },
-    { label: 'Fulfillment', value: c.fulfillmentRate },
-    { label: 'New', value: String(c.newOrders) },
+    { label: 'Total Orders', value: String(live?.totalOrders ?? c.totalOrders) },
+    { label: 'Revenue', value: live?.totalRevenue ?? c.totalRevenue },
+    { label: 'Fulfillment', value: live?.fulfillmentRate ?? c.fulfillmentRate },
+    { label: 'New', value: String(live?.newOrders ?? c.newOrders) },
   ]
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>

@@ -1230,3 +1230,78 @@ No env vars added — `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` are shared wit
 - **No shared "connection chip" component.** `GmailConnectionChip` and `GoogleAnalyticsConnectionChip` are ~95 % identical. A generic `ConnectionChip` taking service + hook + label + disconnect fn as props would DRY them — but it'd turn into a props-soup for borderline benefit. Revisit when a third chip lands (Outlook, probably).
 - **No end-to-end live verification yet.** Needs user to complete the three Google Cloud Console prerequisites. Once done, a single connect click should flip every analytics widget live; record a log line `[ga] snapshot built …` style (not yet emitted — add if the first live run needs observability).
 - **GA4 admin throttling unmonitored.** `accountSummaries.list` has a modest per-user quota. Only called once per connect, so unlikely to hit — but worth watching in the logs when the first few real connects happen.
+
+## Session 11 — Etsy integration (vertical slice: OAuth + OrderStats live)
+
+**Goal**: Flip commerce mode's headline tile from mock to live by shipping a hardened Etsy OAuth + a `CommerceSnapshot` that powers the `OrderStats` widget. First non-Google provider on the hardened pattern — proves the shape works for PKCE-mandatory clients with rotating refresh tokens and non-bearer auth headers. Remaining five commerce widgets (Products, OrdersKanban, RecentActivity, LowStock, RevenueByProduct) stay on `COMMERCE_MOCK` until a follow-up session expands the snapshot to include listings + a richer receipt feed.
+
+**Locked scope agreed before build**: Vertical slice — OAuth + connect chip + snapshot + a single widget (`OrderStats`) live. No feature flag (user is sole user during Etsy's app-approval review). No multi-shop picker (Etsy enforces one shop per user). Trailing 30-day window on the receipts report.
+
+### Architectural choices
+
+- **No reuse of the Google OAuth module.** Etsy's auth/token endpoints are different, it mandates PKCE on every flow, it rotates refresh tokens on every refresh (the new refresh_token must replace the old one), and every Open API v3 call needs an `x-api-key: <ETSY_CLIENT_ID>` header alongside the bearer token. Trying to abstract Google + Etsy behind a single primitive would mean conditional branches everywhere; keeping the Etsy helpers self-contained under `lib/integrations/etsy/` is the simpler seam.
+- **PKCE verifier lives in an HTTP-only cookie, not in the state token.** Our existing `oauth-state.ts` is HMAC-signed but the payload is plaintext base64url — visible in URLs, logs, and referrer headers. A verifier there would leak. Instead, we write `etsy_pkce_<key>` as an HTTP-only, path-scoped (`/api/integrations/etsy`), 10-minute cookie, where `<key>` is the first 16 hex chars of `sha256(state)`. Both sides have the state token (connect just issued it, callback receives it as a query param), so the derived key is deterministic without exposing the nonce. No change to `oauth-state.ts`, which keeps Gmail + GA untouched.
+- **Access-token prefix is the user_id.** Etsy access tokens are formatted `{user_id}.{opaque}`. `extractUserIdFromToken()` parses the prefix so shop discovery (`GET /v3/application/users/{user_id}/shops`) doesn't need an extra round-trip to a profile endpoint.
+- **One shop per user, so no picker.** Etsy enforces this at the account level; the discovery endpoint returns a single shop object (not a list). If the user hasn't opened a shop, discovery returns 404 — we catch that and redirect with `?status=error&reason=No Etsy shop found…` rather than saving an empty connection.
+- **`account_identifier` stores `shop_id`, `account_label` stores `shop_name`, `metadata.currency_code` stores the ISO 4217 code.** Same schema pattern Gmail (email) and GA4 (property resource name) already use. The currency lives in metadata because the receipts endpoint doesn't echo it back; caching it at connect time avoids a shop re-fetch on every snapshot refresh.
+- **Pagination hard-capped at 500 receipts.** `listShopReceipts` pages at 100 per call for up to 5 pages. Enough for any reasonable small-business volume over a 30-day window; bounded worst-case for pathologically active shops so the snapshot doesn't spin.
+- **`CommerceSnapshot.orderStats` is a superset of what `OrderStats` displays.** Widget reads `snapshot?.orderStats?.totalOrders ?? c.totalOrders` with the same null-is-mock pattern every other mode uses. `markLive()` flips when the snapshot is present — the "Sample data" badge goes away automatically.
+- **Currency formatting is pre-baked in the normalizer.** `totalRevenue` arrives as a display-ready string ("$9,340.00" or "9,340.00 XYZ" for unknown codes). Widget stays dumb; any future widget that needs a different format asks for it from the snapshot.
+- **Null is a first-class degraded mode (Session 6+ pattern carried forward).** No credentials → null. Any provider error → caught, row marked `error`, snapshot returned null, widget falls back to mock. The "Sample data" badge plus the chip's error state are the user-visible feedback.
+- **No Etsy revoke endpoint.** Etsy doesn't document an OAuth revoke. Disconnect drops our copy and invalidates the cache; the refresh token ages out of Etsy's 90-day window on its own. That's the most we can promise without public-domain tooling.
+
+### New infrastructure files
+
+| File | Purpose |
+|---|---|
+| `supabase/migrations/20260420000000_add_etsy_service.sql` | Widens `connected_accounts.service` check constraint to include `'etsy'`. |
+| `lib/integrations/etsy/fetch.ts` | Etsy-specific OAuth + API primitives: `ETSY_SCOPES` (`transactions_r shops_r`), `generatePkce()`, `buildAuthorizeUrl`, `exchangeCode`, `refreshAccessToken`, `extractUserIdFromToken`, `getUserShop`, `listShopReceipts`. Typed `EtsyReceipt` / `EtsyShop`. |
+| `lib/integrations/etsy/tokens.ts` | `saveEtsyCredentials`, `loadEtsyCredentials` (with transparent refresh that persists the rotated refresh_token), `loadEtsyRefreshToken`, `getEtsyAccountRow`, `markEtsy{Disconnected,Error}`, `ETSY_SERVICE`. |
+| `lib/integrations/etsy/pkce-cookie.ts` | `stateCookieKey()` (sha256-derived key from the state token), `writePkceCookie`, `readPkceCookie`, `clearPkceCookie`. HTTP-only, `/api/integrations/etsy`-scoped, 10 min. |
+| `lib/integrations/etsy/normalize.ts` | `buildOrderStats()` — filters to non-canceled receipts in the window, computes totalOrders / newOrders / processingOrders / shippedOrders, sums `grandtotal` for paid receipts into a formatted currency string, computes `fulfillmentRate` as shipped/total. |
+| `lib/integrations/etsy/snapshot.ts` | `getCommerceSnapshot(companyId)` — paginates `listShopReceipts`, assembles, caches as `etsy:snapshot:{companyId}` for 5 min. `invalidateCommerceSnapshot` for disconnect/callback. |
+| `lib/integrations/commerce/model.ts` | `CommerceSnapshot` + `OrderStats` shape. V1 only populates `orderStats`; room to add `products`, `ordersKanban`, etc. in Session 12. |
+| `lib/integrations/commerce/read.ts` | `'use server'` — `readCommerceSnapshot(companyId)` with `requireCompanyAccess` guard. |
+| `app/api/integrations/etsy/connect/route.ts` | Validates company access, generates PKCE, issues signed state, writes PKCE cookie keyed by `sha256(state)`, redirects to Etsy. |
+| `app/api/integrations/etsy/callback/route.ts` | Verifies state + ownership, recovers PKCE verifier from cookie (clears unconditionally), exchanges code, resolves shop via `users/{user_id}/shops`, saves encrypted tokens + `currency_code` in metadata, invalidates snapshot cache, redirects to `/commerce`. |
+| `hooks/use-etsy-connection.ts` | `useEtsyConnectionStatus(companyId)` + `getEtsyConnectUrl(companyId)`. |
+| `components/integrations/etsy-connection-chip.tsx` | Three-state chip (not_connected / connected / error) + detail popover with Reconnect + Disconnect. |
+| `contexts/commerce-snapshot-context.tsx` | `CommerceSnapshotProvider` + `useCommerceSnapshot()`. Client context that loads the snapshot for the active company on mount. |
+
+### Files modified
+
+| File | Change |
+|---|---|
+| `lib/types/database.types.ts` | Added `'etsy'` to the `service` union on both `Row` and `Insert` shapes of `connected_accounts`. |
+| `lib/integrations/actions.ts` | Added `getEtsyStatus` + `disconnectEtsy` (same shape as Gmail/GA equivalents, minus the provider-side revoke step since Etsy doesn't expose one). |
+| `components/widgets/content/commerce-widgets.tsx` | `OrderStats` now reads `useCommerceSnapshot()` with `markLive()` on snapshot presence. Live values null-coalesce into the mock defaults — other commerce widgets (Products, OrdersKanban, RecentActivity, LowStock, RevenueByProduct) are untouched and continue reading `COMMERCE_MOCK`. |
+| `app/(app)/commerce/page.tsx` | Wrapped in `CommerceSnapshotProvider`. Renders `EtsyConnectionChip` in the top-right, same layout as `/analytics`. |
+
+### Etsy app settings + env prerequisites
+
+User-controlled, required once before the first real connect attempt:
+
+1. **Authorized Redirect URIs** in the Etsy app settings: both `http://localhost:3001/api/integrations/etsy/callback` (dev) and `https://<production-domain>/api/integrations/etsy/callback` (Vercel).
+2. **Env vars**: `ETSY_CLIENT_ID=<keystring>` + `ETSY_CLIENT_SECRET=<shared_secret>` in `.env.local` and in Vercel project settings.
+3. **Database migration**: apply `20260420000000_add_etsy_service.sql` to the Supabase project (or rely on whatever migration-apply workflow is in use).
+
+No scopes outside `transactions_r shops_r` — anything else would expand the consent screen.
+
+### Local verification
+
+- `tsc --noEmit` clean across the full codebase after all new files + the widget + page + actions edits.
+- `/commerce` loaded in dev with the feature disconnected: "Connect Etsy" chip renders in the top-right in the `EF9F27` accent color, `OrderStats` falls back to mock values (47 / $9,340 / 94% / 12) with the "Sample data" indicator visible. All other commerce widgets unchanged. No regressions in the rest of the app (Gmail, GA4, Stripe chips/snapshots all still work).
+- OAuth round-trip itself NOT verified end-to-end — blocked on the user configuring Etsy app callback URLs + `.env.local` values + running the new migration. Once those three are in place, a click on "Connect Etsy" should: redirect → Etsy consent → callback → auto-resolve shop → save → redirect to `/commerce?integration=etsy&status=connected` → snapshot fires → OrderStats flips live.
+
+### Residuals heading into Session 12
+
+- **Five commerce widgets still on mock.** Products, OrdersKanban, RecentActivity, LowStock, RevenueByProduct all read `COMMERCE_MOCK` verbatim. Filling them needs an Etsy listings feed (`GET /v3/application/shops/{shop_id}/listings?state=active` for product + stock data) and a transactions-vs-receipts pass to populate recent-activity events. The snapshot shape is a superset, so it's additive — widgets flip one at a time without touching OAuth.
+- **No OAuth-error banner on `/commerce?integration=etsy&status=error&reason=...`.** Same residual called out for `/analytics` in Session 10. The callback redirects with structured query params; the mode page silently ignores them. A generic client-side banner that reads `?integration`/`?status`/`?reason` and shows a dismissible toast would serve every integration.
+- **No shop picker / no shop swap.** Etsy enforces one shop per user so this is less of a gap than GA4's multi-property case — but if a user ever wants to swap Etsy accounts they currently need to disconnect + reconnect. Fine for v1.
+- **PKCE cookie collides on concurrent connect flows.** Unlikely in practice (user has to click Connect twice in two tabs within 10 minutes for the same state hash to collide, and our derived key is 64 bits of sha256 entropy), but worth noting: the cookie is keyed per state, so two live flows simply write + read distinct cookie slots. Only a pathological attacker crafting collisions matters, which requires the OAuth state secret.
+- **`CommerceSnapshot.orderStats.newOrders === processingOrders`.** Etsy conflates "paid but not shipped" into a single bucket; the snapshot exposes both fields for widget symmetry with `COMMERCE_MOCK`, but they're identical in live data. When the widgets expand, this field should either be removed or repurposed (e.g. `processingOrders` = `status === 'payment processing'` which is a transient state for credit-card captures).
+- **No log line on snapshot build.** Same call-out as GA4 Session 10 — fine until observability becomes a felt need.
+- **Cache is still in-memory** (Session 6+ carry-over). Adds another namespace: `etsy:snapshot:*`. Redis/Upstash swap now has five consumer namespaces.
+- **Etsy app is pending approval at shipping time.** Dev keystring + secret work against the sandbox, but other users can't go through the consent screen until Etsy approves the app. User is sole user during the review window.
+- **`EtsyConnectionChip` is the third ~95%-identical chip.** The Session 10 residual called for revisiting a generic chip when a third provider landed. Still holding off — the props-soup cost outweighs the duplication cost so long as chip count is small. Worth a ~1-hr extract when Outlook lands (the fourth).
+- **Etsy rate limits unmonitored.** Etsy v3 enforces 10 req/s per app and 10 000 req/day per app. Our snapshot fires at most 5 requests per build and caches for 5 min, so a single company hits the endpoint ~1 req/min when actively viewing `/commerce`. Well under the envelope; worth a log if the first live run surfaces anything unexpected.

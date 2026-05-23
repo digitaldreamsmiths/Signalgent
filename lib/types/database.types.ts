@@ -111,7 +111,7 @@ export interface Database {
         Row: {
           id: string
           company_id: string
-          service: 'gmail' | 'outlook' | 'linkedin_page' | 'facebook_page' | 'shopify' | 'stripe_account' | 'quickbooks' | 'plaid' | 'google_analytics'
+          service: 'gmail' | 'outlook' | 'linkedin_page' | 'facebook_page' | 'shopify' | 'stripe_account' | 'quickbooks' | 'plaid' | 'google_analytics' | 'etsy'
           access_token: string | null
           refresh_token: string | null
           token_expires_at: string | null
@@ -130,7 +130,7 @@ export interface Database {
         Insert: {
           id?: string
           company_id: string
-          service: 'gmail' | 'outlook' | 'linkedin_page' | 'facebook_page' | 'shopify' | 'stripe_account' | 'quickbooks' | 'plaid' | 'google_analytics'
+          service: 'gmail' | 'outlook' | 'linkedin_page' | 'facebook_page' | 'shopify' | 'stripe_account' | 'quickbooks' | 'plaid' | 'google_analytics' | 'etsy'
           access_token?: string | null
           refresh_token?: string | null
           token_expires_at?: string | null

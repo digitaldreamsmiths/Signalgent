@@ -32,6 +32,12 @@ import {
   GOOGLE_ANALYTICS_SERVICE,
 } from '@/lib/integrations/ga/tokens'
 import { invalidateAnalyticsSnapshot } from '@/lib/integrations/ga/snapshot'
+import {
+  getEtsyAccountRow,
+  markEtsyDisconnected,
+  ETSY_SERVICE,
+} from '@/lib/integrations/etsy/tokens'
+import { invalidateCommerceSnapshot } from '@/lib/integrations/etsy/snapshot'
 import type { ConnectedAccount } from '@/lib/types'
 import type { ConnectedService } from '@/lib/integrations/accounts'
 
@@ -278,6 +284,77 @@ export async function disconnectGoogleAnalytics(
   await invalidateAnalyticsSnapshot(companyId)
 
   revalidatePath('/analytics')
+  revalidatePath('/dashboard')
+
+  return { ok: true }
+}
+
+// ============================================================================
+// Etsy
+// ============================================================================
+
+export async function getEtsyStatus(companyId: string): Promise<ConnectionStatusView> {
+  try {
+    await requireCompanyAccess(companyId)
+  } catch (err) {
+    if (err instanceof IntegrationAuthError) {
+      return {
+        service: ETSY_SERVICE,
+        status: 'not_connected',
+        accountLabel: null,
+        connectedAt: null,
+        lastSyncedAt: null,
+        lastError: null,
+      }
+    }
+    throw err
+  }
+
+  const row = await getEtsyAccountRow(companyId)
+  if (!row) {
+    return {
+      service: ETSY_SERVICE,
+      status: 'not_connected',
+      accountLabel: null,
+      connectedAt: null,
+      lastSyncedAt: null,
+      lastError: null,
+    }
+  }
+  return {
+    service: ETSY_SERVICE,
+    status: row.status,
+    accountLabel: row.account_label,
+    connectedAt: row.created_at,
+    lastSyncedAt: row.last_synced_at,
+    lastError: row.last_error,
+  }
+}
+
+/**
+ * Etsy disconnect flow:
+ *   1. Mark row disconnected + null tokens. (Etsy has no documented
+ *      OAuth revoke endpoint, so we drop our copy and rely on the
+ *      90-day refresh-token window to age out at Etsy's side.)
+ *   2. Invalidate cache
+ *   3. Revalidate /commerce so widgets re-render
+ */
+export async function disconnectEtsy(
+  companyId: string
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    await requireCompanyAccess(companyId)
+  } catch (err) {
+    if (err instanceof IntegrationAuthError) {
+      return { ok: false, error: err.message }
+    }
+    throw err
+  }
+
+  await markEtsyDisconnected(companyId)
+  await invalidateCommerceSnapshot(companyId)
+
+  revalidatePath('/commerce')
   revalidatePath('/dashboard')
 
   return { ok: true }
