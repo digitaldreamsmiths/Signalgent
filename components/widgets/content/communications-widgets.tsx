@@ -122,6 +122,10 @@ function EmailClientLive({ snapshot }: { snapshot: CommunicationsSnapshot }) {
 
   const [summary, setSummary] = useState<AssistState>({ status: 'idle' })
   const [draft, setDraft] = useState<AssistState>({ status: 'idle' })
+  const [replyText, setReplyText] = useState('')
+  /** Tracks whether the textarea content came from the AI draft. Reset
+   *  when the user starts editing. Purely a UI badge, not a constraint. */
+  const [replyFromAi, setReplyFromAi] = useState(false)
   const [sendState, setSendState] = useState<ActionState>({ status: 'idle' })
   const [archiveState, setArchiveState] = useState<ActionState>({ status: 'idle' })
 
@@ -151,6 +155,8 @@ function EmailClientLive({ snapshot }: { snapshot: CommunicationsSnapshot }) {
   useEffect(() => {
     setSummary({ status: 'idle' })
     setDraft({ status: 'idle' })
+    setReplyText('')
+    setReplyFromAi(false)
     setSendState({ status: 'idle' })
     setArchiveState({ status: 'idle' })
     if (
@@ -177,19 +183,23 @@ function EmailClientLive({ snapshot }: { snapshot: CommunicationsSnapshot }) {
       return
     }
     setDraft({ status: 'success', text: result.body.draft })
+    setReplyText(result.body.draft)
+    setReplyFromAi(true)
   }, [companyId, selected])
 
   const runSend = useCallback(async () => {
-    if (!companyId || !selected || draft.status !== 'success') return
+    if (!companyId || !selected || !replyText.trim()) return
     setSendState({ status: 'running' })
-    const result = await sendEmailReply(companyId, selected.threadId, draft.text)
+    const result = await sendEmailReply(companyId, selected.threadId, replyText)
     if (!result.ok) {
       setSendState({ status: 'error', message: result.error })
       return
     }
     setSendState({ status: 'done' })
+    setReplyText('')
+    setReplyFromAi(false)
     await refresh()
-  }, [companyId, selected, draft, refresh])
+  }, [companyId, selected, replyText, refresh])
 
   const runArchive = useCallback(async () => {
     if (!companyId || !selected) return
@@ -289,7 +299,17 @@ function EmailClientLive({ snapshot }: { snapshot: CommunicationsSnapshot }) {
             </div>
 
             <AssistPanel title="Summary" state={summary} />
-            <AssistPanel title="Draft reply" state={draft} copyable />
+
+            <ReplyEditor
+              value={replyText}
+              onChange={(v) => {
+                setReplyText(v)
+                if (replyFromAi) setReplyFromAi(false)
+                if (sendState.status !== 'idle') setSendState({ status: 'idle' })
+              }}
+              fromAi={replyFromAi}
+              draft={draft}
+            />
 
             <div style={{ display: 'flex', gap: 6, marginTop: 'auto', flexWrap: 'wrap', alignItems: 'center' }}>
               <AssistButton
@@ -300,14 +320,14 @@ function EmailClientLive({ snapshot }: { snapshot: CommunicationsSnapshot }) {
                 disabled={!companyId}
               />
               <AssistButton
-                label="Draft reply"
+                label={replyText ? 'Replace with AI draft' : 'Draft with AI'}
                 loadingLabel="Drafting\u2026"
                 state={draft}
                 onClick={runDraft}
                 disabled={!companyId}
               />
               <SendButton
-                draftReady={draft.status === 'success'}
+                hasContent={replyText.trim().length > 0}
                 state={sendState}
                 onClick={runSend}
               />
@@ -421,15 +441,15 @@ const kbdStyle: React.CSSProperties = {
 }
 
 function SendButton({
-  draftReady,
+  hasContent,
   state,
   onClick,
 }: {
-  draftReady: boolean
+  hasContent: boolean
   state: ActionState
   onClick: () => void
 }) {
-  const disabled = !draftReady && state.status === 'idle'
+  const disabled = !hasContent && state.status === 'idle'
   let label = 'Send'
   let background = '#1D9E75'
   let color = '#fff'
@@ -446,7 +466,13 @@ function SendButton({
     <button
       onClick={onClick}
       disabled={disabled || state.status === 'running' || state.status === 'done'}
-      title={state.status === 'error' ? state.message : draftReady ? 'Send the drafted reply' : 'Draft a reply first'}
+      title={
+        state.status === 'error'
+          ? state.message
+          : hasContent
+            ? 'Send the reply'
+            : 'Write or draft a reply first'
+      }
       style={{
         fontSize: 10,
         background: disabled ? '#161616' : background,
@@ -459,6 +485,55 @@ function SendButton({
     >
       {label}
     </button>
+  )
+}
+
+function ReplyEditor({
+  value,
+  onChange,
+  fromAi,
+  draft,
+}: {
+  value: string
+  onChange: (next: string) => void
+  fromAi: boolean
+  draft: AssistState
+}) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ fontSize: 10, color: '#999' }}>Your reply</div>
+        <div style={{ fontSize: 9, color: '#666', minHeight: 12 }}>
+          {draft.status === 'loading' && 'Drafting with AI…'}
+          {draft.status === 'empty' && 'AI thought no reply was needed — write your own if you disagree.'}
+          {draft.status === 'error' && (
+            <span style={{ color: '#c88' }}>Draft failed: {draft.message}</span>
+          )}
+          {draft.status === 'success' && fromAi && value && 'AI-drafted — feel free to edit'}
+          {draft.status === 'success' && !fromAi && 'Edited from AI draft'}
+        </div>
+      </div>
+      <textarea
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="Write a reply, or click &ldquo;Draft with AI&rdquo; to start from a model-generated draft you can edit."
+        rows={6}
+        style={{
+          width: '100%',
+          fontSize: 11,
+          lineHeight: 1.5,
+          color: '#fff',
+          background: '#0c1612',
+          border: `1px solid ${fromAi && value ? '#1D9E75' : '#1f1f1f'}`,
+          borderRadius: 6,
+          padding: '8px 10px',
+          fontFamily: 'inherit',
+          resize: 'vertical',
+          minHeight: 80,
+          outline: 'none',
+        }}
+      />
+    </div>
   )
 }
 
