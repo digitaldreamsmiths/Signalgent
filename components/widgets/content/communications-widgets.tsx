@@ -114,8 +114,8 @@ function EmailClientLive({ snapshot }: { snapshot: CommunicationsSnapshot }) {
   }, [companyId, selected])
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, minHeight: 220 }}>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 0, overflow: 'hidden' }}>
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, height: 'clamp(360px, 56vh, 600px)' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 0, overflowY: 'auto', minHeight: 0 }}>
         {messages.map((msg, i) => (
           <button
             key={msg.id}
@@ -150,7 +150,7 @@ function EmailClientLive({ snapshot }: { snapshot: CommunicationsSnapshot }) {
         ))}
       </div>
 
-      <div style={{ padding: '0 8px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ padding: '0 8px', display: 'flex', flexDirection: 'column', gap: 10, overflowY: 'auto', minHeight: 0 }}>
         <div style={{ fontSize: 13, fontWeight: 500, color: '#5DCAA5' }}>{senderLabel(selected)}</div>
         <div style={{ fontSize: 11, color: '#ffffff', lineHeight: 1.6, opacity: 0.8 }}>
           <div style={{ marginBottom: 6, fontWeight: 500, opacity: 1 }}>{selected.subject}</div>
@@ -309,8 +309,8 @@ function EmailClientMock() {
   const selected = m.emails[active]
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, minHeight: 220 }}>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 0, overflow: 'hidden' }}>
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, height: 'clamp(360px, 56vh, 600px)' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 0, overflowY: 'auto', minHeight: 0 }}>
         {m.emails.map((email, i) => (
           <button
             key={i}
@@ -343,7 +343,7 @@ function EmailClientMock() {
         ))}
       </div>
 
-      <div style={{ padding: '0 8px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ padding: '0 8px', display: 'flex', flexDirection: 'column', gap: 10, overflowY: 'auto', minHeight: 0 }}>
         <div style={{ fontSize: 13, fontWeight: 500, color: '#5DCAA5' }}>{selected.sender}</div>
         <div style={{ fontSize: 11, color: '#ffffff', lineHeight: 1.6, opacity: 0.8 }}>
           {selected.subject}. The full thread would appear here once connected.

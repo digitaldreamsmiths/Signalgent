@@ -53,7 +53,7 @@ export const WIDGET_REGISTRY: WidgetDefinition[] = [
 export const DEFAULT_LAYOUTS: Record<string, string[]> = {
   dashboard: ['intelligence-briefing', 'mode-tiles', 'setup-checklist', 'suggested-actions'],
   marketing: ['mkt-kpi-row', 'mkt-content-calendar', 'mkt-platform-breakdown', 'mkt-engagement-trend', 'mkt-recent-posts'],
-  communications: ['comms-email-client', 'comms-response-stats', 'comms-unread-summary', 'comms-priority-breakdown'],
+  communications: ['comms-response-stats', 'comms-unread-summary', 'comms-priority-breakdown', 'comms-email-client'],
   finance: ['fin-kpi-row', 'fin-revenue-chart', 'fin-expense-breakdown', 'fin-cashflow', 'fin-recent-transactions'],
   commerce: ['com-order-stats', 'com-products', 'com-orders-kanban', 'com-recent-activity'],
   analytics: ['anl-traffic-chart', 'anl-engagement-chart', 'anl-top-pages', 'anl-conversion-stats', 'anl-performance-table'],
