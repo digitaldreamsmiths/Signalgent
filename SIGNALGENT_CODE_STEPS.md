@@ -1381,3 +1381,70 @@ End-to-end verified after the change: OAuth callback resolves the shop (`Digital
 - **No log line on snapshot build (still).** Carried forward from Sessions 10 and 11.
 - **`EtsyConnectionChip` still the only ~95%-identical chip standout.** Generic chip extraction still on hold for the same reason as Session 11 — the props-soup cost outweighs the duplication cost until Outlook (provider #4) lands.
 - **Cache is still in-memory.** Same Redis/Upstash swap residual as before, now with the snapshot carrying considerably more payload (a few hundred-K vs Session 11's tens-of-K).
+
+---
+
+## Session 13 — LinkedIn OAuth (identity-only foundation; widgets remain on mock)
+
+**Goal**: Plant the OAuth + connection-chip foundation for the Marketing mode's first integration. LinkedIn's dev-mode API is significantly more restrictive than Etsy's: the only universally-available scopes (`openid profile email`) give us identity (name, picture, email) but NOT post / share data. So v1 ships the connection chip and stores the access token; the existing five marketing widgets stay on `MARKETING_MOCK` with "Sample data" badges until a follow-up session — after the LinkedIn app gets approved for Marketing Developer Platform scopes — wires real post data.
+
+### Locked scope
+
+- OAuth round-trip + PKCE, identity-tier scopes only (`openid profile email`).
+- New `linkedin` value in the `connected_accounts.service` enum (distinct from the placeholder `linkedin_page` that the initial schema reserved for the eventual company-page integration).
+- Connect chip on `/marketing` (top-right, marketing-mode coral). Same three states as the Etsy / GA4 / Gmail chips.
+- **No live widget yet.** All five marketing widgets continue reading `MARKETING_MOCK`. The chip is the only visible affordance of the integration in this session.
+- No `MarketingSnapshot` model file — deferred until the post-approval session can populate it with real shapes (publishedPosts, recentPosts, engagementTrend, etc.).
+
+### Architectural choices
+
+- **No reuse of the Google OAuth module.** Same reasoning as Etsy: distinct auth endpoints, distinct refresh-token semantics (member-tier doesn't issue a refresh token at all), no shared API base. Keeping `lib/integrations/linkedin/` self-contained is simpler than threading conditionals through the Google helper.
+- **PKCE verifier lives in an HTTP-only cookie keyed by sha256(state).** Same pattern as Etsy. LinkedIn supports both the classic confidential-client flow and PKCE — we use PKCE because it makes the connect/callback shape symmetric across providers and lets us reuse the cookie-handling pattern without thinking.
+- **Member-tier tokens have no refresh.** LinkedIn returns a ~60-day access token and NO refresh token for OIDC-only scopes. `loadLinkedInCredentials` therefore doesn't have a transparent-refresh branch; expired tokens are flagged as `error` and the user reconnects. Marketing Developer Platform scopes DO issue refresh tokens, but that's wired in the follow-up session.
+- **`account_identifier` stores the LinkedIn `sub`, `account_label` stores the display name, metadata holds `picture_url` + `email`.** Matches the shape every other provider uses: identifier is stable + opaque, label is human-readable. Picture and email live in metadata so the chip popover can surface them in a follow-up without a schema migration.
+- **Service value is `linkedin`, not `linkedin_page`.** The initial schema reserved `linkedin_page` for a future company-page integration; the member-tier OAuth we're shipping first is a distinct service from a separate app perspective (different scopes, different endpoints). The migration adds `linkedin` alongside the existing value so both can coexist if a future commercial-page integration ever lands without colliding on the same row.
+- **No revoke endpoint on disconnect.** LinkedIn doesn't expose an OIDC-token revoke. Disconnect drops our copy of the token; the access token ages out of LinkedIn's 60-day window on its own.
+
+### New infrastructure files
+
+| File | Purpose |
+|---|---|
+| `supabase/migrations/20260524000000_add_linkedin_service.sql` | Adds `'linkedin'` to the `connected_accounts.service` check constraint. |
+| `lib/integrations/linkedin/fetch.ts` | OAuth + OIDC API primitives: `LINKEDIN_SCOPES` (`openid profile email`), `generatePkce()`, `buildAuthorizeUrl`, `exchangeCode`, `getUserinfo`. Typed `LinkedInTokenResponse` / `LinkedInUserinfo`. |
+| `lib/integrations/linkedin/tokens.ts` | `saveLinkedInCredentials`, `loadLinkedInCredentials` (no transparent refresh), `getLinkedInAccountRow`, `markLinkedIn{Disconnected,Error}`, `LINKEDIN_SERVICE`. |
+| `lib/integrations/linkedin/pkce-cookie.ts` | `stateCookieKey()` (sha256-derived key from the state token), `writePkceCookie`, `readPkceCookie`, `clearPkceCookie`. HTTP-only, `/api/integrations/linkedin`-scoped, 10 min. |
+| `app/api/integrations/linkedin/connect/route.ts` | Validates company access, generates PKCE, issues signed state, writes PKCE cookie keyed by `sha256(state)`, redirects to LinkedIn's consent screen. |
+| `app/api/integrations/linkedin/callback/route.ts` | Verifies state + ownership, recovers PKCE verifier from cookie (clears unconditionally), exchanges code, fetches `/v2/userinfo`, saves encrypted token + identity, redirects to `/marketing`. |
+| `hooks/use-linkedin-connection.ts` | `useLinkedInConnectionStatus(companyId)` + `getLinkedInConnectUrl(companyId)`. |
+| `components/integrations/linkedin-connection-chip.tsx` | Three-state chip (not_connected / connected / error) + detail popover with Reconnect + Disconnect. Renders in marketing-mode coral. |
+
+### Files modified
+
+| File | Change |
+|---|---|
+| `lib/types/database.types.ts` | Added `'linkedin'` to the `service` union on both `Row` and `Insert` shapes of `connected_accounts`. |
+| `lib/integrations/actions.ts` | Added `getLinkedInStatus` + `disconnectLinkedIn` (same shape as Etsy/GA equivalents). |
+| `app/(app)/marketing/page.tsx` | Renders `LinkedInConnectionChip` in the top-right above the widget grid. |
+
+### LinkedIn app settings + env prerequisites
+
+User-controlled, required once before the first real connect attempt:
+
+1. **Authorized Redirect URLs** in the LinkedIn app's Auth tab: both `http://localhost:3001/api/integrations/linkedin/callback` (dev) and `https://<production-domain>/api/integrations/linkedin/callback` (Vercel).
+2. **Products tab → enable "Sign In with LinkedIn using OpenID Connect".** Grants the three scopes (`openid`, `profile`, `email`) without app review.
+3. **Env vars**: `LINKEDIN_CLIENT_ID=<client_id>` + `LINKEDIN_CLIENT_SECRET=<client_secret>` in `.env.local` and Vercel project settings.
+4. **Database migration**: apply `20260524000000_add_linkedin_service.sql` to the Supabase project.
+
+### Local verification
+
+- `tsc --noEmit` clean across the codebase.
+- `/marketing` loaded in dev with LinkedIn disconnected: chip renders in the coral marketing accent, all five widgets continue showing `MARKETING_MOCK` with their existing "Sample data" indicators. No regressions in other modes.
+- OAuth round-trip NOT verified end-to-end at session-close — the LinkedIn app on the user's side hasn't been created yet (parallels Etsy Session 11's same blocker). When the four prereqs above are in place, a click on "Connect LinkedIn" should redirect to LinkedIn → consent → callback → save → redirect to `/marketing?integration=linkedin&status=connected` with the chip flipped to "LinkedIn connected".
+
+### Residuals heading into Session 13.1 / future sessions
+
+- **Five marketing widgets remain on `MARKETING_MOCK`.** Filling them requires LinkedIn approving the app for Marketing Developer Platform / Community Management API scopes — multi-week external review. Once approved, a session adds a `MarketingSnapshot` model, `lib/integrations/marketing/`, a `lib/integrations/linkedin/normalize.ts`, and wires the widgets the same way Session 12 wired commerce. Widget shapes already exist (`MARKETING_MOCK` is the spec).
+- **No refresh-token handling.** When the 60-day access token expires, the user gets an `error` status and reconnects. Fine for v1; when post-data scopes land in the follow-up, those DO issue refresh tokens and `loadLinkedInCredentials` gains a refresh branch (same shape as `loadEtsyCredentials`).
+- **`LinkedInConnectionChip` is the fourth ~95%-identical chip.** The Session 11/12 residual called for revisiting a generic chip when a fourth provider landed. We've now landed it. The duplication cost finally exceeds the abstraction cost — worth a ~1-hour extract pass as a standalone session: generic `<ProviderConnectionChip provider="linkedin" status={...} accentVar="--mode-accent" onConnect={...} onDisconnect={...} />` consumed by four thin wrappers.
+- **No connection picture on the chip.** We persist `picture_url` and `email` in metadata but don't render them yet. Trivial to surface in the popover when the chip extraction lands.
+- **No OAuth-error banner on `/marketing?integration=linkedin&status=error&reason=...`.** Same residual called out for Etsy and GA4. The generic-banner extraction would now cover four providers in one shot.

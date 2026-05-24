@@ -38,6 +38,11 @@ import {
   ETSY_SERVICE,
 } from '@/lib/integrations/etsy/tokens'
 import { invalidateCommerceSnapshot } from '@/lib/integrations/etsy/snapshot'
+import {
+  getLinkedInAccountRow,
+  markLinkedInDisconnected,
+  LINKEDIN_SERVICE,
+} from '@/lib/integrations/linkedin/tokens'
 import type { ConnectedAccount } from '@/lib/types'
 import type { ConnectedService } from '@/lib/integrations/accounts'
 
@@ -355,6 +360,75 @@ export async function disconnectEtsy(
   await invalidateCommerceSnapshot(companyId)
 
   revalidatePath('/commerce')
+  revalidatePath('/dashboard')
+
+  return { ok: true }
+}
+
+// ============================================================================
+// LinkedIn
+// ============================================================================
+
+export async function getLinkedInStatus(companyId: string): Promise<ConnectionStatusView> {
+  try {
+    await requireCompanyAccess(companyId)
+  } catch (err) {
+    if (err instanceof IntegrationAuthError) {
+      return {
+        service: LINKEDIN_SERVICE,
+        status: 'not_connected',
+        accountLabel: null,
+        connectedAt: null,
+        lastSyncedAt: null,
+        lastError: null,
+      }
+    }
+    throw err
+  }
+
+  const row = await getLinkedInAccountRow(companyId)
+  if (!row) {
+    return {
+      service: LINKEDIN_SERVICE,
+      status: 'not_connected',
+      accountLabel: null,
+      connectedAt: null,
+      lastSyncedAt: null,
+      lastError: null,
+    }
+  }
+  return {
+    service: LINKEDIN_SERVICE,
+    status: row.status,
+    accountLabel: row.account_label,
+    connectedAt: row.created_at,
+    lastSyncedAt: row.last_synced_at,
+    lastError: row.last_error,
+  }
+}
+
+/**
+ * LinkedIn disconnect flow:
+ *   1. Mark row disconnected + null tokens. LinkedIn doesn't expose a
+ *      revoke endpoint for OIDC-only tokens; the access token ages out
+ *      of its ~60-day window on its own.
+ *   2. Revalidate /marketing so the chip re-renders.
+ */
+export async function disconnectLinkedIn(
+  companyId: string
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    await requireCompanyAccess(companyId)
+  } catch (err) {
+    if (err instanceof IntegrationAuthError) {
+      return { ok: false, error: err.message }
+    }
+    throw err
+  }
+
+  await markLinkedInDisconnected(companyId)
+
+  revalidatePath('/marketing')
   revalidatePath('/dashboard')
 
   return { ok: true }
