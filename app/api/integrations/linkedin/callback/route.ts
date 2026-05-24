@@ -3,9 +3,9 @@
  *
  * LinkedIn redirects the browser here after OAuth. Validates state
  * signature + expiry, re-checks that the authenticated user still owns
- * the company, reads the PKCE verifier from the cookie written at
- * connect time, exchanges the code, fetches OIDC userinfo, saves the
- * encrypted token + identity, and redirects to /marketing.
+ * the company, exchanges the code (confidential-client flow, no PKCE),
+ * fetches OIDC userinfo, saves the encrypted token + identity, and
+ * redirects to /marketing.
  *
  * Member-tier scopes (openid/profile/email) do not return a refresh
  * token. When the access token expires (~60 days) the user reconnects.
@@ -22,26 +22,16 @@ import {
   saveLinkedInCredentials,
   LINKEDIN_SERVICE,
 } from '@/lib/integrations/linkedin/tokens'
-import {
-  clearPkceCookie,
-  readPkceCookie,
-  stateCookieKey,
-} from '@/lib/integrations/linkedin/pkce-cookie'
 
 function redirectToMarketing(
   origin: string,
-  params: Record<string, string>,
-  cookieKeyToClear?: string
+  params: Record<string, string>
 ): NextResponse {
   const url = new URL('/marketing', origin)
   for (const [k, v] of Object.entries(params)) {
     url.searchParams.set(k, v)
   }
-  const response = NextResponse.redirect(url)
-  if (cookieKeyToClear) {
-    clearPkceCookie(response, cookieKeyToClear)
-  }
-  return response
+  return NextResponse.redirect(url)
 }
 
 export async function GET(request: NextRequest) {
@@ -51,30 +41,20 @@ export async function GET(request: NextRequest) {
   const linkedinError = searchParams.get('error')
   const linkedinErrorDesc = searchParams.get('error_description')
 
-  const cookieKey = stateParam ? stateCookieKey(stateParam) : undefined
-
   if (linkedinError) {
-    return redirectToMarketing(
-      origin,
-      {
-        integration: 'linkedin',
-        status: 'cancelled',
-        reason: linkedinErrorDesc ?? linkedinError,
-      },
-      cookieKey
-    )
+    return redirectToMarketing(origin, {
+      integration: 'linkedin',
+      status: 'cancelled',
+      reason: linkedinErrorDesc ?? linkedinError,
+    })
   }
 
   if (!code || !stateParam) {
-    return redirectToMarketing(
-      origin,
-      {
-        integration: 'linkedin',
-        status: 'error',
-        reason: 'Missing code or state',
-      },
-      cookieKey
-    )
+    return redirectToMarketing(origin, {
+      integration: 'linkedin',
+      status: 'error',
+      reason: 'Missing code or state',
+    })
   }
 
   let payload
@@ -82,20 +62,20 @@ export async function GET(request: NextRequest) {
     payload = verifyState(stateParam)
   } catch (err) {
     if (err instanceof InvalidStateError) {
-      return redirectToMarketing(
-        origin,
-        { integration: 'linkedin', status: 'error', reason: err.message },
-        cookieKey
-      )
+      return redirectToMarketing(origin, {
+        integration: 'linkedin',
+        status: 'error',
+        reason: err.message,
+      })
     }
     throw err
   }
   if (payload.service !== LINKEDIN_SERVICE) {
-    return redirectToMarketing(
-      origin,
-      { integration: 'linkedin', status: 'error', reason: 'State service mismatch' },
-      cookieKey
-    )
+    return redirectToMarketing(origin, {
+      integration: 'linkedin',
+      status: 'error',
+      reason: 'State service mismatch',
+    })
   }
 
   let access
@@ -103,33 +83,20 @@ export async function GET(request: NextRequest) {
     access = await requireCompanyAccess(payload.companyId)
   } catch (err) {
     if (err instanceof IntegrationAuthError) {
-      return redirectToMarketing(
-        origin,
-        { integration: 'linkedin', status: 'error', reason: err.message },
-        cookieKey
-      )
+      return redirectToMarketing(origin, {
+        integration: 'linkedin',
+        status: 'error',
+        reason: err.message,
+      })
     }
     throw err
   }
   if (access.userId !== payload.userId) {
-    return redirectToMarketing(
-      origin,
-      { integration: 'linkedin', status: 'error', reason: 'User mismatch on callback' },
-      cookieKey
-    )
-  }
-
-  const codeVerifier = cookieKey ? readPkceCookie(request, cookieKey) : null
-  if (!codeVerifier) {
-    return redirectToMarketing(
-      origin,
-      {
-        integration: 'linkedin',
-        status: 'error',
-        reason: 'PKCE verifier missing — start the connect flow from /marketing',
-      },
-      cookieKey
-    )
+    return redirectToMarketing(origin, {
+      integration: 'linkedin',
+      status: 'error',
+      reason: 'User mismatch on callback',
+    })
   }
 
   const redirectUri = new URL(
@@ -139,14 +106,14 @@ export async function GET(request: NextRequest) {
 
   let tokens
   try {
-    tokens = await exchangeCode({ code, redirectUri, codeVerifier })
+    tokens = await exchangeCode({ code, redirectUri })
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Token exchange failed'
-    return redirectToMarketing(
-      origin,
-      { integration: 'linkedin', status: 'error', reason: msg },
-      cookieKey
-    )
+    return redirectToMarketing(origin, {
+      integration: 'linkedin',
+      status: 'error',
+      reason: msg,
+    })
   }
 
   let displayName: string
@@ -162,11 +129,11 @@ export async function GET(request: NextRequest) {
     email = info.email ?? null
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Userinfo lookup failed'
-    return redirectToMarketing(
-      origin,
-      { integration: 'linkedin', status: 'error', reason: msg },
-      cookieKey
-    )
+    return redirectToMarketing(origin, {
+      integration: 'linkedin',
+      status: 'error',
+      reason: msg,
+    })
   }
 
   await saveLinkedInCredentials(access.companyId, {
@@ -179,9 +146,8 @@ export async function GET(request: NextRequest) {
     scope: tokens.scope ?? null,
   })
 
-  return redirectToMarketing(
-    origin,
-    { integration: 'linkedin', status: 'connected' },
-    cookieKey
-  )
+  return redirectToMarketing(origin, {
+    integration: 'linkedin',
+    status: 'connected',
+  })
 }

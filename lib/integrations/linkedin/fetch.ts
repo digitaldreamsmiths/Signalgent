@@ -12,8 +12,11 @@
  *   Token:      https://www.linkedin.com/oauth/v2/accessToken
  *   Userinfo:   https://api.linkedin.com/v2/userinfo  (OIDC)
  *
- * PKCE is supported (not mandated, but we use it). Verifier persists in
- * an HTTP-only cookie keyed by sha256(state) — same pattern as Etsy.
+ * Confidential-client flow (no PKCE). LinkedIn rejects PKCE +
+ * client_secret combined for confidential clients with
+ * "invalid_client" at the token exchange — verified live during
+ * Session 13's first connect attempt. The signed state token
+ * (lib/integrations/oauth-state.ts) is sufficient CSRF protection.
  *
  * Tokens:
  *   - Member-tier scopes (openid/profile/email) return an access token
@@ -23,8 +26,6 @@
  *     a refresh token. Out of scope for v1 — wired in a follow-up
  *     session once the LinkedIn app is approved.
  */
-
-import { createHash, randomBytes } from 'crypto'
 
 const LINKEDIN_AUTHORIZE_URL = 'https://www.linkedin.com/oauth/v2/authorization'
 const LINKEDIN_TOKEN_URL = 'https://www.linkedin.com/oauth/v2/accessToken'
@@ -56,48 +57,24 @@ function clientSecret(): string {
 }
 
 // ---------------------------------------------------------------------------
-// PKCE
-// ---------------------------------------------------------------------------
-
-export interface PkcePair {
-  codeVerifier: string
-  codeChallenge: string
-}
-
-export function generatePkce(): PkcePair {
-  const verifierBuf = randomBytes(32)
-  const codeVerifier = base64url(verifierBuf)
-  const challengeBuf = createHash('sha256').update(codeVerifier).digest()
-  const codeChallenge = base64url(challengeBuf)
-  return { codeVerifier, codeChallenge }
-}
-
-function base64url(buf: Buffer): string {
-  return buf
-    .toString('base64')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/, '')
-}
-
-// ---------------------------------------------------------------------------
 // OAuth authorize + token exchange
 // ---------------------------------------------------------------------------
 
 export function buildAuthorizeUrl(args: {
   state: string
   redirectUri: string
-  codeChallenge: string
   scope?: string
 }): string {
+  // LinkedIn rejects PKCE + client_secret combined for confidential
+  // clients ("invalid_client: Client authentication failed" at the
+  // token exchange). Confidential client flow without PKCE is what
+  // LinkedIn's docs prescribe for server-side apps.
   const url = new URL(LINKEDIN_AUTHORIZE_URL)
   url.searchParams.set('response_type', 'code')
   url.searchParams.set('client_id', clientId())
   url.searchParams.set('redirect_uri', args.redirectUri)
   url.searchParams.set('scope', args.scope ?? LINKEDIN_SCOPES)
   url.searchParams.set('state', args.state)
-  url.searchParams.set('code_challenge', args.codeChallenge)
-  url.searchParams.set('code_challenge_method', 'S256')
   return url.toString()
 }
 
@@ -114,7 +91,6 @@ export interface LinkedInTokenResponse {
 export async function exchangeCode(args: {
   code: string
   redirectUri: string
-  codeVerifier: string
 }): Promise<LinkedInTokenResponse> {
   const body = new URLSearchParams({
     grant_type: 'authorization_code',
@@ -122,7 +98,6 @@ export async function exchangeCode(args: {
     client_secret: clientSecret(),
     redirect_uri: args.redirectUri,
     code: args.code,
-    code_verifier: args.codeVerifier,
   })
   const res = await fetch(LINKEDIN_TOKEN_URL, {
     method: 'POST',
