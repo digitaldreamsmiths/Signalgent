@@ -15,8 +15,10 @@
  * user-facing string the widget can render verbatim.
  */
 
+import { revalidatePath } from 'next/cache'
 import { IntegrationAuthError, requireCompanyAccess } from '@/lib/integrations/auth'
 import { summarizeThread, draftReply } from '@/lib/integrations/gmail/assist'
+import { archiveThread, sendReply } from '@/lib/integrations/gmail/send'
 
 export type AssistResult<T> =
   | { ok: true; body: T | null }
@@ -63,4 +65,68 @@ export async function draftEmailReply(
     return { ok: true, body: null }
   }
   return { ok: true, body: { draft: result.draft } }
+}
+
+// ------------------------------------------------------------
+// Phase 2: send + archive
+// ------------------------------------------------------------
+
+export async function sendEmailReply(
+  companyId: string,
+  threadId: string,
+  body: string
+): Promise<AssistResult<{ messageId: string }>> {
+  try {
+    await requireCompanyAccess(companyId)
+  } catch (err) {
+    if (err instanceof IntegrationAuthError) {
+      return { ok: false, error: 'You don’t have access to this workspace.' }
+    }
+    throw err
+  }
+  try {
+    const result = await sendReply({ companyId, threadId, body })
+    revalidatePath('/communications')
+    revalidatePath('/dashboard')
+    return { ok: true, body: { messageId: result.messageId } }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Send failed.'
+    // Gmail 403 typically means missing scope — surface a clearer hint.
+    if (/\(403\)/.test(msg) || /insufficient/i.test(msg)) {
+      return {
+        ok: false,
+        error: 'Gmail rejected the send. Reconnect Gmail to grant the send permission, then try again.',
+      }
+    }
+    return { ok: false, error: `Couldn’t send: ${msg}` }
+  }
+}
+
+export async function archiveEmailThread(
+  companyId: string,
+  threadId: string
+): Promise<AssistResult<{ archived: true }>> {
+  try {
+    await requireCompanyAccess(companyId)
+  } catch (err) {
+    if (err instanceof IntegrationAuthError) {
+      return { ok: false, error: 'You don’t have access to this workspace.' }
+    }
+    throw err
+  }
+  try {
+    await archiveThread({ companyId, threadId })
+    revalidatePath('/communications')
+    revalidatePath('/dashboard')
+    return { ok: true, body: { archived: true } }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Archive failed.'
+    if (/\(403\)/.test(msg) || /insufficient/i.test(msg)) {
+      return {
+        ok: false,
+        error: 'Gmail rejected the archive. Reconnect Gmail to grant the modify permission, then try again.',
+      }
+    }
+    return { ok: false, error: `Couldn’t archive: ${msg}` }
+  }
 }

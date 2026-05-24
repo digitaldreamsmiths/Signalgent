@@ -7,7 +7,9 @@ import { useCommunicationsSnapshot } from '@/contexts/communications-snapshot-co
 import { useCompany } from '@/contexts/company-context'
 import { useWidgetLiveIndicator } from '../widget-live-indicator'
 import {
+  archiveEmailThread,
   draftEmailReply,
+  sendEmailReply,
   summarizeEmailThread,
 } from '@/lib/integrations/comms/assist'
 import type {
@@ -95,7 +97,15 @@ function matchesFilter(msg: CommunicationsMessage, filter: InboxFilter): boolean
   }
 }
 
+type ActionState =
+  | { status: 'idle' }
+  | { status: 'confirming' }
+  | { status: 'running' }
+  | { status: 'done' }
+  | { status: 'error'; message: string }
+
 function EmailClientLive({ snapshot }: { snapshot: CommunicationsSnapshot }) {
+  const { refresh } = useCommunicationsSnapshot()
   const [filter, setFilter] = useState<InboxFilter>('all')
   const [active, setActive] = useState(0)
   const allMessages = snapshot.messages
@@ -112,6 +122,8 @@ function EmailClientLive({ snapshot }: { snapshot: CommunicationsSnapshot }) {
 
   const [summary, setSummary] = useState<AssistState>({ status: 'idle' })
   const [draft, setDraft] = useState<AssistState>({ status: 'idle' })
+  const [sendState, setSendState] = useState<ActionState>({ status: 'idle' })
+  const [archiveState, setArchiveState] = useState<ActionState>({ status: 'idle' })
 
   const runSummarize = useCallback(async () => {
     if (!companyId || !selected) return
@@ -139,6 +151,8 @@ function EmailClientLive({ snapshot }: { snapshot: CommunicationsSnapshot }) {
   useEffect(() => {
     setSummary({ status: 'idle' })
     setDraft({ status: 'idle' })
+    setSendState({ status: 'idle' })
+    setArchiveState({ status: 'idle' })
     if (
       selected &&
       (selected.triagedPriority === 'urgent' || selected.triagedPriority === 'opportunity') &&
@@ -152,6 +166,7 @@ function EmailClientLive({ snapshot }: { snapshot: CommunicationsSnapshot }) {
   const runDraft = useCallback(async () => {
     if (!companyId || !selected) return
     setDraft({ status: 'loading' })
+    setSendState({ status: 'idle' })
     const result = await draftEmailReply(companyId, selected.threadId)
     if (!result.ok) {
       setDraft({ status: 'error', message: result.error })
@@ -163,6 +178,63 @@ function EmailClientLive({ snapshot }: { snapshot: CommunicationsSnapshot }) {
     }
     setDraft({ status: 'success', text: result.body.draft })
   }, [companyId, selected])
+
+  const runSend = useCallback(async () => {
+    if (!companyId || !selected || draft.status !== 'success') return
+    setSendState({ status: 'running' })
+    const result = await sendEmailReply(companyId, selected.threadId, draft.text)
+    if (!result.ok) {
+      setSendState({ status: 'error', message: result.error })
+      return
+    }
+    setSendState({ status: 'done' })
+    await refresh()
+  }, [companyId, selected, draft, refresh])
+
+  const runArchive = useCallback(async () => {
+    if (!companyId || !selected) return
+    setArchiveState({ status: 'running' })
+    const result = await archiveEmailThread(companyId, selected.threadId)
+    if (!result.ok) {
+      setArchiveState({ status: 'error', message: result.error })
+      return
+    }
+    setArchiveState({ status: 'done' })
+    await refresh()
+  }, [companyId, selected, refresh])
+
+  // Keyboard shortcuts: j (next) / k (prev) / e (archive) / r (draft) /
+  // ? (help). Skip when an input/textarea/contenteditable is focused so
+  // we don't hijack normal typing.
+  useEffect(() => {
+    function isEditableTarget(e: KeyboardEvent): boolean {
+      const t = e.target as HTMLElement | null
+      if (!t) return false
+      const tag = t.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true
+      if (t.isContentEditable) return true
+      return false
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.metaKey || e.ctrlKey || e.altKey) return
+      if (isEditableTarget(e)) return
+      if (e.key === 'j') {
+        e.preventDefault()
+        setActive((i) => Math.min(messages.length - 1, i + 1))
+      } else if (e.key === 'k') {
+        e.preventDefault()
+        setActive((i) => Math.max(0, i - 1))
+      } else if (e.key === 'e') {
+        e.preventDefault()
+        void runArchive()
+      } else if (e.key === 'r') {
+        e.preventDefault()
+        void runDraft()
+      }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [messages.length, runArchive, runDraft])
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8, height: 'clamp(420px, 60vh, 660px)' }}>
@@ -219,7 +291,7 @@ function EmailClientLive({ snapshot }: { snapshot: CommunicationsSnapshot }) {
             <AssistPanel title="Summary" state={summary} />
             <AssistPanel title="Draft reply" state={draft} copyable />
 
-            <div style={{ display: 'flex', gap: 6, marginTop: 'auto', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: 6, marginTop: 'auto', flexWrap: 'wrap', alignItems: 'center' }}>
               <AssistButton
                 label="Summarize"
                 loadingLabel="Summarizing\u2026"
@@ -234,15 +306,21 @@ function EmailClientLive({ snapshot }: { snapshot: CommunicationsSnapshot }) {
                 onClick={runDraft}
                 disabled={!companyId}
               />
+              <SendButton
+                draftReady={draft.status === 'success'}
+                state={sendState}
+                onClick={runSend}
+              />
+              <ArchiveButton state={archiveState} onClick={runArchive} disabled={!companyId} />
               <a
                 href={`https://mail.google.com/mail/u/0/#inbox/${selected.id}`}
                 target="_blank"
                 rel="noreferrer"
                 style={{
                   fontSize: 10,
-                  background: '#1D9E75',
-                  color: '#fff',
-                  border: 'none',
+                  background: 'transparent',
+                  color: '#5DCAA5',
+                  border: '1px solid #1D9E75',
                   borderRadius: 5,
                   padding: '4px 10px',
                   textDecoration: 'none',
@@ -250,6 +328,9 @@ function EmailClientLive({ snapshot }: { snapshot: CommunicationsSnapshot }) {
               >
                 Open in Gmail
               </a>
+              <span style={{ marginLeft: 'auto', fontSize: 9, color: '#555' }}>
+                <kbd style={kbdStyle}>j</kbd>/<kbd style={kbdStyle}>k</kbd> nav \u00b7 <kbd style={kbdStyle}>r</kbd> draft \u00b7 <kbd style={kbdStyle}>e</kbd> archive
+              </span>
             </div>
           </div>
         </div>
@@ -325,6 +406,92 @@ function InboxFilterBar({
         )
       })}
     </div>
+  )
+}
+
+const kbdStyle: React.CSSProperties = {
+  fontFamily: 'inherit',
+  fontSize: 9,
+  background: '#1a1a1a',
+  border: '1px solid #2a2a2a',
+  borderRadius: 3,
+  padding: '0px 4px',
+  color: '#999',
+  marginInline: 1,
+}
+
+function SendButton({
+  draftReady,
+  state,
+  onClick,
+}: {
+  draftReady: boolean
+  state: ActionState
+  onClick: () => void
+}) {
+  const disabled = !draftReady && state.status === 'idle'
+  let label = 'Send'
+  let background = '#1D9E75'
+  let color = '#fff'
+  if (state.status === 'running') label = 'Sending…'
+  else if (state.status === 'done') {
+    label = 'Sent ✓'
+    background = '#0F6E56'
+  } else if (state.status === 'error') {
+    label = 'Send failed'
+    background = '#3a1a1a'
+    color = '#e88'
+  }
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled || state.status === 'running' || state.status === 'done'}
+      title={state.status === 'error' ? state.message : draftReady ? 'Send the drafted reply' : 'Draft a reply first'}
+      style={{
+        fontSize: 10,
+        background: disabled ? '#161616' : background,
+        color: disabled ? '#555' : color,
+        border: 'none',
+        borderRadius: 5,
+        padding: '4px 10px',
+        cursor: disabled || state.status === 'running' || state.status === 'done' ? 'default' : 'pointer',
+      }}
+    >
+      {label}
+    </button>
+  )
+}
+
+function ArchiveButton({
+  state,
+  onClick,
+  disabled,
+}: {
+  state: ActionState
+  onClick: () => void
+  disabled?: boolean
+}) {
+  let label = 'Archive'
+  if (state.status === 'running') label = 'Archiving…'
+  else if (state.status === 'done') label = 'Archived'
+  else if (state.status === 'error') label = 'Archive failed'
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled || state.status === 'running' || state.status === 'done'}
+      title={state.status === 'error' ? state.message : 'Remove from inbox'}
+      style={{
+        fontSize: 10,
+        background: 'transparent',
+        color: state.status === 'error' ? '#e88' : '#999',
+        border: `1px solid ${state.status === 'error' ? '#3a2222' : '#2a2a2a'}`,
+        borderRadius: 5,
+        padding: '4px 10px',
+        cursor: disabled || state.status === 'running' || state.status === 'done' ? 'default' : 'pointer',
+      }}
+    >
+      {label}
+    </button>
   )
 }
 

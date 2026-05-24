@@ -26,13 +26,20 @@ const GMAIL_API = 'https://gmail.googleapis.com/gmail/v1'
  * Scopes requested at authorization time. Keep in sync with Google Cloud
  * Console → Google Auth Platform → Data Access.
  *
- * Only `gmail.readonly` is requested. The mailbox email address comes from
- * Gmail's own `users.getProfile` endpoint (no separate userinfo call), so
- * we avoid pulling in OIDC scopes like `openid`/`email` that Google auto-
- * expands from `userinfo.email` and that must otherwise be mirrored in
- * the consent screen's Data Access list.
+ * Session 18 (Phase 2 workflow lock-in):
+ *   - `gmail.modify` — read + write labels (including INBOX removal for
+ *     archive). Superset of `gmail.readonly`, so we drop the latter to
+ *     keep the consent screen tidy.
+ *   - `gmail.send` — send messages (in-app reply send).
+ *
+ * Existing connections from prior sessions hold a token granted with
+ * only `gmail.readonly`. Send + archive require the user to disconnect
+ * and reconnect once to re-consent.
  */
-export const GMAIL_SCOPES = 'https://www.googleapis.com/auth/gmail.readonly'
+export const GMAIL_SCOPES = [
+  'https://www.googleapis.com/auth/gmail.modify',
+  'https://www.googleapis.com/auth/gmail.send',
+].join(' ')
 
 /**
  * Gmail-specific authorize URL. Thin wrapper over the shared Google
@@ -257,4 +264,73 @@ export async function getThread(args: {
     throw new Error(`Gmail get thread failed (${res.status}): ${text}`)
   }
   return JSON.parse(text) as GmailThread
+}
+
+// ------------------------------------------------------------------
+// Gmail writes (Phase 2)
+// ------------------------------------------------------------------
+
+/**
+ * POST /users/me/threads/{id}/modify — add/remove labels on every
+ * message in a thread. Archiving = removing INBOX. We use the
+ * thread endpoint rather than per-message so a multi-message thread
+ * archives in one call.
+ */
+export async function modifyThreadLabels(args: {
+  accessToken: string
+  threadId: string
+  addLabelIds?: string[]
+  removeLabelIds?: string[]
+}): Promise<void> {
+  const body = JSON.stringify({
+    addLabelIds: args.addLabelIds ?? [],
+    removeLabelIds: args.removeLabelIds ?? [],
+  })
+  const res = await fetch(
+    `${GMAIL_API}/users/me/threads/${args.threadId}/modify`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${args.accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body,
+    }
+  )
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`Gmail modify thread failed (${res.status}): ${text}`)
+  }
+}
+
+/**
+ * POST /users/me/messages/send — send a MIME-formatted message. When
+ * `threadId` is provided, Gmail attaches the new message to that
+ * thread (subject + In-Reply-To still need to match for native
+ * clients to render it threaded correctly).
+ */
+export async function sendMessage(args: {
+  accessToken: string
+  /** Already base64url-encoded MIME message. */
+  rawBase64Url: string
+  /** Gmail thread id to attach the message to. */
+  threadId?: string
+}): Promise<{ id: string; threadId: string }> {
+  const body = JSON.stringify({
+    raw: args.rawBase64Url,
+    ...(args.threadId ? { threadId: args.threadId } : {}),
+  })
+  const res = await fetch(`${GMAIL_API}/users/me/messages/send`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${args.accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body,
+  })
+  const text = await res.text()
+  if (!res.ok) {
+    throw new Error(`Gmail send failed (${res.status}): ${text}`)
+  }
+  return JSON.parse(text) as { id: string; threadId: string }
 }
