@@ -43,6 +43,12 @@ import {
   markLinkedInDisconnected,
   LINKEDIN_SERVICE,
 } from '@/lib/integrations/linkedin/tokens'
+import {
+  getPinterestAccountRow,
+  markPinterestDisconnected,
+  PINTEREST_SERVICE,
+} from '@/lib/integrations/pinterest/tokens'
+import { invalidateMarketingSnapshot } from '@/lib/integrations/pinterest/snapshot'
 import type { ConnectedAccount } from '@/lib/types'
 import type { ConnectedService } from '@/lib/integrations/accounts'
 
@@ -427,6 +433,77 @@ export async function disconnectLinkedIn(
   }
 
   await markLinkedInDisconnected(companyId)
+
+  revalidatePath('/marketing')
+  revalidatePath('/dashboard')
+
+  return { ok: true }
+}
+
+// ============================================================================
+// Pinterest
+// ============================================================================
+
+export async function getPinterestStatus(companyId: string): Promise<ConnectionStatusView> {
+  try {
+    await requireCompanyAccess(companyId)
+  } catch (err) {
+    if (err instanceof IntegrationAuthError) {
+      return {
+        service: PINTEREST_SERVICE,
+        status: 'not_connected',
+        accountLabel: null,
+        connectedAt: null,
+        lastSyncedAt: null,
+        lastError: null,
+      }
+    }
+    throw err
+  }
+
+  const row = await getPinterestAccountRow(companyId)
+  if (!row) {
+    return {
+      service: PINTEREST_SERVICE,
+      status: 'not_connected',
+      accountLabel: null,
+      connectedAt: null,
+      lastSyncedAt: null,
+      lastError: null,
+    }
+  }
+  return {
+    service: PINTEREST_SERVICE,
+    status: row.status,
+    accountLabel: row.account_label,
+    connectedAt: row.created_at,
+    lastSyncedAt: row.last_synced_at,
+    lastError: row.last_error,
+  }
+}
+
+/**
+ * Pinterest disconnect flow:
+ *   1. Mark row disconnected + null tokens. Pinterest doesn't document
+ *      an OAuth revoke; the refresh token ages out of the ~1-year
+ *      window on its own.
+ *   2. Invalidate marketing snapshot cache.
+ *   3. Revalidate /marketing + /dashboard.
+ */
+export async function disconnectPinterest(
+  companyId: string
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    await requireCompanyAccess(companyId)
+  } catch (err) {
+    if (err instanceof IntegrationAuthError) {
+      return { ok: false, error: err.message }
+    }
+    throw err
+  }
+
+  await markPinterestDisconnected(companyId)
+  await invalidateMarketingSnapshot(companyId)
 
   revalidatePath('/marketing')
   revalidatePath('/dashboard')

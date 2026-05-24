@@ -1,17 +1,41 @@
 'use client'
 
+import { useEffect } from 'react'
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell } from 'recharts'
 import { MARKETING_MOCK } from '@/lib/widgets/mock-data'
+import { useMarketingSnapshot } from '@/contexts/marketing-snapshot-context'
+import { useWidgetLiveIndicator } from '../widget-live-indicator'
 
 const m = MARKETING_MOCK
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
 export function MarketingKpiRow() {
+  const { snapshot } = useMarketingSnapshot()
+  const { markLive } = useWidgetLiveIndicator()
+  useEffect(() => {
+    if (snapshot) markLive()
+  }, [snapshot, markLive])
+
+  const live = snapshot?.kpis
   const kpis = [
-    { label: 'Scheduled', value: m.scheduledPosts },
-    { label: 'Published', value: m.publishedPosts },
-    { label: 'Avg Reach', value: m.avgReach.toLocaleString() },
-    { label: 'Engagement', value: m.engagementRate },
+    {
+      label: 'Scheduled',
+      value: live ? (live.scheduledPosts ?? '—') : m.scheduledPosts,
+    },
+    {
+      label: 'Published',
+      value: live ? live.publishedPosts : m.publishedPosts,
+    },
+    {
+      label: 'Avg Reach',
+      value: live
+        ? live.avgReach.toLocaleString()
+        : m.avgReach.toLocaleString(),
+    },
+    {
+      label: 'Engagement',
+      value: live ? live.engagementRate : m.engagementRate,
+    },
   ]
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>

@@ -1523,3 +1523,77 @@ End-to-end verified after the change: consent → callback → token exchange (2
 - **LinkedIn "social" headline is currently un-surfaced in any widget.** It's in the snapshot but the existing dashboard widgets don't have a slot for it. A follow-up widget (or rewiring `LivePulse` to include "Connected as {memberName}") would surface it.
 - **Generic OAuth-error banner still pending.** Now five providers worth of `?integration/?status/?reason` query params that the mode pages silently ignore.
 - **Chip extraction still pending.** Five chips now (Stripe / Gmail / GA4 / Etsy / LinkedIn), all ~95% identical. The duplication has well crossed the abstraction-cost threshold.
+
+---
+
+## Session 15 — Pinterest integration (Marketing mode's first live data tile)
+
+**Goal**: Give Marketing mode an actual live widget. LinkedIn from Session 13 ships identity-only (its API is gated behind multi-week approval); Pinterest's developer platform is friendlier — own-account + own-pin reads work without app review. So Pinterest becomes the provider that flips `MarketingKpiRow` from mock to real data while LinkedIn stays in identity-only mode.
+
+### Locked scope
+
+- Vertical slice: OAuth + connect chip + MarketingSnapshot + one widget live (`MarketingKpiRow`).
+- Pinterest is now the data source for the headline tile (Published, Avg Reach, Engagement). LinkedIn continues providing only the connection chip + identity.
+- The other four marketing widgets (ContentCalendar, PlatformBreakdown, EngagementTrend, RecentPosts) stay on `MARKETING_MOCK` with badges. Filling them needs daily-granularity metrics + a recent-pins list — additive on the existing snapshot model.
+
+### Architectural choices
+
+- **Pinterest uses PKCE + Basic auth on the token endpoint.** Distinct from both LinkedIn (confidential-only, no PKCE) and Etsy (PKCE + client_secret in body). Pinterest's v5 docs prescribe `code_verifier` in the body alongside an `Authorization: Basic base64(client_id:client_secret)` header — `client_secret` does NOT go in the body. Implemented exactly that way to avoid the LinkedIn-style "invalid_client" trap.
+- **Refresh tokens rotate (same as Etsy).** Access tokens last ~30 days, refresh tokens last ~1 year. `loadPinterestCredentials` runs a transparent refresh + persists the rotated refresh token, identical pattern to `loadEtsyCredentials`. Without persistence the user would get logged out after the first refresh window.
+- **MarketingSnapshot is provider-shaped, not multi-provider-aggregated.** The shape has a single `provider` field rather than `pinterest` + `linkedin` sub-objects. Reason: only one provider feeds the KPIs at a time. If/when LinkedIn analytics ship, the snapshot grows a `providers[]` array (or splits to a `pinterest:` + `linkedin:` shape). Premature to design for that now.
+- **Scheduled-pins is `null`, not zero.** Pinterest's public v5 API doesn't expose scheduled pins (only published). Returning `0` would lie; `null` lets the widget display `—` which is honest. `LinkedIn` and other future providers can populate it when their APIs do.
+- **Avg Reach = impressions / published pins.** Pinterest's account-level analytics return aggregate impressions; "per-pin average" is the small-business mental model the mock used. Per-pin rendering needs the per-pin analytics endpoint (one extra request per pin); deferred.
+- **Engagement rate = engagement / impressions, formatted as "X.Y%".** Pre-baked so widgets stay dumb (same convention as Etsy currency formatting). `"—"` when impressions are zero — avoids divide-by-zero NaN.
+- **One Pinterest account per company (no picker).** Pinterest enforces account boundaries at the OAuth level: a user authenticates as themselves and we read their personal/business account. Multi-account access would require business-manager-grade scopes Pinterest doesn't expose to dev mode.
+
+### New infrastructure files
+
+| File | Purpose |
+|---|---|
+| `supabase/migrations/20260525000000_add_pinterest_service.sql` | Widens `connected_accounts.service` to include `'pinterest'`. |
+| `lib/integrations/pinterest/fetch.ts` | OAuth + v5 API primitives: `PINTEREST_SCOPES`, `generatePkce()`, `buildAuthorizeUrl`, `exchangeCode` (Basic auth header, no client_secret in body), `refreshAccessToken`, `getUserAccount`, `countUserPins` (paginated), `getUserAnalytics` (account-level, 30-day window). |
+| `lib/integrations/pinterest/tokens.ts` | `savePinterestCredentials`, `loadPinterestCredentials` (with transparent refresh that persists the rotated refresh_token), `getPinterestAccountRow`, `markPinterest{Disconnected,Error}`, `PINTEREST_SERVICE`. |
+| `lib/integrations/pinterest/pkce-cookie.ts` | Same shape as Etsy's — sha256(state)-keyed, path-scoped to `/api/integrations/pinterest`, 10-min TTL. |
+| `lib/integrations/pinterest/normalize.ts` | `buildMarketingKpis()` — derives `publishedPosts`, `avgReach`, `engagementRate` from the analytics summary + pin count. |
+| `lib/integrations/pinterest/snapshot.ts` | `getMarketingSnapshot(companyId)` — parallel-fetches user account + analytics + pin count, builds + caches as `pinterest:snapshot:{companyId}` for 5 min. `invalidateMarketingSnapshot` for disconnect/callback. |
+| `lib/integrations/marketing/model.ts` | `MarketingSnapshot` + `MarketingKpis` shape. V1 only populates the headline tile. |
+| `lib/integrations/marketing/read.ts` | `'use server'` — `readMarketingSnapshot(companyId)` with `requireCompanyAccess` guard. |
+| `app/api/integrations/pinterest/connect/route.ts` | Signed state + PKCE cookie + redirect to Pinterest consent. |
+| `app/api/integrations/pinterest/callback/route.ts` | Verifies state + ownership, recovers PKCE verifier, exchanges code, fetches `/v5/user_account`, saves encrypted tokens + identity, invalidates snapshot, redirects to `/marketing`. |
+| `hooks/use-pinterest-connection.ts` | `usePinterestConnectionStatus(companyId)` + `getPinterestConnectUrl(companyId)`. |
+| `components/integrations/pinterest-connection-chip.tsx` | Three-state chip + popover. Coral marketing-mode accent (same as LinkedIn). Account row shows `@username`. |
+| `contexts/marketing-snapshot-context.tsx` | `MarketingSnapshotProvider` + `useMarketingSnapshot()`. |
+
+### Files modified
+
+| File | Change |
+|---|---|
+| `lib/types/database.types.ts` | Added `'pinterest'` to the `service` union on both `Row` and `Insert` shapes. |
+| `lib/integrations/actions.ts` | Added `getPinterestStatus` + `disconnectPinterest`. |
+| `app/(app)/marketing/page.tsx` | Wrapped in `MarketingSnapshotProvider`; renders `PinterestConnectionChip` alongside `LinkedInConnectionChip` in the top-right. |
+| `components/widgets/content/marketing-widgets.tsx` | `MarketingKpiRow` now reads from `useMarketingSnapshot()` with mock fallback; calls `markLive()` when snapshot is present so the "Sample data" indicator drops. |
+
+### Pinterest app settings + env prerequisites
+
+User-controlled, required once before the first real connect attempt:
+
+1. **Create an app** at https://developers.pinterest.com → Apps → "Create app". Pick "Production" (vs trial) — production tier works for own-account reads without review.
+2. **Authorized Redirect URIs** in the Pinterest app settings: both `http://localhost:3001/api/integrations/pinterest/callback` (dev) and `https://<production-domain>/api/integrations/pinterest/callback` (Vercel).
+3. **Env vars**: `PINTEREST_CLIENT_ID=<app id>` + `PINTEREST_CLIENT_SECRET=<app secret>` in `.env.local` and Vercel project settings.
+4. **Database migration**: apply `20260525000000_add_pinterest_service.sql` to the Supabase project.
+
+### Local verification
+
+- `tsc --noEmit` clean.
+- `/marketing` renders the Pinterest chip in coral next to the LinkedIn-connected chip. Marketing KPI tile still shows mock values (7 / 23 / 2,847 / 4.2%) — expected pending the OAuth round-trip.
+- OAuth flow blocked on prereqs at session close (same shape as Etsy + LinkedIn first-connect blockers). Code is verified type-safe and renderable.
+
+### Residuals heading into Session 16+
+
+- **Pinterest "scheduled posts" is permanently null.** Public v5 API doesn't expose scheduled pins. A truthful "—" rather than an inaccurate zero.
+- **ContentCalendar / RecentPosts / EngagementTrend / PlatformBreakdown still mock.** Filling them needs the per-pin analytics endpoint + a recent-pins list with metadata. The snapshot shape is forward-compatible — adding `dailyEngagement[]` and `recentPins[]` fields is additive.
+- **No per-pin metadata.** A "click into a pin to see its analytics" widget would need the per-pin analytics endpoint and a routable detail view. Deferred.
+- **Aggregate avg-reach hides outliers.** A single viral pin can skew the average. A median or percentile reading would be more representative; deferred until widget refresh covers it.
+- **No log line on snapshot build (still).** Carried forward from Sessions 10–13.
+- **Chip duplication is now SIX chips.** Stripe, Gmail, GA4, Etsy, LinkedIn, Pinterest — all ~95% identical. The extraction case is overwhelming now; it's worth running ahead of any further providers.
+- **Cache namespaces total six.** `stripe:` `gmail:` `ga:` `etsy:` `linkedin:` (none actually — LinkedIn has no snapshot cache) `pinterest:`. Redis/Upstash swap residual unchanged in shape but growing in payload.
