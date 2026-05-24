@@ -217,10 +217,13 @@ async function etsyApiGet<T>(args: {
   accessToken: string
   path: string
 }): Promise<T> {
+  // Etsy v3 requires x-api-key in the format `keystring:shared_secret`.
+  // Confirmed live against openapi-ping — sending just the keystring
+  // returns 403 "Shared secret is required in x-api-key header."
   const res = await fetch(`${ETSY_API_BASE}${args.path}`, {
     headers: {
       Authorization: `Bearer ${args.accessToken}`,
-      'x-api-key': clientId(),
+      'x-api-key': `${clientId()}:${clientSecret()}`,
     },
   })
   const text = await res.text()
