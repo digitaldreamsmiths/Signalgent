@@ -20,8 +20,8 @@ export const WIDGET_REGISTRY: WidgetDefinition[] = [
   // COMMUNICATIONS
   { id: 'comms-email-client', type: 'comms-email-client', label: 'Email Client', description: 'Full inbox with AI triage and preview', size: 'full', mode: 'communications', requiredServices: ['gmail', 'outlook'] },
   { id: 'comms-response-stats', type: 'comms-response-stats', label: 'Response Stats', description: 'Response rate, avg reply time, thread volume', size: 'full', mode: 'communications', requiredServices: ['gmail', 'outlook'] },
-  { id: 'comms-unread-summary', type: 'comms-unread-summary', label: 'Unread Summary', description: 'Unread count breakdown by priority', size: 'half', mode: 'communications', requiredServices: ['gmail', 'outlook'] },
-  { id: 'comms-priority-breakdown', type: 'comms-priority-breakdown', label: 'Priority Breakdown', description: 'Donut chart of email priorities', size: 'half', mode: 'communications', requiredServices: ['gmail', 'outlook'] },
+  { id: 'comms-unread-summary', type: 'comms-unread-summary', label: 'Unread Summary', description: 'Unread total + per-priority breakdown bar', size: 'full', mode: 'communications', requiredServices: ['gmail', 'outlook'] },
+  { id: 'comms-priority-breakdown', type: 'comms-priority-breakdown', label: 'Priority Breakdown', description: 'Donut chart of email priorities (legacy; redundant with Unread Summary)', size: 'half', mode: 'communications', requiredServices: ['gmail', 'outlook'] },
 
   // FINANCE
   { id: 'fin-kpi-row', type: 'fin-kpi-row', label: 'Finance KPIs', description: 'Revenue, expenses, net profit, MRR', size: 'full', mode: 'finance', requiredServices: ['stripe_account', 'quickbooks'] },
@@ -53,7 +53,7 @@ export const WIDGET_REGISTRY: WidgetDefinition[] = [
 export const DEFAULT_LAYOUTS: Record<string, string[]> = {
   dashboard: ['intelligence-briefing', 'mode-tiles', 'setup-checklist', 'suggested-actions'],
   marketing: ['mkt-kpi-row', 'mkt-content-calendar', 'mkt-platform-breakdown', 'mkt-engagement-trend', 'mkt-recent-posts'],
-  communications: ['comms-response-stats', 'comms-unread-summary', 'comms-priority-breakdown', 'comms-email-client'],
+  communications: ['comms-response-stats', 'comms-unread-summary', 'comms-email-client'],
   finance: ['fin-kpi-row', 'fin-revenue-chart', 'fin-expense-breakdown', 'fin-cashflow', 'fin-recent-transactions'],
   commerce: ['com-order-stats', 'com-products', 'com-orders-kanban', 'com-recent-activity'],
   analytics: ['anl-traffic-chart', 'anl-engagement-chart', 'anl-top-pages', 'anl-conversion-stats', 'anl-performance-table'],

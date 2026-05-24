@@ -67,21 +67,51 @@ type AssistState =
   | { status: 'empty' } // model returned "NONE" for draft — nothing to write
   | { status: 'error'; message: string }
 
+type InboxFilter = 'all' | 'urgent' | 'opportunity' | 'canWait' | 'untriaged' | 'promo'
+
+const FILTERS: { key: InboxFilter; label: string; color: string }[] = [
+  { key: 'all', label: 'All', color: '#888' },
+  { key: 'urgent', label: 'Urgent', color: '#e55' },
+  { key: 'opportunity', label: 'Opportunity', color: '#5DCAA5' },
+  { key: 'canWait', label: 'Can wait', color: '#1D9E75' },
+  { key: 'untriaged', label: 'Untriaged', color: '#888' },
+  { key: 'promo', label: 'Promo', color: '#9089b8' },
+]
+
+function matchesFilter(msg: CommunicationsMessage, filter: InboxFilter): boolean {
+  switch (filter) {
+    case 'all':
+      return true
+    case 'urgent':
+      return msg.triagedPriority === 'urgent'
+    case 'opportunity':
+      return msg.triagedPriority === 'opportunity'
+    case 'canWait':
+      return msg.triagedPriority === 'canWait'
+    case 'untriaged':
+      return msg.unread && msg.triagedPriority === null && msg.tag !== 'Promo'
+    case 'promo':
+      return msg.tag === 'Promo'
+  }
+}
+
 function EmailClientLive({ snapshot }: { snapshot: CommunicationsSnapshot }) {
+  const [filter, setFilter] = useState<InboxFilter>('all')
   const [active, setActive] = useState(0)
-  const messages = snapshot.messages
+  const allMessages = snapshot.messages
+  const messages = allMessages.filter((msg) => matchesFilter(msg, filter))
   const selected = messages[Math.min(active, messages.length - 1)]
   const { activeCompany } = useCompany()
   const companyId = activeCompany?.id ?? null
 
+  // Reset active selection when filter changes so we land on the first
+  // message of the new view rather than retaining a stale index.
+  useEffect(() => {
+    setActive(0)
+  }, [filter])
+
   const [summary, setSummary] = useState<AssistState>({ status: 'idle' })
   const [draft, setDraft] = useState<AssistState>({ status: 'idle' })
-
-  // Reset assist state whenever the selected thread changes.
-  useEffect(() => {
-    setSummary({ status: 'idle' })
-    setDraft({ status: 'idle' })
-  }, [selected?.threadId])
 
   const runSummarize = useCallback(async () => {
     if (!companyId || !selected) return
@@ -97,6 +127,27 @@ function EmailClientLive({ snapshot }: { snapshot: CommunicationsSnapshot }) {
     }
     setSummary({ status: 'success', text: result.body.summary })
   }, [companyId, selected])
+
+  // Reset assist state whenever the selected thread changes; for any
+  // thread triaged as urgent or opportunity, auto-fire the summarize
+  // call so the user doesn't have to click — the summary appears as
+  // part of landing on the message. We deliberately don't gate on
+  // `unread` because triaged-urgent threads are often re-opened for
+  // reference and the user still expects context. The server-side
+  // 5-min thread-fingerprint cache makes repeat visits instant and
+  // bounds API spend.
+  useEffect(() => {
+    setSummary({ status: 'idle' })
+    setDraft({ status: 'idle' })
+    if (
+      selected &&
+      (selected.triagedPriority === 'urgent' || selected.triagedPriority === 'opportunity') &&
+      companyId
+    ) {
+      void runSummarize()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected?.threadId])
 
   const runDraft = useCallback(async () => {
     if (!companyId || !selected) return
@@ -114,85 +165,165 @@ function EmailClientLive({ snapshot }: { snapshot: CommunicationsSnapshot }) {
   }, [companyId, selected])
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, height: 'clamp(360px, 56vh, 600px)' }}>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 0, overflowY: 'auto', minHeight: 0 }}>
-        {messages.map((msg, i) => (
-          <button
-            key={msg.id}
-            onClick={() => setActive(i)}
-            style={{
-              textAlign: 'left',
-              padding: '8px 10px',
-              borderLeft: i === active ? '2px solid #1D9E75' : '2px solid transparent',
-              background: i === active ? 'rgba(255,255,255,0.02)' : 'transparent',
-              borderBottom: '1px solid #272727',
-              cursor: 'pointer',
-              border: 'none',
-              display: 'block',
-              width: '100%',
-            }}
-          >
-            <div style={{ borderLeft: i === active ? '2px solid #1D9E75' : '2px solid transparent', paddingLeft: 8 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: 11, fontWeight: msg.unread ? 600 : 500, color: '#ffffff' }}>
-                  {senderLabel(msg)}
-                </span>
-                <span style={{ fontSize: 9, color: '#999999' }}>{formatReceivedAt(msg.receivedAt)}</span>
-              </div>
-              <div style={{ fontSize: 10, color: '#ffffff', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.7 }}>
-                {msg.subject}
-              </div>
-              <span style={{ fontSize: 8, color: '#5DCAA5', background: '#031a12', borderRadius: 3, padding: '1px 5px', marginTop: 3, display: 'inline-block' }}>
-                {msg.tag}
-              </span>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, height: 'clamp(420px, 60vh, 660px)' }}>
+      <InboxFilterBar
+        filter={filter}
+        onChange={setFilter}
+        messages={allMessages}
+      />
+
+      {selected ? (
+        <div style={{ display: 'grid', gridTemplateColumns: '38fr 62fr', gap: 8, minHeight: 0, flex: 1 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 0, overflowY: 'auto', minHeight: 0 }}>
+            {messages.map((msg, i) => (
+              <button
+                key={msg.id}
+                onClick={() => setActive(i)}
+                style={{
+                  textAlign: 'left',
+                  padding: '8px 10px',
+                  borderLeft: i === active ? '2px solid #1D9E75' : '2px solid transparent',
+                  background: i === active ? 'rgba(255,255,255,0.02)' : 'transparent',
+                  borderBottom: '1px solid #272727',
+                  cursor: 'pointer',
+                  border: 'none',
+                  display: 'block',
+                  width: '100%',
+                }}
+              >
+                <div style={{ borderLeft: i === active ? '2px solid #1D9E75' : '2px solid transparent', paddingLeft: 8 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: 11, fontWeight: msg.unread ? 600 : 500, color: '#ffffff' }}>
+                      {senderLabel(msg)}
+                    </span>
+                    <span style={{ fontSize: 9, color: '#999999' }}>{formatReceivedAt(msg.receivedAt)}</span>
+                  </div>
+                  <div style={{ fontSize: 10, color: '#ffffff', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.7 }}>
+                    {msg.subject}
+                  </div>
+                  <span style={{ fontSize: 8, color: '#5DCAA5', background: '#031a12', borderRadius: 3, padding: '1px 5px', marginTop: 3, display: 'inline-block' }}>
+                    {msg.tag}
+                  </span>
+                </div>
+              </button>
+            ))}
+          </div>
+
+          <div style={{ padding: '0 8px', display: 'flex', flexDirection: 'column', gap: 10, overflowY: 'auto', minHeight: 0 }}>
+            <div style={{ fontSize: 13, fontWeight: 500, color: '#5DCAA5' }}>{senderLabel(selected)}</div>
+            <div style={{ fontSize: 11, color: '#ffffff', lineHeight: 1.6, opacity: 0.8 }}>
+              <div style={{ marginBottom: 6, fontWeight: 500, opacity: 1 }}>{selected.subject}</div>
+              {selected.snippet || '(no preview available)'}
             </div>
-          </button>
-        ))}
-      </div>
 
-      <div style={{ padding: '0 8px', display: 'flex', flexDirection: 'column', gap: 10, overflowY: 'auto', minHeight: 0 }}>
-        <div style={{ fontSize: 13, fontWeight: 500, color: '#5DCAA5' }}>{senderLabel(selected)}</div>
-        <div style={{ fontSize: 11, color: '#ffffff', lineHeight: 1.6, opacity: 0.8 }}>
-          <div style={{ marginBottom: 6, fontWeight: 500, opacity: 1 }}>{selected.subject}</div>
-          {selected.snippet || '(no preview available)'}
+            <AssistPanel title="Summary" state={summary} />
+            <AssistPanel title="Draft reply" state={draft} copyable />
+
+            <div style={{ display: 'flex', gap: 6, marginTop: 'auto', flexWrap: 'wrap' }}>
+              <AssistButton
+                label="Summarize"
+                loadingLabel="Summarizing\u2026"
+                state={summary}
+                onClick={runSummarize}
+                disabled={!companyId}
+              />
+              <AssistButton
+                label="Draft reply"
+                loadingLabel="Drafting\u2026"
+                state={draft}
+                onClick={runDraft}
+                disabled={!companyId}
+              />
+              <a
+                href={`https://mail.google.com/mail/u/0/#inbox/${selected.id}`}
+                target="_blank"
+                rel="noreferrer"
+                style={{
+                  fontSize: 10,
+                  background: '#1D9E75',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: 5,
+                  padding: '4px 10px',
+                  textDecoration: 'none',
+                }}
+              >
+                Open in Gmail
+              </a>
+            </div>
+          </div>
         </div>
+      ) : (
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#666', fontSize: 12, padding: '0 24px', textAlign: 'center' }}>
+          {filter === 'untriaged' ? (
+            <>
+              <div style={{ marginBottom: 6, color: '#aaa' }}>No untriaged messages in this view.</div>
+              <div style={{ fontSize: 10 }}>
+                The Unread Summary above counts every unread email in your inbox. Triage (and this view) only run on the most recent batch returned by the Gmail snapshot — older unread emails aren&apos;t loaded here. Open them in Gmail to clear them out, or reconnect to pull a larger window.
+              </div>
+            </>
+          ) : (
+            <>No messages in this view.</>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
 
-        <AssistPanel title="Summary" state={summary} />
-        <AssistPanel title="Draft reply" state={draft} copyable />
-
-        <div style={{ display: 'flex', gap: 6, marginTop: 'auto', flexWrap: 'wrap' }}>
-          <AssistButton
-            label="Summarize"
-            loadingLabel="Summarizing\u2026"
-            state={summary}
-            onClick={runSummarize}
-            disabled={!companyId}
-          />
-          <AssistButton
-            label="Draft reply"
-            loadingLabel="Drafting\u2026"
-            state={draft}
-            onClick={runDraft}
-            disabled={!companyId}
-          />
-          <a
-            href={`https://mail.google.com/mail/u/0/#inbox/${selected.id}`}
-            target="_blank"
-            rel="noreferrer"
+function InboxFilterBar({
+  filter,
+  onChange,
+  messages,
+}: {
+  filter: InboxFilter
+  onChange: (next: InboxFilter) => void
+  messages: CommunicationsMessage[]
+}) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        gap: 6,
+        flexWrap: 'wrap',
+        paddingBottom: 6,
+        borderBottom: '1px solid #1a1a1a',
+      }}
+    >
+      {FILTERS.map((f) => {
+        const count = messages.filter((m) => matchesFilter(m, f.key)).length
+        const active = filter === f.key
+        return (
+          <button
+            key={f.key}
+            onClick={() => onChange(f.key)}
             style={{
               fontSize: 10,
-              background: '#1D9E75',
-              color: '#fff',
-              border: 'none',
-              borderRadius: 5,
-              padding: '4px 10px',
-              textDecoration: 'none',
+              padding: '3px 9px',
+              borderRadius: 12,
+              border: '1px solid',
+              borderColor: active ? f.color : 'transparent',
+              background: active ? `${f.color}1f` : '#161616',
+              color: active ? '#fff' : '#999',
+              cursor: 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 5,
             }}
           >
-            Open in Gmail
-          </a>
-        </div>
-      </div>
+            <span>{f.label}</span>
+            <span
+              style={{
+                fontSize: 9,
+                color: active ? f.color : '#666',
+                fontWeight: 500,
+              }}
+            >
+              {count}
+            </span>
+          </button>
+        )
+      })}
     </div>
   )
 }
@@ -411,6 +542,13 @@ export function ResponseStats() {
 
 // ------------------------------------------------------------
 // UnreadSummary
+//
+// Phase-1 redesign: full-width widget that consolidates the prior
+// UnreadSummary + PriorityBreakdown duplication. Shows the headline
+// total + a horizontal stacked proportion bar + per-bucket counts
+// INCLUDING the previously-invisible "Untriaged" bucket (unread
+// messages that haven't received an LLM triage label yet — typically
+// the majority of a 200-msg inbox).
 // ------------------------------------------------------------
 
 export function UnreadSummary() {
@@ -422,36 +560,82 @@ export function UnreadSummary() {
   }, [snapshot, markLive])
 
   const totalUnread = snapshot != null ? snapshot.totalUnread : m.totalUnread
-  // Buckets reflect the LLM-triaged recent messages when triage ran; fall
-  // back to mock counts otherwise.
   const breakdown = snapshot?.priorityBreakdown
-  const items = [
-    {
-      label: 'Urgent',
-      count: breakdown != null ? breakdown.urgent : m.urgentCount,
-      color: '#e55',
-    },
-    {
-      label: 'Opportunity',
-      count: breakdown != null ? breakdown.opportunity : m.opportunityCount,
-      color: '#5DCAA5',
-    },
-    {
-      label: 'Can wait',
-      count: breakdown != null ? breakdown.canWait : m.canWaitCount,
-      color: '#666666',
-    },
+  const urgent = breakdown != null ? breakdown.urgent : m.urgentCount
+  const opportunity = breakdown != null ? breakdown.opportunity : m.opportunityCount
+  const canWait = breakdown != null ? breakdown.canWait : m.canWaitCount
+  // Promo count = unread messages tagged 'Promo' (Gmail CATEGORY_PROMOTIONS).
+  const promo =
+    snapshot != null
+      ? snapshot.messages.filter((msg) => msg.unread && msg.tag === 'Promo').length
+      : 0
+  // Untriaged = unread messages without a triagedPriority and not promo.
+  // For mock, derive a plausible "everything else" number.
+  const triagedTotal = urgent + opportunity + canWait
+  const untriaged =
+    snapshot != null
+      ? Math.max(0, totalUnread - triagedTotal - promo)
+      : Math.max(0, m.totalUnread - triagedTotal)
+
+  const buckets = [
+    { key: 'urgent', label: 'Urgent', count: urgent, color: '#e55' },
+    { key: 'opportunity', label: 'Opportunity', count: opportunity, color: '#5DCAA5' },
+    { key: 'canWait', label: 'Can wait', count: canWait, color: '#1D9E75' },
+    { key: 'untriaged', label: 'Untriaged', count: untriaged, color: '#444' },
+    { key: 'promo', label: 'Promo', count: promo, color: '#3a2e6e' },
   ]
+  const denom = Math.max(1, buckets.reduce((acc, b) => acc + b.count, 0))
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      <div style={{ fontSize: 20, fontWeight: 500, color: '#5DCAA5', marginBottom: 4 }}>{totalUnread} unread</div>
-      {items.map((item) => (
-        <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <div style={{ width: 8, height: 8, borderRadius: '50%', background: item.color, flexShrink: 0 }} />
-          <span style={{ fontSize: 11, color: '#ffffff', flex: 1 }}>{item.label}</span>
-          <span style={{ fontSize: 13, fontWeight: 500, color: '#ffffff' }}>{item.count}</span>
-        </div>
-      ))}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 12 }}>
+        <span style={{ fontSize: 28, fontWeight: 500, color: '#5DCAA5' }}>{totalUnread}</span>
+        <span style={{ fontSize: 12, color: '#999' }}>unread across {snapshot?.threadsActive ?? '—'} threads</span>
+      </div>
+
+      {/* Horizontal stacked bar */}
+      <div
+        style={{
+          display: 'flex',
+          width: '100%',
+          height: 10,
+          borderRadius: 6,
+          overflow: 'hidden',
+          background: '#1a1a1a',
+        }}
+      >
+        {buckets.map((b) =>
+          b.count > 0 ? (
+            <div
+              key={b.key}
+              style={{
+                width: `${(b.count / denom) * 100}%`,
+                background: b.color,
+              }}
+              title={`${b.label}: ${b.count}`}
+            />
+          ) : null
+        )}
+      </div>
+
+      {/* Per-bucket counts as a horizontal legend row */}
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(5, 1fr)',
+          gap: 8,
+        }}
+      >
+        {buckets.map((b) => (
+          <div key={b.key} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <div style={{ width: 6, height: 6, borderRadius: '50%', background: b.color, flexShrink: 0 }} />
+              <span style={{ fontSize: 10, color: '#999' }}>{b.label}</span>
+            </div>
+            <span style={{ fontSize: 16, fontWeight: 500, color: '#fff' }}>{b.count}</span>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
