@@ -1448,3 +1448,78 @@ User-controlled, required once before the first real connect attempt:
 - **`LinkedInConnectionChip` is the fourth ~95%-identical chip.** The Session 11/12 residual called for revisiting a generic chip when a fourth provider landed. We've now landed it. The duplication cost finally exceeds the abstraction cost — worth a ~1-hour extract pass as a standalone session: generic `<ProviderConnectionChip provider="linkedin" status={...} accentVar="--mode-accent" onConnect={...} onDisconnect={...} />` consumed by four thin wrappers.
 - **No connection picture on the chip.** We persist `picture_url` and `email` in metadata but don't render them yet. Trivial to surface in the popover when the chip extraction lands.
 - **No OAuth-error banner on `/marketing?integration=linkedin&status=error&reason=...`.** Same residual called out for Etsy and GA4. The generic-banner extraction would now cover four providers in one shot.
+
+---
+
+## Session 13.1 — Drop PKCE from LinkedIn OAuth (confidential-client flow)
+
+First live LinkedIn connect attempt returned `401 invalid_client: "Client authentication failed"` at the token exchange. LinkedIn rejects the combination of PKCE (`code_verifier`) + `client_secret` for confidential clients — one or the other is permitted, not both. Our server-side app has the secret, so the documented pattern is the confidential-client flow without PKCE.
+
+### Changes
+
+| File | Change |
+|---|---|
+| `lib/integrations/linkedin/fetch.ts` | Dropped `code_challenge` from `buildAuthorizeUrl`, dropped `code_verifier` from `exchangeCode`, removed `generatePkce()` + PKCE types. |
+| `app/api/integrations/linkedin/connect/route.ts` | No longer generates PKCE or writes the verifier cookie. |
+| `app/api/integrations/linkedin/callback/route.ts` | No longer reads the PKCE cookie. The signed state token alone handles CSRF. |
+| `lib/integrations/linkedin/pkce-cookie.ts` | Deleted (no longer referenced). |
+
+End-to-end verified after the change: consent → callback → token exchange (200) → `/v2/userinfo` → row upsert → chip flips to "LinkedIn connected" in green.
+
+---
+
+## Session 14 — Dashboard cross-cutting summary
+
+**Goal**: Light up the only mode that still had zero integration. The Dashboard reads from every other mode's existing snapshot to surface a unified headline view — one pill per connected provider (`emails / orders / revenue / visits`), a setup checklist that knows the live state of all five providers, and a "live pulse" feed sourced from the commerce snapshot's `recentActivity`.
+
+### Locked scope
+
+- New `DashboardSnapshot` aggregator that re-uses the existing per-mode snapshots — no new provider API calls.
+- `IntelligenceBriefing` widget pills flip from static placeholders to real cross-cutting metrics.
+- `LivePulse` widget shows active-connection count + recent signals (commerce events for v1).
+- `SetupChecklist` widget extends from Stripe-only awareness to all five providers (Gmail, GA4, Etsy, LinkedIn, Stripe).
+- `ModeTiles` and `SuggestedActions` widgets stay untouched (static navigation is appropriate there).
+- "Sample data" indicator drops from the three rewritten widgets once a live snapshot loads.
+
+### Architectural choices
+
+- **Re-use existing snapshots, don't re-fetch from providers.** The dashboard aggregator calls `getFinanceSnapshot`, `getCommunicationsSnapshot`, `getCommerceSnapshot`, `getAnalyticsSnapshot` directly — each has its own 5-minute cache. When the user has recently visited those modes, the dashboard load is sub-200ms (cache hits across the board). Cold load is ~8s (four parallel provider fetches). Cheaper than designing a separate API surface and avoids the consistency-drift problem of two paths reading the same data differently.
+- **`Promise.allSettled`, not `Promise.all`.** One provider erroring shouldn't black out the whole dashboard. Each settled-rejected result resolves to `null` and the corresponding headline section renders an empty state. Same null-is-degraded pattern every mode already uses.
+- **LinkedIn surfaces as a "social" headline, not a metric.** Member-tier OAuth only gives identity (Session 13's locked scope), so we display `{ connected: true, memberName }` rather than a numeric tile. When the Marketing Developer Platform scopes land in a follow-up, `social` shape gets a `posts` / `reach` field without breaking consumers.
+- **`recentSignals` populated from commerce only for v1.** Commerce has the richest cross-cutting event stream already built (`recentActivity` from Session 12). True multi-provider signal mixing (Gmail arrivals + Stripe payouts + GA4 spikes) needs a unified event-timestamp schema and a heuristic for which signals matter; deferred. The field is in the model so the shape is forward-compatible.
+- **Setup checklist hooks each connection status independently.** Could have driven the checklist from the `DashboardSnapshot.headline` (any non-null = done), but that conflates "snapshot loaded with data" with "service is connected". A connected-but-empty Stripe (no transactions this month) returns a valid snapshot with `revenue.value = 0` — we still want the checkbox green. So the checklist uses the per-provider `useXConnectionStatus` hooks directly. Cheap because each hook hits the connected_accounts row, not a provider API.
+- **Widgets call `markLive()` when they have data.** Without it, the surrounding WidgetShell still renders the "Sample data" indicator — which would be wrong on widgets that are demonstrably showing real cross-cutting state. `markLive` is the same opt-in pattern Session 11+ commerce widgets use.
+
+### New / extended infrastructure
+
+| File | Purpose |
+|---|---|
+| `lib/integrations/dashboard/model.ts` | `DashboardSnapshot` shape with five nullable headline sections (`emails`, `orders`, `revenue`, `visits`, `social`), `activeConnectionsCount`, and `recentSignals[]`. |
+| `lib/integrations/dashboard/snapshot.ts` | `getDashboardSnapshot(companyId)` — `Promise.allSettled` over the four per-mode snapshot loaders + a LinkedIn account-row read, normalized into the headline shape. Includes a `formatCurrency()` helper since the FinanceSnapshot exposes a raw number, not a display string. |
+| `lib/integrations/dashboard/read.ts` | `'use server'` — `readDashboardSnapshot(companyId)` with `requireCompanyAccess` guard. |
+| `contexts/dashboard-snapshot-context.tsx` | `DashboardSnapshotProvider` + `useDashboardSnapshot()`. Same shape as the four mode-specific contexts. |
+| `app/(app)/dashboard/page.tsx` | Wraps the widget grid in `DashboardSnapshotProvider`. |
+| `components/widgets/content/dashboard-widgets.tsx` | `IntelligenceBriefing` + `LivePulse` rewired to the snapshot context; `SetupChecklist` extended to recognize all five providers via their existing connection-status hooks; all three call `markLive()` when live data is present. |
+
+### Local verification
+
+- `tsc --noEmit` clean.
+- `/dashboard` cold load: ~8.3s (four parallel provider fetches building snapshots from scratch). Second load: ~210ms (full cache hit). Cache TTL is 5 min per provider; refresh-on-mount semantics inherited from the existing per-mode contexts.
+- Headline pills against `ce650d4b-…` (DigitalDreamsmiths shop, real data):
+    - **201 unread** (Gmail)
+    - **4 orders** (Etsy)
+    - **$0.00 revenue** (Stripe — connected, zero recent payouts)
+    - **0 visits this week** (GA4 — sparse property)
+- Setup Checklist: **7 of 7 complete** with all six steps struck-through (workspace + company + five providers).
+- Caption switches from the disconnected-prompt to "Live snapshot across your connected platforms" once `activeConnectionsCount > 0`.
+- "Sample data" indicator drops from Intelligence Briefing, Live Pulse, and Setup Checklist once a live snapshot loads. Mode Tiles + Suggested Actions retain the indicator (appropriate — they're static).
+
+### Residuals heading into future sessions
+
+- **8-second cold load is the worst dashboard latency in the app.** Acceptable for v1, but the aggregator could parallelize differently or pre-warm in middleware if it starts feeling slow. The 5-minute caches mean only the first per-day visit pays the cost.
+- **`recentSignals` is commerce-only.** Multi-provider event mixing is genuinely useful (a "Gmail arrival + Stripe payout + Etsy order" feed) but needs a unified timestamp + relevance heuristic before it stops feeling random.
+- **`SuggestedActions` is still static.** Could be driven off the unconnected providers in the checklist (e.g. if Gmail isn't connected, suggest Gmail; if revenue is $0, suggest reviewing Stripe). Deferred — the static copy still reads fine as long as the dashboard remains primarily an integration-status surface.
+- **No "today" window across providers.** Each provider has its own time horizon (Etsy = 30d, GA4 = 7d, Stripe = 30d, Gmail = total-unread). The headline pills mix these without labels. Acceptable for v1 because the labels imply windows ("this week" for visits, "unread" for emails, etc.), but a strict same-window cross-cutting view would need each provider to grow a `today` / `last7d` aggregate.
+- **LinkedIn "social" headline is currently un-surfaced in any widget.** It's in the snapshot but the existing dashboard widgets don't have a slot for it. A follow-up widget (or rewiring `LivePulse` to include "Connected as {memberName}") would surface it.
+- **Generic OAuth-error banner still pending.** Now five providers worth of `?integration/?status/?reason` query params that the mode pages silently ignore.
+- **Chip extraction still pending.** Five chips now (Stripe / Gmail / GA4 / Etsy / LinkedIn), all ~95% identical. The duplication has well crossed the abstraction-cost threshold.

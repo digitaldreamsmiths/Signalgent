@@ -3,6 +3,7 @@
 import { useEffect } from 'react'
 import { useMode } from '@/contexts/mode-context'
 import { WidgetGrid } from '@/components/widgets/widget-grid'
+import { DashboardSnapshotProvider } from '@/contexts/dashboard-snapshot-context'
 
 function getGreeting(): string {
   const hour = new Date().getHours()
@@ -24,7 +25,7 @@ export default function DashboardPage() {
   const { setMode } = useMode()
   useEffect(() => { setMode('dashboard') }, [setMode])
   return (
-    <>
+    <DashboardSnapshotProvider>
       <div style={{ paddingBottom: 16 }}>
         <h1 style={{ fontSize: 24, fontWeight: 500, letterSpacing: '-0.02em', color: '#ffffff' }}>
           {getGreeting()}.
@@ -34,6 +35,6 @@ export default function DashboardPage() {
         </p>
       </div>
       <WidgetGrid modeId="dashboard" />
-    </>
+    </DashboardSnapshotProvider>
   )
 }

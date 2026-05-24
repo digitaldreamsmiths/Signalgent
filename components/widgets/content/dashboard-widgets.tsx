@@ -1,50 +1,161 @@
 'use client'
 
+import { useEffect } from 'react'
 import Link from 'next/link'
 import { MODES, type ModeId } from '@/contexts/mode-context'
 import { useCompany } from '@/contexts/company-context'
+import { useDashboardSnapshot } from '@/contexts/dashboard-snapshot-context'
+import { useWidgetLiveIndicator } from '../widget-live-indicator'
 import {
   useStripeConnectionStatus,
   getStripeConnectUrl,
 } from '@/hooks/use-stripe-connection'
+import {
+  useGmailConnectionStatus,
+  getGmailConnectUrl,
+} from '@/hooks/use-gmail-connection'
+import {
+  useEtsyConnectionStatus,
+  getEtsyConnectUrl,
+} from '@/hooks/use-etsy-connection'
+import {
+  useGoogleAnalyticsConnectionStatus,
+  getGoogleAnalyticsConnectUrl,
+} from '@/hooks/use-google-analytics-connection'
+import {
+  useLinkedInConnectionStatus,
+  getLinkedInConnectUrl,
+} from '@/hooks/use-linkedin-connection'
+
+const SOURCE_COLORS: Record<string, string> = {
+  commerce: '#378ADD',
+  communications: '#1D9E75',
+  finance: '#BA7517',
+  analytics: '#639922',
+  marketing: '#D85A30',
+}
 
 export function IntelligenceBriefing() {
+  const { snapshot, isLoading } = useDashboardSnapshot()
+  const { markLive } = useWidgetLiveIndicator()
+  useEffect(() => {
+    if (snapshot && snapshot.activeConnectionsCount > 0) markLive()
+  }, [snapshot, markLive])
+  const headline = snapshot?.headline
+  const pills: { key: string; label: string; live: boolean }[] = []
+  if (headline) {
+    pills.push({
+      key: 'emails',
+      label: headline.emails ? `${headline.emails.unread} unread` : '— emails',
+      live: headline.emails !== null,
+    })
+    pills.push({
+      key: 'orders',
+      label: headline.orders ? `${headline.orders.count} orders` : '— orders',
+      live: headline.orders !== null,
+    })
+    pills.push({
+      key: 'revenue',
+      label: headline.revenue ? `${headline.revenue.formatted} revenue` : '$— revenue',
+      live: headline.revenue !== null,
+    })
+    pills.push({
+      key: 'visits',
+      label: headline.visits ? `${headline.visits.formatted} this week` : '— visits',
+      live: headline.visits !== null,
+    })
+  }
+  const anyLive = pills.some((p) => p.live)
+  const message = !headline
+    ? 'Loading your business snapshot…'
+    : anyLive
+      ? 'Live snapshot across your connected platforms. Open any mode for the full picture.'
+      : 'Connect your accounts to get a daily AI-powered summary of your business. Signalgent will analyze your email, revenue, orders, and social presence to surface what matters most.'
+
   return (
     <div>
       <p style={{ fontSize: 13, color: '#ffffff', lineHeight: 1.6, marginBottom: 14 }}>
-        Connect your accounts to get a daily AI-powered summary of your business.
-        Signalgent will analyze your email, revenue, orders, and social presence
-        to surface what matters most.
+        {message}
       </p>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        {['0 emails', '0 posts queued', '$— today'].map((pill) => (
-          <span
-            key={pill}
-            style={{
-              fontSize: 10,
-              color: '#999999',
-              background: 'rgba(255,255,255,0.03)',
-              borderRadius: 20,
-              padding: '4px 10px',
-              border: '1px solid rgba(255,255,255,0.05)',
-            }}
-          >
-            {pill}
-          </span>
-        ))}
+        {(headline ? pills : ['Loading…']).map((p) => {
+          const isPlaceholder = typeof p === 'string'
+          const label = isPlaceholder ? p : p.label
+          const live = isPlaceholder ? false : p.live
+          return (
+            <span
+              key={typeof p === 'string' ? p : p.key}
+              style={{
+                fontSize: 10,
+                color: live ? '#cfd0c2' : '#999999',
+                background: live ? 'rgba(99,153,34,0.08)' : 'rgba(255,255,255,0.03)',
+                borderRadius: 20,
+                padding: '4px 10px',
+                border: live
+                  ? '1px solid rgba(99,153,34,0.25)'
+                  : '1px solid rgba(255,255,255,0.05)',
+                opacity: isLoading && !snapshot ? 0.5 : 1,
+              }}
+            >
+              {label}
+            </span>
+          )
+        })}
       </div>
     </div>
   )
 }
 
 export function LivePulse() {
+  const { snapshot, isLoading } = useDashboardSnapshot()
+  const { markLive } = useWidgetLiveIndicator()
+  useEffect(() => {
+    if (snapshot && snapshot.activeConnectionsCount > 0) markLive()
+  }, [snapshot, markLive])
+  const activeCount = snapshot?.activeConnectionsCount ?? 0
+  const signals = snapshot?.recentSignals ?? []
   return (
     <div>
       <p style={{ fontSize: 13, color: '#ffffff', lineHeight: 1.6, marginBottom: 14 }}>
-        Real-time signals from your connected platforms will appear here as they happen.
+        {signals.length > 0
+          ? 'Recent signals from your connected platforms.'
+          : 'Real-time signals from your connected platforms will appear here as they happen.'}
       </p>
+      {signals.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
+          {signals.map((s, i) => (
+            <div
+              key={i}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '4px 0',
+              }}
+            >
+              <div
+                style={{
+                  width: 6,
+                  height: 6,
+                  borderRadius: '50%',
+                  background: SOURCE_COLORS[s.source] ?? '#666',
+                  flexShrink: 0,
+                }}
+              />
+              <span style={{ fontSize: 11, color: '#ffffff', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {s.label}
+              </span>
+              <span style={{ fontSize: 9, color: '#999999', flexShrink: 0 }}>{s.time}</span>
+            </div>
+          ))}
+        </div>
+      )}
       <div style={{ borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: 10 }}>
-        <span style={{ fontSize: 11, color: '#999999' }}>0 active connections</span>
+        <span style={{ fontSize: 11, color: '#999999' }}>
+          {isLoading && !snapshot
+            ? 'Loading…'
+            : `${activeCount} active connection${activeCount === 1 ? '' : 's'}`}
+        </span>
       </div>
     </div>
   )
@@ -96,21 +207,51 @@ interface ChecklistStep {
 
 export function SetupChecklist() {
   const { activeCompany } = useCompany()
-  const { status: stripeStatus } = useStripeConnectionStatus(activeCompany?.id ?? null)
+  const companyId = activeCompany?.id ?? null
+  const { markLive } = useWidgetLiveIndicator()
+  const { status: stripeStatus } = useStripeConnectionStatus(companyId)
+  const { status: gmailStatus } = useGmailConnectionStatus(companyId)
+  const { status: etsyStatus } = useEtsyConnectionStatus(companyId)
+  const { status: gaStatus } = useGoogleAnalyticsConnectionStatus(companyId)
+  const { status: linkedinStatus } = useLinkedInConnectionStatus(companyId)
+  useEffect(() => {
+    if (companyId) markLive()
+  }, [companyId, markLive])
+
   const paymentsDone = stripeStatus?.status === 'connected'
-  const paymentsHref = activeCompany ? getStripeConnectUrl(activeCompany.id) : undefined
+  const emailDone = gmailStatus?.status === 'connected'
+  const commerceDone = etsyStatus?.status === 'connected'
+  const analyticsDone = gaStatus?.status === 'connected'
+  const socialDone = linkedinStatus?.status === 'connected'
 
   const steps: ChecklistStep[] = [
     { label: 'Create your workspace', done: true },
     { label: 'Add your first company', done: Boolean(activeCompany) },
-    { label: 'Connect email (Gmail or Outlook)', done: false },
-    { label: 'Connect social (LinkedIn or Facebook)', done: false },
+    {
+      label: 'Connect email (Gmail or Outlook)',
+      done: emailDone,
+      href: emailDone || !companyId ? undefined : getGmailConnectUrl(companyId),
+    },
+    {
+      label: 'Connect social (LinkedIn or Facebook)',
+      done: socialDone,
+      href: socialDone || !companyId ? undefined : getLinkedInConnectUrl(companyId),
+    },
     {
       label: 'Connect payments (Stripe or QuickBooks)',
       done: paymentsDone,
-      href: paymentsDone ? undefined : paymentsHref,
+      href: paymentsDone || !companyId ? undefined : getStripeConnectUrl(companyId),
     },
-    { label: 'Connect commerce (Shopify or WooCommerce)', done: false },
+    {
+      label: 'Connect commerce (Shopify or Etsy)',
+      done: commerceDone,
+      href: commerceDone || !companyId ? undefined : getEtsyConnectUrl(companyId),
+    },
+    {
+      label: 'Connect analytics (Google Analytics)',
+      done: analyticsDone,
+      href: analyticsDone || !companyId ? undefined : getGoogleAnalyticsConnectUrl(companyId),
+    },
   ]
   const completed = steps.filter((s) => s.done).length
 
