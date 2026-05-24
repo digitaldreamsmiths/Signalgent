@@ -4,11 +4,6 @@
  * Widgets read this, never raw provider responses. Provider-specific
  * normalizers (e.g. `lib/integrations/etsy/normalize.ts`) build a
  * `CommerceSnapshot` from whatever shape the provider returns.
- *
- * V1 only populates `orderStats`; the remaining commerce widgets
- * (Products, OrdersKanban, RecentActivity, LowStock, RevenueByProduct)
- * continue to read `COMMERCE_MOCK` until Session 12 adds listings + a
- * richer receipt pipeline.
  */
 
 /** Top-of-page KPI tile (the `OrderStats` widget). */
@@ -25,6 +20,45 @@ export interface OrderStats {
   currencyCode: string
 }
 
+export interface Product {
+  /** Provider-side identifier. Stringified so widgets stay provider-agnostic. */
+  id: string
+  name: string
+  /** Display-ready price, e.g. "$70.00". */
+  price: string
+  /** Available units in stock. */
+  stock: number
+}
+
+export interface OrderCard {
+  /** Display id, e.g. "#1847" (prefixed with `#` for parity with the mock). */
+  id: string
+  /** Display-ready line total, e.g. "$142.00". */
+  amount: string
+}
+
+export interface OrdersKanban {
+  new: OrderCard[]
+  processing: OrderCard[]
+  shipped: OrderCard[]
+}
+
+export type ActivityType = 'order' | 'shipped' | 'alert' | 'processing' | 'refund'
+
+export interface ActivityEntry {
+  event: string
+  detail: string
+  /** Display-ready relative time, e.g. "12 min ago". */
+  time: string
+  type: ActivityType
+}
+
+export interface RevenueByProductEntry {
+  name: string
+  /** Numeric revenue value in shop currency (already divisor-adjusted). */
+  value: number
+}
+
 export interface CommerceSnapshot {
   /** When this snapshot was computed (ISO 8601). */
   generatedAt: string
@@ -39,4 +73,14 @@ export interface CommerceSnapshot {
   }
   /** Rolling-window tile shown at the top of /commerce. */
   orderStats: OrderStats
+  /** Active listings — drives the Products widget. */
+  products: Product[]
+  /** Receipts grouped by status — drives OrdersKanban. */
+  ordersKanban: OrdersKanban
+  /** Recent receipt-derived events (newest first) — drives RecentActivity. */
+  recentActivity: ActivityEntry[]
+  /** Listings below the low-stock threshold — drives LowStock. */
+  lowStock: Product[]
+  /** Revenue summed per listing within the window — drives RevenueByProduct. */
+  revenueByProduct: RevenueByProductEntry[]
 }

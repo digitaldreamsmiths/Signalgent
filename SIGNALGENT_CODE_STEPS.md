@@ -1305,3 +1305,79 @@ No scopes outside `transactions_r shops_r` — anything else would expand the co
 - **Etsy app is pending approval at shipping time.** Dev keystring + secret work against the sandbox, but other users can't go through the consent screen until Etsy approves the app. User is sole user during the review window.
 - **`EtsyConnectionChip` is the third ~95%-identical chip.** The Session 10 residual called for revisiting a generic chip when a third provider landed. Still holding off — the props-soup cost outweighs the duplication cost so long as chip count is small. Worth a ~1-hr extract when Outlook lands (the fourth).
 - **Etsy rate limits unmonitored.** Etsy v3 enforces 10 req/s per app and 10 000 req/day per app. Our snapshot fires at most 5 requests per build and caches for 5 min, so a single company hits the endpoint ~1 req/min when actively viewing `/commerce`. Well under the envelope; worth a log if the first live run surfaces anything unexpected.
+
+---
+
+## Session 11.1 — Fix Etsy v3 `x-api-key` format
+
+First live OAuth attempt revealed that Etsy's v3 API rejects the keystring-only `x-api-key` header documented in older references. Every request returned `403 {"error":"Shared secret is required in x-api-key header."}` even though the OAuth code exchange (which sends the same keystring as `client_id`) had succeeded.
+
+Six header-shape variants against `openapi-ping` ruled out everything else and confirmed the actual requirement: `x-api-key` must be **`{keystring}:{shared_secret}`** (colon-joined). Sending the secret alone returns `"API key not found or not active"`; sending nothing returns the literal hint `"Invalid API key: should be in the format 'keystring:shared_secret'"`.
+
+### Changes
+
+| File | Change |
+|---|---|
+| `lib/integrations/etsy/fetch.ts` | `etsyApiGet` now sends `'x-api-key': ` `${clientId()}:${clientSecret()}`. Inline comment captures the deviation from older docs. |
+
+End-to-end verified after the change: OAuth callback resolves the shop (`DigitalDreamsmiths`, USD), tokens persist, snapshot builds, `OrderStats` flips live and the "Sample data" badge drops off.
+
+---
+
+## Session 12 — Commerce snapshot expansion (Products, OrdersKanban, RecentActivity, LowStock, RevenueByProduct go live)
+
+**Goal**: Flip the remaining five commerce widgets from `COMMERCE_MOCK` to real Etsy data. The user pointed out that "Starter Kit," "Widget Pro," "Order #1847," etc. don't exist in their actual shop — those were all mock holdovers that Session 11 explicitly deferred. Session 12 closes that gap so every widget on `/commerce` reflects the real seller's state.
+
+### Locked scope
+
+- One new Etsy endpoint: `GET /v3/application/shops/{shop_id}/listings/active` for products + stock.
+- Same trailing 30-day receipts call as Session 11, now with `?includes=Transactions` so we get per-line-item data for the revenue-by-product breakdown.
+- All five remaining widgets flip live with the same null-is-mock fallback pattern (`useLiveMark`).
+- LowStock threshold stays at `< 20` units (matches the prior mock filter).
+- `OrdersKanban` semantics shift: `new` = open/unpaid, `processing` = paid + unshipped, `shipped` = was_shipped. Closer to how a real seller thinks about the queue than the prior "all paid in 'new'" mock.
+- No multi-page listings beyond 3 pages (300 listings) — covers any reasonable Etsy seller without unbounded paging.
+- No new env vars, no migration, no provider changes.
+
+### New / extended infrastructure
+
+| File | Change |
+|---|---|
+| `lib/integrations/etsy/fetch.ts` | Adds `EtsyListing` + `EtsyTransaction` types, exports `EtsyMoney`, adds `listActiveListings()`, adds `includeTransactions` option to `listShopReceipts` (sets `?includes=Transactions`), exports `moneyToNumber()` helper. |
+| `lib/integrations/commerce/model.ts` | Expanded `CommerceSnapshot` with `products`, `ordersKanban`, `recentActivity`, `lowStock`, `revenueByProduct`. New types: `Product`, `OrderCard`, `OrdersKanban`, `ActivityEntry`, `ActivityType`, `RevenueByProductEntry`. Outdated "V1 only populates orderStats" comment removed. |
+| `lib/integrations/etsy/normalize.ts` | Adds `buildProducts`, `buildLowStock`, `buildOrdersKanban`, `buildRecentActivity`, `buildRevenueByProduct`. Shared currency formatting (`formatMoney`, `formatCurrencyUnits`) handles JPY's no-decimal convention. New relative-time formatter for activity entries (`just now` → `min ago` → `h ago` → `Yesterday` → `Nd ago` → `Nw ago` → `Nmo ago`). Includes a synthetic "Low stock alert" entry when the tightest low-stock product exists, surfaced in `recentActivity` for parity with the prior mock event mix. |
+| `lib/integrations/etsy/snapshot.ts` | Fetches receipts + listings in parallel via `Promise.all`. New `collectListings()` helper paginates listings (3-page cap = 300 listings). Builds all six snapshot sections. Same 5-minute TTL, same cache key (`etsy:snapshot:{companyId}`). |
+| `components/widgets/content/commerce-widgets.tsx` | All five widgets re-wired to read from `useCommerceSnapshot()` with mock fallback. New `useLiveMark` helper hook consolidates the `useEffect(() => { if (value != null) markLive() })` boilerplate. Empty-state strings ("No active listings.", "No recent activity in the last 30 days.", "No revenue in the last 30 days.", "All products well stocked.") render when the live snapshot has an empty array — preventing the previous fallback-to-mock-on-empty UX. |
+
+### Architectural choices
+
+- **Listings fetched in parallel with receipts.** The two endpoints don't depend on each other; the prior serial design left ~600 ms of round-trip on the table. `Promise.all` halves the snapshot build time. If either throws, the snapshot returns `null` (existing pattern) and the widgets fall back to mock.
+- **Transactions embedded, not separately fetched.** Etsy supports `?includes=Transactions` on the receipts endpoint, returning each receipt's line items inline. The alternative — a per-receipt transactions call — would multiply the request count by N receipts and burn the rate-limit budget on a hot shop. One flag, same call count.
+- **Empty live data ≠ mock data.** Earlier draft of the widget hooks fell back to mock whenever the live array was empty. That hid the truth (e.g. "0 paid orders" looked like "$9,340 in sample revenue"). Switched to: live snapshot present + empty array → empty-state text. Mock only renders when the snapshot itself is null (provider not connected / error / not yet loaded).
+- **OrderCard ids are stringified Etsy receipt_ids, not display numbers.** The mock used cosmetic `#1847`, `#1851` IDs; live data uses `#4069855475`. Long but unambiguous; widget styling truncates with overflow rather than re-numbering. Renumbering would mean stateful counters per company, which the snapshot deliberately avoids.
+- **`buildRecentActivity` includes a synthetic low-stock alert.** Mock used to mix order events with a low-stock alert; live data with no low-stock items just produces 4 order events. The synthetic entry matches the prior visual rhythm when stock is tight, costs nothing when stock is healthy.
+- **`COMMERCE_MOCK` still ships.** Used both as fallback for disconnected/error states and as the initial render before the snapshot loads. Removing it would mean a blank `/commerce` for unconnected companies — worse onboarding than seeing plausible placeholder data.
+
+### Local verification
+
+- `tsc --noEmit` clean across the codebase.
+- `/commerce` for `ce650d4b-...` (the connected company) renders:
+    - **Order Stats**: 4 / $0.00 / 0% / 0 — accurate for a shop with 4 open/unpaid orders.
+    - **Products**: 6 real listings (Puppy Coloring Book $8.99 / Golden Doodle $2.99 / Dalmatian $2.99 / Yorkshire Terrier $2.99 / Mug Wrap $8.99 / Valentine Alphabet $12.99) with real stock counts (150–249 units each).
+    - **Orders Kanban**: 4 entries in `new` (`#4069855475 $3.29`, `#4061850432 $3.27`, `#4065778851 $3.27`, `#4052276376 $2.24`); `processing` and `shipped` render `—` (no paid-yet-unshipped or shipped orders).
+    - **Recent Activity**: 4 pending-order entries, newest first (`2d ago`, `4d ago`, `6d ago`, `2w ago`).
+    - **LowStock**: empty array → "All products well stocked." (correct — digital products with 150+ units).
+    - **RevenueByProduct**: empty array → "No revenue in the last 30 days." (correct — no paid receipts).
+- Snapshot dump via temporary `/api/integrations/etsy/debug-snapshot` confirmed all sections are populated coherently; route deleted post-verification.
+- Mock fallback verified on disconnected companies and on the analytics/marketing/etc. modes (unchanged from Session 11).
+
+### Residuals heading into Session 13
+
+- **OrderCard ids look ugly.** 10-digit Etsy receipt IDs (`#4069855475`) crowd the kanban cards. Either (a) trim to last-4 with hover/tooltip for the full id, or (b) compute a per-company-monotonic receipt number on read. (b) requires a sidecar table to track issued numbers; (a) is the smaller change.
+- **`recentActivity` synthetic alert is dishonest about timing.** It uses `now` instead of an actual event timestamp. Either tag it explicitly (`time: 'now'` is already there, which renders fine, but the alert can outrank a real event timestamped a few seconds ago). Fine for now since real users won't have ties at the second-level.
+- **No category/SKU on `Product`.** Etsy returns much richer metadata (categories, tags, images) that the dashboard could surface in a product-detail click-through. The current `Product` shape is widget-display only.
+- **`LowStock` threshold is hardcoded.** Different sellers care about different thresholds; should eventually move into per-company settings.
+- **`RevenueByProduct` window is the same 30 days as the rest of the snapshot.** A "lifetime top sellers" view would need a separate longer query (or a periodic background aggregation). Not blocking v1.
+- **Listings pagination caps at 300.** Sellers with > 300 active listings will see only the first 300 in the Products / RevenueByProduct join. Most Etsy shops are below this; raise the cap if a real user hits it.
+- **No log line on snapshot build (still).** Carried forward from Sessions 10 and 11.
+- **`EtsyConnectionChip` still the only ~95%-identical chip standout.** Generic chip extraction still on hold for the same reason as Session 11 — the props-soup cost outweighs the duplication cost until Outlook (provider #4) lands.
+- **Cache is still in-memory.** Same Redis/Upstash swap residual as before, now with the snapshot carrying considerably more payload (a few hundred-K vs Session 11's tens-of-K).

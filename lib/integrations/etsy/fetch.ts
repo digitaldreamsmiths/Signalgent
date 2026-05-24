@@ -188,10 +188,19 @@ export interface EtsyShop {
   digital_listing_count?: number
 }
 
-interface EtsyMoney {
+export interface EtsyMoney {
   amount: number
   divisor: number
   currency_code: string
+}
+
+export interface EtsyTransaction {
+  transaction_id: number
+  listing_id: number
+  title: string
+  quantity: number
+  /** Per-unit price. Multiply by quantity for the line total. */
+  price: EtsyMoney
 }
 
 export interface EtsyReceipt {
@@ -206,11 +215,27 @@ export interface EtsyReceipt {
   update_timestamp?: number
   grandtotal: EtsyMoney
   total_price?: EtsyMoney
+  /** Populated when listShopReceipts is called with includeTransactions. */
+  transactions?: EtsyTransaction[]
 }
 
 interface EtsyReceiptsResponse {
   count: number
   results: EtsyReceipt[]
+}
+
+export interface EtsyListing {
+  listing_id: number
+  title: string
+  state: string // 'active' | 'inactive' | 'sold_out' | 'draft' | 'expired'
+  quantity: number
+  price: EtsyMoney
+  url?: string
+}
+
+interface EtsyListingsResponse {
+  count: number
+  results: EtsyListing[]
 }
 
 async function etsyApiGet<T>(args: {
@@ -263,6 +288,8 @@ export interface ListReceiptsArgs {
   limit?: number
   /** Offset for paging. */
   offset?: number
+  /** When true, embeds the per-line `transactions[]` array on each receipt. */
+  includeTransactions?: boolean
 }
 
 export async function listShopReceipts(
@@ -272,8 +299,38 @@ export async function listShopReceipts(
   params.set('limit', String(args.limit ?? 100))
   if (args.offset) params.set('offset', String(args.offset))
   if (args.minCreated) params.set('min_created', String(args.minCreated))
+  if (args.includeTransactions) params.set('includes', 'Transactions')
   return etsyApiGet<EtsyReceiptsResponse>({
     accessToken: args.accessToken,
     path: `/shops/${args.shopId}/receipts?${params.toString()}`,
   })
+}
+
+export interface ListActiveListingsArgs {
+  accessToken: string
+  shopId: number
+  /** Max per page (Etsy caps at 100). */
+  limit?: number
+  offset?: number
+}
+
+/**
+ * GET /v3/application/shops/{shop_id}/listings/active
+ * Returns the seller's active listings with current `quantity` (stock).
+ */
+export async function listActiveListings(
+  args: ListActiveListingsArgs
+): Promise<EtsyListingsResponse> {
+  const params = new URLSearchParams()
+  params.set('limit', String(args.limit ?? 100))
+  if (args.offset) params.set('offset', String(args.offset))
+  return etsyApiGet<EtsyListingsResponse>({
+    accessToken: args.accessToken,
+    path: `/shops/${args.shopId}/listings/active?${params.toString()}`,
+  })
+}
+
+/** Convert an EtsyMoney value to its display number (e.g. 1234/100 = 12.34). */
+export function moneyToNumber(m: EtsyMoney): number {
+  return m.divisor > 0 ? m.amount / m.divisor : m.amount
 }

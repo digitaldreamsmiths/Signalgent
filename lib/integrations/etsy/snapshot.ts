@@ -17,8 +17,20 @@
 import { cache } from '../cache'
 import { markSynced } from '../accounts'
 import type { CommerceSnapshot } from '../commerce/model'
-import { listShopReceipts, type EtsyReceipt } from './fetch'
-import { buildOrderStats } from './normalize'
+import {
+  listActiveListings,
+  listShopReceipts,
+  type EtsyListing,
+  type EtsyReceipt,
+} from './fetch'
+import {
+  buildLowStock,
+  buildOrderStats,
+  buildOrdersKanban,
+  buildProducts,
+  buildRecentActivity,
+  buildRevenueByProduct,
+} from './normalize'
 import {
   ETSY_SERVICE,
   loadEtsyCredentials,
@@ -29,6 +41,7 @@ const SNAPSHOT_TTL_SEC = 5 * 60
 const WINDOW_DAYS = 30
 const PAGE_SIZE = 100
 const MAX_PAGES = 5
+const LISTINGS_MAX_PAGES = 3
 
 function snapshotKey(companyId: string): string {
   return `etsy:snapshot:${companyId}`
@@ -47,15 +60,35 @@ export async function getCommerceSnapshot(
   const sinceUnix = nowSec - WINDOW_DAYS * 24 * 60 * 60
 
   try {
-    const receipts = await collectReceipts({
-      accessToken: creds.accessToken,
-      shopId: creds.shopId,
-      sinceUnix,
-    })
+    const [receipts, listings] = await Promise.all([
+      collectReceipts({
+        accessToken: creds.accessToken,
+        shopId: creds.shopId,
+        sinceUnix,
+      }),
+      collectListings({
+        accessToken: creds.accessToken,
+        shopId: creds.shopId,
+      }),
+    ])
 
     const orderStats = buildOrderStats({
       receipts,
       currencyCode: creds.currencyCode,
+      sinceUnix,
+    })
+    const products = buildProducts(listings, creds.currencyCode)
+    const lowStock = buildLowStock(products)
+    const ordersKanban = buildOrdersKanban(receipts, creds.currencyCode)
+    const recentActivity = buildRecentActivity(
+      receipts,
+      lowStock,
+      nowSec,
+      creds.currencyCode
+    )
+    const revenueByProduct = buildRevenueByProduct({
+      receipts,
+      listings,
       sinceUnix,
     })
 
@@ -67,6 +100,11 @@ export async function getCommerceSnapshot(
         currencyCode: creds.currencyCode,
       },
       orderStats,
+      products,
+      ordersKanban,
+      recentActivity,
+      lowStock,
+      revenueByProduct,
     }
 
     await cache.set(snapshotKey(companyId), snapshot, SNAPSHOT_TTL_SEC)
@@ -98,6 +136,26 @@ async function collectReceipts(args: {
       accessToken: args.accessToken,
       shopId: args.shopId,
       minCreated: args.sinceUnix,
+      limit: PAGE_SIZE,
+      offset: page * PAGE_SIZE,
+      includeTransactions: true,
+    })
+    if (!results || results.length === 0) break
+    all.push(...results)
+    if (results.length < PAGE_SIZE) break
+  }
+  return all
+}
+
+async function collectListings(args: {
+  accessToken: string
+  shopId: number
+}): Promise<EtsyListing[]> {
+  const all: EtsyListing[] = []
+  for (let page = 0; page < LISTINGS_MAX_PAGES; page++) {
+    const { results } = await listActiveListings({
+      accessToken: args.accessToken,
+      shopId: args.shopId,
       limit: PAGE_SIZE,
       offset: page * PAGE_SIZE,
     })
