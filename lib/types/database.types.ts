@@ -235,6 +235,119 @@ export interface Database {
         }
         Relationships: []
       }
+      outreach_prospects: {
+        Row: {
+          id: string
+          company_id: string
+          email: string
+          domain: string | null
+          status: 'new' | 'enriched' | 'skipped' | 'drafted' | 'error'
+          skip_stage: 'enrich' | 'synthesis' | 'draft' | null
+          skip_reason: string | null
+          recipient_name: string | null
+          recipient_id: string | null
+          uei: string | null
+          resolution_confidence: number | null
+          resolution_method: 'heuristic' | 'ai_judge' | null
+          business_types: string[] | null
+          location: string | null
+          footprint: Json | null
+          enriched_at: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          company_id: string
+          email: string
+          domain?: string | null
+          status?: 'new' | 'enriched' | 'skipped' | 'drafted' | 'error'
+          skip_stage?: 'enrich' | 'synthesis' | 'draft' | null
+          skip_reason?: string | null
+          recipient_name?: string | null
+          recipient_id?: string | null
+          uei?: string | null
+          resolution_confidence?: number | null
+          resolution_method?: 'heuristic' | 'ai_judge' | null
+          business_types?: string[] | null
+          location?: string | null
+          footprint?: Json | null
+          enriched_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          email?: string
+          domain?: string | null
+          status?: 'new' | 'enriched' | 'skipped' | 'drafted' | 'error'
+          skip_stage?: 'enrich' | 'synthesis' | 'draft' | null
+          skip_reason?: string | null
+          recipient_name?: string | null
+          recipient_id?: string | null
+          uei?: string | null
+          resolution_confidence?: number | null
+          resolution_method?: 'heuristic' | 'ai_judge' | null
+          business_types?: string[] | null
+          location?: string | null
+          footprint?: Json | null
+          enriched_at?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      outreach_drafts: {
+        Row: {
+          id: string
+          prospect_id: string
+          company_id: string
+          subject: string
+          body: string
+          angle: string | null
+          synthesis_confidence: number | null
+          facts_for_draft: Json
+          facts_used: Json
+          drifted_facts: Json
+          clean: boolean
+          status: 'pending' | 'approved' | 'edited' | 'rejected'
+          reviewer_notes: string | null
+          reviewed_at: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          prospect_id: string
+          company_id: string
+          subject: string
+          body: string
+          angle?: string | null
+          synthesis_confidence?: number | null
+          facts_for_draft?: Json
+          facts_used?: Json
+          drifted_facts?: Json
+          clean?: boolean
+          status?: 'pending' | 'approved' | 'edited' | 'rejected'
+          reviewer_notes?: string | null
+          reviewed_at?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          subject?: string
+          body?: string
+          angle?: string | null
+          synthesis_confidence?: number | null
+          facts_for_draft?: Json
+          facts_used?: Json
+          drifted_facts?: Json
+          clean?: boolean
+          status?: 'pending' | 'approved' | 'edited' | 'rejected'
+          reviewer_notes?: string | null
+          reviewed_at?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: Record<string, never>
     Functions: Record<string, never>

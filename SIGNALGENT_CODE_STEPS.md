@@ -1597,3 +1597,59 @@ User-controlled, required once before the first real connect attempt:
 - **No log line on snapshot build (still).** Carried forward from Sessions 10–13.
 - **Chip duplication is now SIX chips.** Stripe, Gmail, GA4, Etsy, LinkedIn, Pinterest — all ~95% identical. The extraction case is overwhelming now; it's worth running ahead of any further providers.
 - **Cache namespaces total six.** `stripe:` `gmail:` `ga:` `etsy:` `linkedin:` (none actually — LinkedIn has no snapshot cache) `pinterest:`. Redis/Upstash swap residual unchanged in shape but growing in payload.
+
+## Session 19 — Govcon outreach pipeline (Stage 1: USASpending enrichment → synthesis/draft → review queue)
+
+SourceGent is client zero for a govcon cold-outreach intelligence pipeline. Built from the verified spec at `docs/specs/signalgent-outreach-stage1.md`. The generic pattern (ingest → enrich → synthesize → draft → gate → queue) lives in Signalgent; the USASpending research layer is the vertical part. **Send is out of scope** — approved drafts export to a dedicated cold-email platform.
+
+### Locked scope
+
+- **USASpending only** (public API, no key, no rate limit). No SAM.gov for v1.
+- Two calls: `spending_by_award` (footprint + `recipient_id`) → `recipient/<id>/` (`business_types` for socioeconomic flags). Award-level `Type of Set Aside` is unreliable (null on Eagle); socioeconomic comes from recipient `business_types`. `total_transaction_amount` can be negative (de-obligations) and is never read.
+- Draft register locked in spec (genuine-interest, SourceGent named once as a live tool, soft CTA, no em dashes, site in signature). `facts_for_draft[]` is the only thing the draft may use; `facts_used[]` echoed for drift auto-rejection.
+
+### Architectural choices
+
+- **Ported (not imported) the SourceGent USASpending code** from `docs/specs/sourcegent-reference/` into `lib/integrations/usaspending/`. Self-contained per the spec's "copy now, extract a shared package later" call. `docs/` excluded from `tsconfig` so reference files don't break the build.
+- **Resolver = heuristic + AI judge.** Live finding: USASpending fuzzy search needs space-separated tokens, so Haiku segments concatenated domains before querying; a de-spaced, suffix-stripped core comparison scores the result; the Haiku judge adjudicates only weak/ambiguous hits. Match scoring is **prefix/token-aligned only** — a mid-string substring (`ngconstruction` ⊂ `uttingconstruction`) no longer auto-accepts, it falls to the judge. A wrong/low-confidence match routes to the skip pile; never drafts on a wrong entity.
+- **Stages 2/3 ride the existing LLM pattern** (`getAnthropicClient` + `pickModel` + `logUsage`). New `LLMTask`s: `resolve` (Haiku), `synthesis` + `draft` (Sonnet). Em dashes deterministically sanitized post-draft.
+- **Review queue lives in Marketing mode** (no new mode), company-scoped, RLS mirroring `connected_accounts`.
+
+### New infrastructure files
+
+| File | What |
+|---|---|
+| `lib/integrations/usaspending/base.ts` | Circuit-breaker fetch (`fetchWithCircuitBreaker`), ported. |
+| `lib/integrations/usaspending/contractor.ts` | Call 1: recipient-name → award footprint. Adds `recipient_id` to fields + `mapAwardRow`; rewired to the breaker. |
+| `lib/integrations/usaspending/recipient.ts` | Call 2 (net-new): recipient detail → `business_types`, `uei`, location. |
+| `lib/integrations/usaspending/resolve.ts` | Domain → company-name resolver (heuristic + Haiku segment/judge), confidence-gated. |
+| `lib/integrations/outreach/{types,llm,enrich,synthesize,draft,pipeline,actions}.ts` | Stage 2/3 prompts, the facts contract + drift/dash guards, pipeline glue, and the company-scoped server actions (ingest / run / snapshot / approve / edit / reject). |
+| `components/widgets/content/outreach-widgets.tsx` | `OutreachReviewQueue` widget: ingest box, Run enrichment, draft review (approve/edit/reject), skip pile. |
+| `supabase/migrations/20260617000000_outreach_pipeline.sql` | `outreach_prospects` + `outreach_drafts` with RLS + touch triggers + indexes. |
+
+### Files modified
+
+| File | Change |
+|---|---|
+| `lib/llm/models.ts` | Added `resolve` (Haiku), `synthesis` + `draft` (Sonnet) tasks. |
+| `lib/types/database.types.ts` | Added `outreach_prospects` + `outreach_drafts` Row/Insert/Update types. |
+| `lib/widgets/registry.ts` | Registered `mkt-outreach-queue` (full, marketing); added to marketing default layout. |
+| `components/widgets/widget-map.tsx` | Mapped `mkt-outreach-queue` → `OutreachReviewQueue`. |
+| `tsconfig.json` | Excluded `docs` (reference `.ts` files are port-reference, not build). |
+
+### Local verification
+
+- Stage 1 calls live-verified against the Eagle Contractors fixture (recipient_id `b353…-C`): top-level `recipient_id` present, null agency/NAICS rows, `business_types` returned, negative `total_transaction_amount` confirmed.
+- Full chain run on real targets at the quality gate: Three Wire + Aptive drafted on-register and facts-grounded; Eagle + Interspec correctly skipped (low-bid/thin); freemail + no-prime-award targets skipped. Drift + em-dash guards fire.
+- Persisted path verified through the live widget: ingest → run → draft persists → renders in the review queue.
+- Resolver precision fix verified: `ngconstructionllc.com` now skips (AI judge: no clear match) instead of resolving to UTTING CONSTRUCTION LLC.
+- `tsc --noEmit` + `eslint` clean; `/marketing` compiles with no server errors; widget renders (screenshot).
+- Migration applied to the Supabase project.
+
+### Residuals heading into Session 20+
+
+- **Resolver recall.** Some real primes don't segment cleanly from their domain (By Light → no_results). Precision is intact; recall is the open edge. A "needs human disambiguation" bucket (vs. silent skip) would surface near-misses for manual resolution.
+- **Sign-off name** set to "Eudon Delemar" in `draft.ts` `SENDER`; change there if outreach is sent under another name.
+- **runNewProspects is capped at 15/run** to bound request time; larger lists need repeated runs (or a background job). No streaming progress yet.
+- **Marketing layout** is now mixing a monitoring surface (social analytics, mostly mock) with a doing surface (outreach). A dedicated outreach workspace / sub-nav is the proposed next step.
+- **No `api_usage` logging** for outreach LLM calls yet (console `logUsage` only); USASpending calls uncached across requests beyond the in-process 7-day map.
