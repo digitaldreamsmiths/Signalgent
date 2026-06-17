@@ -24,7 +24,12 @@ export function getLayout(modeId: string): ModeLayout {
   try {
     const parsed = JSON.parse(raw) as ModeLayout
     if (!Array.isArray(parsed) || parsed.length === 0) return buildDefaultLayout(modeId)
-    return parsed
+    // Drop placed widgets whose type no longer exists in the registry (e.g. a
+    // widget that graduated to its own surface), so a stale saved layout never
+    // renders a "Widget not found" tile.
+    const known = parsed.filter((w) => getWidgetDef(w.type))
+    if (known.length === 0) return buildDefaultLayout(modeId)
+    return known
   } catch {
     return buildDefaultLayout(modeId)
   }
