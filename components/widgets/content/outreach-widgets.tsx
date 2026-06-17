@@ -62,6 +62,10 @@ function toCsv(rows: OutreachProspectView[]): string {
   return lines.join('\n')
 }
 
+function fmtUsd(n: number): string {
+  return `$${n.toFixed(n < 1 ? 4 : 2)}`
+}
+
 function downloadCsv(filename: string, csv: string): void {
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
   const url = URL.createObjectURL(blob)
@@ -255,7 +259,7 @@ export function OutreachWorkspace() {
   const [raw, setRaw] = useState('')
   const [notice, setNotice] = useState<string | null>(null)
   const [running, setRunning] = useState(false)
-  const [progress, setProgress] = useState<{ processed: number; total: number; drafted: number; skipped: number } | null>(null)
+  const [progress, setProgress] = useState<{ processed: number; total: number; drafted: number; skipped: number; cost: number } | null>(null)
   const [filter, setFilter] = useState<Filter>('review')
   const [selectedId, setSelectedId] = useState<string | null>(null)
 
@@ -300,7 +304,8 @@ export function OutreachWorkspace() {
     let drafted = 0
     let skipped = 0
     let remaining = 0
-    setProgress({ processed: 0, total: 0, drafted: 0, skipped: 0 })
+    let cost = 0
+    setProgress({ processed: 0, total: 0, drafted: 0, skipped: 0, cost: 0 })
     for (let guard = 0; guard < 200; guard++) {
       const r = await runNewProspects(companyId, 5)
       if (!r.ok) {
@@ -310,14 +315,15 @@ export function OutreachWorkspace() {
       processed += r.data.processed
       drafted += r.data.drafted
       skipped += r.data.skipped
+      cost += r.data.cost_usd
       remaining = r.data.remaining
-      setProgress({ processed, total: processed + remaining, drafted, skipped })
+      setProgress({ processed, total: processed + remaining, drafted, skipped, cost })
       await refresh()
       if (r.data.processed === 0 || remaining === 0) break
     }
     setRunning(false)
     setProgress(null)
-    setNotice(`Done. ${drafted} personalized, ${skipped} template. ${remaining} remaining.`)
+    setNotice(`Done. ${drafted} personalized, ${skipped} template. ${remaining} remaining. ${fmtUsd(cost)} this run.`)
   }, [companyId, refresh])
 
   const handleMarkExported = useCallback(
@@ -391,7 +397,7 @@ export function OutreachWorkspace() {
         </button>
         {c && (
           <span style={{ fontSize: 11, color: MUTED, marginLeft: 'auto' }}>
-            {c.total} total · {c.personalized} personalized · {c.templates} template · {c.needs_review} need review · {c.approved} approved · {c.exported} exported
+            {c.total} total · {c.personalized} personalized · {c.templates} template · {c.needs_review} need review · {c.approved} approved · {c.exported} exported · <span style={{ color: '#9aa' }}>{fmtUsd(snapshot?.cost_usd_total ?? 0)} API cost</span>
           </span>
         )}
       </div>
@@ -401,7 +407,7 @@ export function OutreachWorkspace() {
         <div style={{ border: `1px solid ${BORDER}`, borderRadius: 8, padding: 10, background: CARD }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#ccc', marginBottom: 6 }}>
             <span>Enriching {progress.processed}{progress.total ? ` of ${progress.total}` : ''}…</span>
-            <span style={{ color: MUTED }}>{progress.drafted} personalized · {progress.skipped} template</span>
+            <span style={{ color: MUTED }}>{progress.drafted} personalized · {progress.skipped} template · {fmtUsd(progress.cost)} this run</span>
           </div>
           <div style={{ height: 6, background: '#111', borderRadius: 3, overflow: 'hidden' }}>
             <div style={{ height: '100%', width: `${progress.total ? Math.round((progress.processed / progress.total) * 100) : 0}%`, background: ACCENT, transition: 'width 0.3s' }} />

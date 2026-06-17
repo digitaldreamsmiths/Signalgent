@@ -113,4 +113,6 @@ export interface OutreachSnapshot {
     /** Prospects flagged for manual disambiguation. */
     needs_review: number
   }
+  /** All-time Anthropic API spend for this company's outreach ($). */
+  cost_usd_total: number
 }
