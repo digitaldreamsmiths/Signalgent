@@ -14,6 +14,7 @@
 
 import { callClaudeJSON } from './llm'
 import type { EnrichedTarget, SynthesisResult } from './types'
+import type { LLMUsage } from '../../llm/client'
 
 /** One line on what SourceGent is, so synthesis bridges to a real capability. */
 const SOURCEGENT_CAPABILITY =
@@ -68,8 +69,8 @@ function renderFacts(t: EnrichedTarget): string {
   return lines.join('\n')
 }
 
-export async function synthesize(target: EnrichedTarget): Promise<SynthesisResult> {
-  const out = await callClaudeJSON<Partial<SynthesisResult>>('synthesis', SYSTEM, renderFacts(target), 1200)
+export async function synthesize(target: EnrichedTarget, collect?: LLMUsage[]): Promise<SynthesisResult> {
+  const out = await callClaudeJSON<Partial<SynthesisResult>>('synthesis', SYSTEM, renderFacts(target), 1200, collect)
 
   // Null (LLM/API failure) or malformed → safe skip.
   if (!out) {
