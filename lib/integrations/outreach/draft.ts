@@ -9,6 +9,7 @@
 
 import { callClaudeJSON } from './llm'
 import type { DraftResult, DraftReview, SynthesisResult } from './types'
+import type { LLMUsage } from '../../llm/client'
 
 /**
  * Sender identity for the signature. Site is confirmed (sourcegent.io); the
@@ -78,7 +79,7 @@ export function reviewDraft(draft: DraftResult, factsForDraft: string[]): DraftR
   }
 }
 
-export async function draftEmail(synthesis: SynthesisResult): Promise<DraftReview | null> {
+export async function draftEmail(synthesis: SynthesisResult, collect?: LLMUsage[]): Promise<DraftReview | null> {
   if (synthesis.skip || synthesis.facts_for_draft.length === 0) return null
 
   const out = await callClaudeJSON<Partial<DraftResult>>(
@@ -86,6 +87,7 @@ export async function draftEmail(synthesis: SynthesisResult): Promise<DraftRevie
     SYSTEM,
     renderInput(synthesis.angle, synthesis.facts_for_draft),
     1500,
+    collect,
   )
   if (!out || typeof out.subject !== 'string' || typeof out.body !== 'string') return null
 

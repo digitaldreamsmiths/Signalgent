@@ -8,7 +8,9 @@ import {
   editDraft,
   getOutreachSnapshot,
   ingestProspects,
+  markExported,
   rejectDraft,
+  resolveManual,
   runNewProspects,
 } from '@/lib/integrations/outreach/actions'
 import type { OutreachSnapshot, OutreachProspectView } from '@/lib/integrations/outreach/types'
@@ -18,7 +20,7 @@ const BORDER = '#272727'
 const CARD = '#1a1a1a'
 const MUTED = '#8a8a8a'
 
-type Filter = 'review' | 'templates' | 'approved' | 'all'
+type Filter = 'review' | 'templates' | 'needs_review' | 'approved' | 'exported' | 'all'
 
 function btn(bg: string): React.CSSProperties {
   return { fontSize: 12, fontWeight: 600, color: '#fff', background: bg, border: 'none', borderRadius: 6, padding: '6px 14px', cursor: 'pointer' }
@@ -87,6 +89,7 @@ function DraftDetail({ prospect, companyId, onChanged }: { prospect: OutreachPro
   const [body, setBody] = useState(draft?.body ?? '')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [manualName, setManualName] = useState('')
 
   // Edit buffers initialize from the draft on mount; the parent remounts this
   // component per selection (key={draft.id}), so no reset effect is needed.
@@ -111,7 +114,7 @@ function DraftDetail({ prospect, companyId, onChanged }: { prospect: OutreachPro
   }
 
   const statusColor =
-    draft.status === 'approved' ? '#1D9E75' : draft.status === 'rejected' ? '#b04545' : draft.status === 'edited' ? '#BA7517' : ACCENT
+    draft.status === 'approved' ? '#1D9E75' : draft.status === 'rejected' ? '#b04545' : draft.status === 'edited' ? '#BA7517' : draft.status === 'exported' ? '#378ADD' : ACCENT
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -137,6 +140,29 @@ function DraftDetail({ prospect, companyId, onChanged }: { prospect: OutreachPro
       {draft.is_template && prospect.skip_reason && (
         <div style={{ fontSize: 11, color: MUTED, fontStyle: 'italic' }}>
           Generic template (couldn’t personalize, {prospect.skip_stage}): {prospect.skip_reason}
+        </div>
+      )}
+
+      {prospect.needs_review && (
+        <div style={{ border: `1px solid ${BORDER}`, borderRadius: 8, padding: 10, background: '#15110d' }}>
+          <div style={{ fontSize: 11, color: '#e0a060', marginBottom: 6 }}>
+            Uncertain match. Type the correct company name (as it appears in federal records) to re-resolve.
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input
+              value={manualName}
+              onChange={(e) => setManualName(e.target.value)}
+              placeholder="e.g. Eagle Contractors Inc"
+              style={{ flex: 1, background: '#111', border: `1px solid ${BORDER}`, borderRadius: 6, color: '#eee', fontSize: 12, padding: '6px 8px' }}
+            />
+            <button
+              disabled={busy || !manualName.trim()}
+              onClick={() => act(() => resolveManual(companyId, prospect.id, manualName))}
+              style={btn(ACCENT)}
+            >
+              Resolve
+            </button>
+          </div>
         </div>
       )}
       {!draft.clean && draft.drifted_facts.length > 0 && (
@@ -197,6 +223,11 @@ function DraftDetail({ prospect, companyId, onChanged }: { prospect: OutreachPro
             <button disabled={busy} onClick={() => act(() => rejectDraft(companyId, draft.id))} style={btnGhost('#b04545')}>
               Reject
             </button>
+            {draft.status === 'approved' && (
+              <button disabled={busy} onClick={() => act(() => markExported(companyId, [draft.id]))} style={btn('#378ADD')}>
+                Mark exported
+              </button>
+            )}
             <button
               onClick={() => {
                 navigator.clipboard?.writeText(`Subject: ${draft.subject}\n\n${draft.body}`)
@@ -224,6 +255,7 @@ export function OutreachWorkspace() {
   const [raw, setRaw] = useState('')
   const [notice, setNotice] = useState<string | null>(null)
   const [running, setRunning] = useState(false)
+  const [progress, setProgress] = useState<{ processed: number; total: number; drafted: number; skipped: number } | null>(null)
   const [filter, setFilter] = useState<Filter>('review')
   const [selectedId, setSelectedId] = useState<string | null>(null)
 
@@ -257,16 +289,48 @@ export function OutreachWorkspace() {
     refresh()
   }, [companyId, raw, refresh])
 
+  // Chunked run: processes the queue 5 at a time, updating the progress panel
+  // and the live list after each chunk, until the queue drains. This both shows
+  // progress and lets lists larger than the per-call cap finish in one click.
   const handleRun = useCallback(async () => {
     if (!companyId) return
     setRunning(true)
     setNotice(null)
-    const r = await runNewProspects(companyId)
+    let processed = 0
+    let drafted = 0
+    let skipped = 0
+    let remaining = 0
+    setProgress({ processed: 0, total: 0, drafted: 0, skipped: 0 })
+    for (let guard = 0; guard < 200; guard++) {
+      const r = await runNewProspects(companyId, 5)
+      if (!r.ok) {
+        setNotice(r.error)
+        break
+      }
+      processed += r.data.processed
+      drafted += r.data.drafted
+      skipped += r.data.skipped
+      remaining = r.data.remaining
+      setProgress({ processed, total: processed + remaining, drafted, skipped })
+      await refresh()
+      if (r.data.processed === 0 || remaining === 0) break
+    }
     setRunning(false)
-    if (!r.ok) return setNotice(r.error)
-    setNotice(`Processed ${r.data.processed}: ${r.data.drafted} personalized, ${r.data.skipped} template. ${r.data.remaining} left.`)
-    refresh()
+    setProgress(null)
+    setNotice(`Done. ${drafted} personalized, ${skipped} template. ${remaining} remaining.`)
   }, [companyId, refresh])
+
+  const handleMarkExported = useCallback(
+    async (ids: string[]) => {
+      if (!companyId || ids.length === 0) return
+      setNotice(null)
+      const r = await markExported(companyId, ids)
+      if (!r.ok) return setNotice(r.error)
+      setNotice(`Moved ${r.data.count} draft(s) to Exported.`)
+      refresh()
+    },
+    [companyId, refresh],
+  )
 
   const handleApproveAll = useCallback(
     async (ids: string[]) => {
@@ -292,8 +356,10 @@ export function OutreachWorkspace() {
   const withDraft = prospects.filter((p) => p.draft)
   const lists: Record<Filter, OutreachProspectView[]> = {
     review: withDraft.filter((p) => !p.draft!.is_template && p.draft!.status === 'pending'),
-    templates: withDraft.filter((p) => p.draft!.is_template && p.draft!.status === 'pending'),
+    templates: withDraft.filter((p) => p.draft!.is_template && p.draft!.status === 'pending' && !p.needs_review),
+    needs_review: prospects.filter((p) => p.needs_review),
     approved: withDraft.filter((p) => p.draft!.status === 'approved'),
+    exported: withDraft.filter((p) => p.draft!.status === 'exported'),
     all: withDraft,
   }
   const current = lists[filter]
@@ -325,11 +391,23 @@ export function OutreachWorkspace() {
         </button>
         {c && (
           <span style={{ fontSize: 11, color: MUTED, marginLeft: 'auto' }}>
-            {c.total} total · {c.personalized} personalized · {c.templates} template · {c.approved} approved
+            {c.total} total · {c.personalized} personalized · {c.templates} template · {c.needs_review} need review · {c.approved} approved · {c.exported} exported
           </span>
         )}
       </div>
       {notice && <div style={{ fontSize: 11, color: '#aaa' }}>{notice}</div>}
+
+      {running && progress && (
+        <div style={{ border: `1px solid ${BORDER}`, borderRadius: 8, padding: 10, background: CARD }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#ccc', marginBottom: 6 }}>
+            <span>Enriching {progress.processed}{progress.total ? ` of ${progress.total}` : ''}…</span>
+            <span style={{ color: MUTED }}>{progress.drafted} personalized · {progress.skipped} template</span>
+          </div>
+          <div style={{ height: 6, background: '#111', borderRadius: 3, overflow: 'hidden' }}>
+            <div style={{ height: '100%', width: `${progress.total ? Math.round((progress.processed / progress.total) * 100) : 0}%`, background: ACCENT, transition: 'width 0.3s' }} />
+          </div>
+        </div>
+      )}
 
       {loading && !snapshot && <div style={{ fontSize: 12, color: MUTED }}>Loading…</div>}
       {!loading && prospects.length === 0 && (
@@ -339,16 +417,23 @@ export function OutreachWorkspace() {
       {prospects.length > 0 && (
         <>
           <div style={{ display: 'flex', alignItems: 'center', borderBottom: `1px solid ${BORDER}` }}>
-            <div style={{ display: 'flex', gap: 4 }}>
+            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
               {tab('review', 'To review', lists.review.length)}
               {tab('templates', 'Templates', lists.templates.length)}
+              {tab('needs_review', 'Needs review', lists.needs_review.length)}
               {tab('approved', 'Approved', lists.approved.length)}
+              {tab('exported', 'Exported', lists.exported.length)}
               {tab('all', 'All', lists.all.length)}
             </div>
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, paddingBottom: 4 }}>
               {(filter === 'review' || filter === 'templates') && current.length > 0 && (
                 <button onClick={() => handleApproveAll(current.map((p) => p.draft!.id))} style={btn('#1D9E75')}>
                   Approve all ({current.length})
+                </button>
+              )}
+              {filter === 'approved' && current.length > 0 && (
+                <button onClick={() => handleMarkExported(current.map((p) => p.draft!.id))} style={btn('#378ADD')}>
+                  Mark all exported ({current.length})
                 </button>
               )}
               {current.length > 0 && (
@@ -374,9 +459,10 @@ export function OutreachWorkspace() {
                     <div style={{ fontSize: 13, fontWeight: sel ? 600 : 400, color: '#ddd' }}>{p.recipient_name ?? p.domain}</div>
                     <div style={{ fontSize: 11, color: MUTED, marginTop: 2 }}>{p.email}</div>
                     <div style={{ display: 'flex', gap: 6, marginTop: 6, alignItems: 'center' }}>
-                      {p.draft!.is_template ? <Pill label="template" color={MUTED} /> : <Pill label="personalized" color="#1D9E75" />}
+                      {p.needs_review ? <Pill label="review" color="#e0a060" /> : p.draft!.is_template ? <Pill label="template" color={MUTED} /> : <Pill label="personalized" color="#1D9E75" />}
                       {!p.draft!.clean && <Pill label="drift" color="#b04545" />}
                       {p.draft!.status === 'approved' && <Pill label="approved" color="#1D9E75" />}
+                      {p.draft!.status === 'exported' && <Pill label="exported" color="#378ADD" />}
                     </div>
                   </div>
                 )

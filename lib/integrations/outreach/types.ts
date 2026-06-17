@@ -74,7 +74,7 @@ export interface OutreachDraftView {
   drifted_facts: string[]
   facts_for_draft: string[]
   facts_used: string[]
-  status: 'pending' | 'approved' | 'edited' | 'rejected'
+  status: 'pending' | 'approved' | 'edited' | 'rejected' | 'exported'
   /** True for the generic fallback (no facts) vs. a personalized draft. */
   is_template: boolean
 }
@@ -92,6 +92,9 @@ export interface OutreachProspectView {
   location: string | null
   footprint: { award_count: number; sampled_total: number } | null
   draft: OutreachDraftView | null
+  /** Resolver found a plausible-but-uncertain match (low confidence) — surface
+   * for manual disambiguation rather than silent skip. */
+  needs_review: boolean
 }
 
 export interface OutreachSnapshot {
@@ -105,5 +108,9 @@ export interface OutreachSnapshot {
     templates: number
     /** Drafts (either kind) marked approved. */
     approved: number
+    /** Drafts marked exported (downloaded + sent). */
+    exported: number
+    /** Prospects flagged for manual disambiguation. */
+    needs_review: number
   }
 }

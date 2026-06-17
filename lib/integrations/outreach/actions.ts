@@ -16,8 +16,9 @@ import { createClient } from '@/lib/supabase/server'
 import { IntegrationAuthError, requireCompanyAccess } from '@/lib/integrations/auth'
 import type { Database, Json } from '@/lib/types/database.types'
 import { extractDomain } from '../usaspending/resolve'
-import { runPipeline } from './pipeline'
+import { runPipeline, runPipelineFromName, type PipelineOutcome } from './pipeline'
 import { buildTemplateDraft } from './template'
+import type { LLMUsage } from '../../llm/client'
 import type {
   ActionResult,
   OutreachDraftView,
@@ -26,11 +27,113 @@ import type {
 } from './types'
 
 type ProspectUpdate = Database['public']['Tables']['outreach_prospects']['Update']
+type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>
 
 const AUTH_ERROR = 'You don’t have access to this workspace.'
 
-/** Max prospects enriched per runNewProspects call (bounds the request time). */
+/** Hard cap on prospects enriched per runNewProspects call (bounds request time).
+ * The client loops, calling with a smaller chunk size, to process larger lists. */
 const RUN_BATCH = 15
+
+/** Per-1M-token prices ($) by model, for api_usage cost. */
+const PRICE: Record<string, { in: number; out: number }> = {
+  'claude-haiku-4-5': { in: 1, out: 5 },
+  'claude-sonnet-4-6': { in: 3, out: 15 },
+}
+
+function usageCostUsd(u: LLMUsage): number {
+  const p = PRICE[u.model] ?? { in: 0, out: 0 }
+  return (u.inputTokens / 1e6) * p.in + (u.outputTokens / 1e6) * p.out
+}
+
+/** Record per-call LLM usage to api_usage. Best-effort. */
+async function recordUsage(
+  supabase: SupabaseServerClient,
+  companyId: string,
+  userId: string,
+  usage: LLMUsage[],
+): Promise<void> {
+  if (usage.length === 0) return
+  const rows = usage.map((u) => ({
+    company_id: companyId,
+    user_id: userId,
+    service: 'anthropic' as const,
+    model: u.model,
+    input_tokens: u.inputTokens,
+    output_tokens: u.outputTokens,
+    cost_usd: Math.round(usageCostUsd(u) * 1e6) / 1e6,
+    feature: `outreach:${u.task}`,
+  }))
+  await supabase.from('api_usage').insert(rows)
+}
+
+/** Persist a pipeline outcome for a prospect (shared by run + manual resolve). */
+async function persistOutcome(
+  supabase: SupabaseServerClient,
+  companyId: string,
+  prospectId: string,
+  outcome: PipelineOutcome,
+): Promise<void> {
+  const enriched = 'enriched' in outcome ? outcome.enriched : undefined
+  const prospectUpdate: ProspectUpdate = { enriched_at: new Date().toISOString() }
+  if (enriched) {
+    prospectUpdate.recipient_name = enriched.recipient_name
+    prospectUpdate.recipient_id = enriched.recipient_id
+    prospectUpdate.uei = enriched.uei
+    prospectUpdate.resolution_confidence = enriched.resolution_confidence
+    prospectUpdate.resolution_method = enriched.resolution_method
+    prospectUpdate.business_types = enriched.business_types
+    prospectUpdate.location = enriched.location
+    prospectUpdate.footprint = enriched.footprint as unknown as Json
+  }
+
+  if (outcome.status === 'drafted') {
+    prospectUpdate.status = 'drafted'
+    prospectUpdate.skip_stage = null
+    prospectUpdate.skip_reason = null
+    await supabase.from('outreach_prospects').update(prospectUpdate).eq('id', prospectId).eq('company_id', companyId)
+    await supabase.from('outreach_drafts').upsert(
+      {
+        prospect_id: prospectId,
+        company_id: companyId,
+        subject: outcome.review.draft.subject,
+        body: outcome.review.draft.body,
+        angle: outcome.synthesis.angle,
+        synthesis_confidence: outcome.synthesis.confidence,
+        facts_for_draft: outcome.synthesis.facts_for_draft,
+        facts_used: outcome.review.draft.facts_used,
+        drifted_facts: outcome.review.drifted_facts,
+        clean: outcome.review.clean,
+        status: 'pending',
+      },
+      { onConflict: 'prospect_id' },
+    )
+  } else {
+    prospectUpdate.status = 'skipped'
+    prospectUpdate.skip_stage = outcome.stage
+    prospectUpdate.skip_reason = outcome.reason
+    await supabase.from('outreach_prospects').update(prospectUpdate).eq('id', prospectId).eq('company_id', companyId)
+    // Can't personalize -> attach a generic, sendable template (empty
+    // facts_for_draft marks it as a template, no fabricated claims).
+    const tmpl = buildTemplateDraft(enriched?.recipient_name ?? null)
+    await supabase.from('outreach_drafts').upsert(
+      {
+        prospect_id: prospectId,
+        company_id: companyId,
+        subject: tmpl.subject,
+        body: tmpl.body,
+        angle: null,
+        synthesis_confidence: null,
+        facts_for_draft: [],
+        facts_used: [],
+        drifted_facts: [],
+        clean: true,
+        status: 'pending',
+      },
+      { onConflict: 'prospect_id' },
+    )
+  }
+}
 
 // ── Ingest ──────────────────────────────────────────────────────────────────
 
@@ -85,9 +188,11 @@ export async function ingestProspects(
 
 export async function runNewProspects(
   companyId: string,
+  limit: number = RUN_BATCH,
 ): Promise<ActionResult<{ processed: number; drafted: number; skipped: number; remaining: number }>> {
+  let access: Awaited<ReturnType<typeof requireCompanyAccess>>
   try {
-    await requireCompanyAccess(companyId)
+    access = await requireCompanyAccess(companyId)
   } catch (err) {
     if (err instanceof IntegrationAuthError) return { ok: false, error: AUTH_ERROR }
     throw err
@@ -100,80 +205,24 @@ export async function runNewProspects(
     .eq('company_id', companyId)
     .eq('status', 'new')
     .order('created_at', { ascending: true })
-    .limit(RUN_BATCH)
+    .limit(Math.max(1, Math.min(limit, RUN_BATCH)))
 
   if (error) return { ok: false, error: 'Could not load prospects.' }
   if (!pending || pending.length === 0) {
     return { ok: true, data: { processed: 0, drafted: 0, skipped: 0, remaining: 0 } }
   }
 
+  const usage: LLMUsage[] = []
   let drafted = 0
   let skipped = 0
   for (const p of pending) {
-    const outcome = await runPipeline(p.email)
-    const enriched = 'enriched' in outcome ? outcome.enriched : undefined
-
-    const prospectUpdate: ProspectUpdate = { enriched_at: new Date().toISOString() }
-    if (enriched) {
-      prospectUpdate.recipient_name = enriched.recipient_name
-      prospectUpdate.recipient_id = enriched.recipient_id
-      prospectUpdate.uei = enriched.uei
-      prospectUpdate.resolution_confidence = enriched.resolution_confidence
-      prospectUpdate.resolution_method = enriched.resolution_method
-      prospectUpdate.business_types = enriched.business_types
-      prospectUpdate.location = enriched.location
-      prospectUpdate.footprint = enriched.footprint as unknown as Json
-    }
-
-    if (outcome.status === 'drafted') {
-      prospectUpdate.status = 'drafted'
-      prospectUpdate.skip_stage = null
-      prospectUpdate.skip_reason = null
-      await supabase.from('outreach_prospects').update(prospectUpdate).eq('id', p.id).eq('company_id', companyId)
-      await supabase.from('outreach_drafts').upsert(
-        {
-          prospect_id: p.id,
-          company_id: companyId,
-          subject: outcome.review.draft.subject,
-          body: outcome.review.draft.body,
-          angle: outcome.synthesis.angle,
-          synthesis_confidence: outcome.synthesis.confidence,
-          facts_for_draft: outcome.synthesis.facts_for_draft,
-          facts_used: outcome.review.draft.facts_used,
-          drifted_facts: outcome.review.drifted_facts,
-          clean: outcome.review.clean,
-          status: 'pending',
-        },
-        { onConflict: 'prospect_id' },
-      )
-      drafted += 1
-    } else {
-      prospectUpdate.status = 'skipped'
-      prospectUpdate.skip_stage = outcome.stage
-      prospectUpdate.skip_reason = outcome.reason
-      await supabase.from('outreach_prospects').update(prospectUpdate).eq('id', p.id).eq('company_id', companyId)
-      // Can't personalize -> attach a generic, sendable template (empty
-      // facts_for_draft marks it as a template, no fabricated claims).
-      const tmpl = buildTemplateDraft(enriched?.recipient_name ?? null)
-      await supabase.from('outreach_drafts').upsert(
-        {
-          prospect_id: p.id,
-          company_id: companyId,
-          subject: tmpl.subject,
-          body: tmpl.body,
-          angle: null,
-          synthesis_confidence: null,
-          facts_for_draft: [],
-          facts_used: [],
-          drifted_facts: [],
-          clean: true,
-          status: 'pending',
-        },
-        { onConflict: 'prospect_id' },
-      )
-      skipped += 1
-    }
+    const outcome = await runPipeline(p.email, usage)
+    await persistOutcome(supabase, companyId, p.id, outcome)
+    if (outcome.status === 'drafted') drafted += 1
+    else skipped += 1
   }
+
+  await recordUsage(supabase, companyId, access.userId, usage)
 
   const { count } = await supabase
     .from('outreach_prospects')
@@ -240,6 +289,12 @@ export async function getOutreachSnapshot(companyId: string): Promise<OutreachSn
         ? { award_count: fp.award_count, sampled_total: fp.sampled_total ?? 0 }
         : null,
       draft: draftByProspect.get(p.id) ?? null,
+      // A plausible-but-uncertain resolver result (low confidence) — surfaced
+      // for manual disambiguation rather than left as a silent skip.
+      needs_review:
+        p.status === 'skipped' &&
+        p.skip_stage === 'enrich' &&
+        (p.skip_reason ?? '').startsWith('low_confidence'),
     }
   })
 
@@ -249,6 +304,8 @@ export async function getOutreachSnapshot(companyId: string): Promise<OutreachSn
     personalized: views.filter((v) => v.draft && !v.draft.is_template).length,
     templates: views.filter((v) => v.draft && v.draft.is_template).length,
     approved: views.filter((v) => v.draft?.status === 'approved').length,
+    exported: views.filter((v) => v.draft?.status === 'exported').length,
+    needs_review: views.filter((v) => v.needs_review).length,
   }
 
   return { prospects: views, counts }
@@ -304,6 +361,63 @@ export async function approveDrafts(
   if (error) return { ok: false, error: 'Could not approve the drafts.' }
   revalidatePath('/marketing')
   return { ok: true, data: { count: data?.length ?? 0 } }
+}
+
+/** Move approved drafts to 'exported' (downloaded + sent) so Approved stays lean. */
+export async function markExported(
+  companyId: string,
+  draftIds: string[],
+): Promise<ActionResult<{ count: number }>> {
+  try {
+    await requireCompanyAccess(companyId)
+  } catch (err) {
+    if (err instanceof IntegrationAuthError) return { ok: false, error: AUTH_ERROR }
+    throw err
+  }
+  if (draftIds.length === 0) return { ok: true, data: { count: 0 } }
+  const supabase = await createClient()
+  const { data, error } = await supabase
+    .from('outreach_drafts')
+    .update({ status: 'exported', reviewed_at: new Date().toISOString() })
+    .eq('company_id', companyId)
+    .in('id', draftIds)
+    .select('id')
+  if (error) return { ok: false, error: 'Could not mark the drafts exported.' }
+  revalidatePath('/marketing')
+  return { ok: true, data: { count: data?.length ?? 0 } }
+}
+
+/** Manual disambiguation: re-run a prospect against an explicit company name. */
+export async function resolveManual(
+  companyId: string,
+  prospectId: string,
+  companyName: string,
+): Promise<ActionResult<{ status: 'drafted' | 'skipped' }>> {
+  let access: Awaited<ReturnType<typeof requireCompanyAccess>>
+  try {
+    access = await requireCompanyAccess(companyId)
+  } catch (err) {
+    if (err instanceof IntegrationAuthError) return { ok: false, error: AUTH_ERROR }
+    throw err
+  }
+  const name = companyName.trim()
+  if (!name) return { ok: false, error: 'Enter a company name to resolve against.' }
+
+  const supabase = await createClient()
+  const { data: prospect } = await supabase
+    .from('outreach_prospects')
+    .select('email')
+    .eq('id', prospectId)
+    .eq('company_id', companyId)
+    .single()
+  if (!prospect) return { ok: false, error: 'Prospect not found.' }
+
+  const usage: LLMUsage[] = []
+  const outcome = await runPipelineFromName(prospect.email, name, usage)
+  await persistOutcome(supabase, companyId, prospectId, outcome)
+  await recordUsage(supabase, companyId, access.userId, usage)
+  revalidatePath('/marketing')
+  return { ok: true, data: { status: outcome.status } }
 }
 
 export async function rejectDraft(companyId: string, draftId: string): Promise<ActionResult> {

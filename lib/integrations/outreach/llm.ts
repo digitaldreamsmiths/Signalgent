@@ -7,7 +7,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk'
-import { getAnthropicClient, logUsage } from '../../llm/client'
+import { getAnthropicClient, logUsage, type LLMUsage } from '../../llm/client'
 import { pickModel, type LLMTask } from '../../llm/models'
 
 export async function callClaudeJSON<T>(
@@ -15,6 +15,7 @@ export async function callClaudeJSON<T>(
   system: string,
   user: string,
   maxTokens: number,
+  collect?: LLMUsage[],
 ): Promise<T | null> {
   let client: Anthropic
   try {
@@ -37,7 +38,7 @@ export async function callClaudeJSON<T>(
       messages: [{ role: 'user', content: user }],
     })
 
-    logUsage({
+    const usage: LLMUsage = {
       task,
       model,
       inputTokens: response.usage.input_tokens,
@@ -45,7 +46,9 @@ export async function callClaudeJSON<T>(
       cacheReadTokens: response.usage.cache_read_input_tokens ?? 0,
       cacheWriteTokens: response.usage.cache_creation_input_tokens ?? 0,
       durationMs: Date.now() - startedAt,
-    })
+    }
+    logUsage(usage)
+    collect?.push(usage)
 
     const block = response.content.find((b) => b.type === 'text')
     if (!block || block.type !== 'text') return null

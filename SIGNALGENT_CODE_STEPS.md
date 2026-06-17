@@ -1693,3 +1693,29 @@ USASpending is free. Claude calls only, from logged token counts × current pric
 
 - `tsc --noEmit` + `eslint` clean.
 - Live: Approve all bulk-approved a pending template (Templates → Approved, "Approved 1 draft"); Export CSV button renders per filter with the row count; Copy added to the detail pane.
+
+## Session 19.3 — Outreach: progress panel, Exported lifecycle, api_usage logging, needs-review bucket
+
+Closes the Session 19 residuals plus two requested features.
+
+### Changes
+
+- **Progress panel + auto-batching.** `runNewProspects(companyId, limit)` now takes a chunk size (hard-capped at 15/call). The widget's Run enrichment drives a chunked loop (5 at a time) until the queue drains, rendering a live progress bar ("Enriching X of Y · N personalized · M template") and refreshing the list after each chunk. This both shows progress and lets lists larger than the per-call cap finish in one click (resolves the 15/run residual).
+- **Exported lifecycle.** New `exported` draft status (migration `20260618000000_outreach_draft_exported.sql`). `markExported(companyId, draftIds[])` action; "Mark all exported (N)" on the Approved filter and a per-draft "Mark exported" button in the detail pane both move downloaded/sent drafts to a new **Exported** filter so Approved stays lean. **Requires the migration to be applied.**
+- **api_usage logging.** Threaded an optional `LLMUsage[]` collector through resolve/synthesize/draft → pipeline → `runNewProspects`/`resolveManual`, which writes one `api_usage` row per call (service `anthropic`, model, tokens, `cost_usd`, feature `outreach:<task>`). Cost from a per-model price table (Haiku $1/$5, Sonnet $3/$15). Verified live: a no-match run logged `outreach:resolve` Haiku 121/32 tokens = $0.000281.
+- **Needs-review bucket + manual disambiguation.** Low-confidence resolver skips (`skip_reason` starts with `low_confidence`) are now flagged `needs_review` and surfaced in a **Needs review** filter instead of silently skipping. The detail pane shows a "type the correct company name" input → `resolveManual(companyId, prospectId, name)` → `resolveByName` (explicit-name USASpending lookup, user-asserted, no AI gate) → re-runs synth/draft and persists. Recovers prospects the domain resolver missed or matched wrong.
+- **.xlsx export — intentionally not built.** The existing CSV opens in Excel and imports into every cold-email platform; native `.xlsx` would mean adding a SheetJS dependency for marginal benefit. Deferred unless a true `.xlsx` is specifically needed.
+
+### Files
+
+New: `supabase/migrations/20260618000000_outreach_draft_exported.sql`. Modified: `resolve.ts` (+`resolveByName`, usage collector), `enrich.ts` (+`enrichByName`, shared `enrichFromResolved`), `pipeline.ts` (+`runPipelineFromName`, shared tail), `synthesize.ts`/`draft.ts`/`llm.ts` (collector param), `actions.ts` (`persistOutcome`/`recordUsage` helpers, chunked `runNewProspects`, `markExported`, `resolveManual`, exported+needs_review counts), `outreach-widgets.tsx` (progress panel, Exported + Needs review filters, Mark-exported, manual-resolve UI), `types.ts` + `database.types.ts`.
+
+### Local verification
+
+- `tsc --noEmit` + `eslint` clean.
+- Live: six filter tabs render; progress bar shows during a chunked run; `api_usage` row written with cost; "Mark all exported (N)" renders on Approved. Exported write path pending the migration apply.
+
+### Residual
+
+- Exported features need `20260618000000_outreach_draft_exported.sql` applied to Supabase.
+- Manual resolve takes the top USASpending match for the typed name; a multi-candidate picker would be a further refinement.

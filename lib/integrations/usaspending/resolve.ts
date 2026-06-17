@@ -27,7 +27,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { fetchWithCircuitBreaker, USASPENDING_BASE, type FetchOptions } from './base'
 import { mapAwardRow, type ContractorAward } from './contractor'
-import { getAnthropicClient, logUsage } from '../../llm/client'
+import { getAnthropicClient, logUsage, type LLMUsage } from '../../llm/client'
 import { pickModel } from '../../llm/models'
 
 // ── Tunables ────────────────────────────────────────────────────────────────
@@ -169,7 +169,7 @@ interface RecipientCandidate {
 
 // ── AI assists (Haiku) ────────────────────────────────────────────────────────
 
-async function callHaikuJSON<T>(system: string, user: string, maxTokens: number): Promise<T | null> {
+async function callHaikuJSON<T>(system: string, user: string, maxTokens: number, collect?: LLMUsage[]): Promise<T | null> {
   let client: Anthropic
   try {
     client = getAnthropicClient()
@@ -186,7 +186,7 @@ async function callHaikuJSON<T>(system: string, user: string, maxTokens: number)
       system,
       messages: [{ role: 'user', content: user }],
     })
-    logUsage({
+    const usage: LLMUsage = {
       task: 'resolve',
       model,
       inputTokens: response.usage.input_tokens,
@@ -194,7 +194,9 @@ async function callHaikuJSON<T>(system: string, user: string, maxTokens: number)
       cacheReadTokens: response.usage.cache_read_input_tokens ?? 0,
       cacheWriteTokens: response.usage.cache_creation_input_tokens ?? 0,
       durationMs: Date.now() - startedAt,
-    })
+    }
+    logUsage(usage)
+    collect?.push(usage)
     const block = response.content.find((b) => b.type === 'text')
     if (!block || block.type !== 'text') return null
     const text = block.text.trim()
@@ -219,11 +221,12 @@ const SEGMENT_SYSTEM =
   '{"names":["Name One","Name Two"]} — 1 to 3 candidates, most likely first, ' +
   'space-separated, no commentary.'
 
-async function aiSegmentDomain(domain: string, email: string): Promise<string[]> {
+async function aiSegmentDomain(domain: string, email: string, collect?: LLMUsage[]): Promise<string[]> {
   const out = await callHaikuJSON<{ names?: unknown }>(
     SEGMENT_SYSTEM,
     `Domain: ${domain}\nEmail: ${email}`,
     200,
+    collect,
   )
   const names = Array.isArray(out?.names) ? out!.names : []
   return names.filter((n): n is string => typeof n === 'string' && n.trim().length > 0).map((n) => n.trim())
@@ -238,6 +241,7 @@ const JUDGE_SYSTEM =
 async function aiJudge(
   domain: string,
   candidates: RecipientCandidate[],
+  collect?: LLMUsage[],
 ): Promise<{ index: number; confidence: number } | null> {
   const list = candidates
     .map((c, i) => `${i}. ${c.recipient_name} (awards: ${c.awards.length})`)
@@ -246,6 +250,7 @@ async function aiJudge(
     JUDGE_SYSTEM,
     `Domain: ${domain}\nCandidates:\n${list}`,
     200,
+    collect,
   )
   if (!out) return null
   const index = typeof out.index === 'number' ? out.index : -1
@@ -319,6 +324,7 @@ async function rawQuery(searchText: string, options: FetchOptions): Promise<Reco
 export async function resolveTarget(
   email: string,
   options: FetchOptions = {},
+  collect?: LLMUsage[],
 ): Promise<ResolveResult> {
   const domain = extractDomain(email)
   if (!domain) return { ok: false, reason: 'no_candidate', detail: 'no domain in email' }
@@ -344,7 +350,7 @@ export async function resolveTarget(
 
   // Concatenated label or empty heuristic result → ask Haiku to segment, retry.
   if (!rows || rows.length === 0) {
-    const aiNames = await aiSegmentDomain(domain, email)
+    const aiNames = await aiSegmentDomain(domain, email, collect)
     for (const name of aiNames) {
       rows = await rawQuery(name, options)
       if (rows === null) return { ok: false, reason: 'api_error', domain }
@@ -374,7 +380,7 @@ export async function resolveTarget(
   } else {
     // Weak or ambiguous → let Haiku adjudicate among the top few.
     const shortlist = candidates.slice(0, 5)
-    const verdict = await aiJudge(domain, shortlist)
+    const verdict = await aiJudge(domain, shortlist, collect)
     if (verdict && verdict.index >= 0 && verdict.index < shortlist.length) {
       chosen = shortlist[verdict.index]
       // Blend AI confidence with heuristic score (AI weighted) so a high AI
@@ -403,6 +409,44 @@ export async function resolveTarget(
       recipient_id: chosen.recipient_id,
       confidence: Math.round(confidence * 100) / 100,
       method,
+      awards: chosen.awards,
+    },
+  }
+}
+
+/**
+ * Resolves an EXPLICIT user-provided company name (manual disambiguation). No
+ * AI/heuristic gate — the user asserted the name, so we take the best-matching
+ * recipient (highest name score, else top award) and trust it. Recovers
+ * prospects the automatic domain resolver skipped or matched wrong.
+ */
+export async function resolveByName(
+  email: string,
+  companyName: string,
+  options: FetchOptions = {},
+): Promise<ResolveResult> {
+  const domain = extractDomain(email) ?? ''
+  const name = companyName.trim()
+  if (!name) return { ok: false, reason: 'no_candidate', domain }
+
+  const rows = await rawQuery(name, options)
+  if (rows === null) return { ok: false, reason: 'api_error', domain }
+  if (rows.length === 0) return { ok: false, reason: 'no_results', domain }
+
+  // distinctRecipients sorts by name match; ties fall back to top-award order.
+  const chosen = distinctRecipients(name, rows)[0]
+  if (!chosen) return { ok: false, reason: 'no_results', domain }
+
+  return {
+    ok: true,
+    target: {
+      email,
+      domain,
+      candidate_name: name,
+      recipient_name: chosen.recipient_name,
+      recipient_id: chosen.recipient_id,
+      confidence: 1, // user-asserted
+      method: 'heuristic',
       awards: chosen.awards,
     },
   }
