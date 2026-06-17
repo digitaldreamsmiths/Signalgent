@@ -1675,3 +1675,21 @@ Follow-up to Session 19 from real-use feedback.
 
 - **Old pre-19.1 skips have no draft rows** (templates only attach on runs after this change). A re-run backfill (reset to `new`, run) would populate them and re-resolve under the fixed scoring; deferred by choice.
 - Carryover from Session 19: resolver recall edge, `runNewProspects` 15/run cap, no outreach `api_usage` logging.
+
+## Session 19.2 — Outreach: bulk approve + CSV export
+
+Follow-up to 19.1 from real-use feedback (especially valuable now that template fallbacks generate many low-touch drafts).
+
+### Changes
+
+- **Bulk approve.** New `approveDrafts(companyId, draftIds[])` server action; an `Approve all (N)` button on the To-review and Templates filters approves every pending draft currently in view in one call.
+- **Export.** `Export CSV (N)` exports the current filter's rows (filter to Approved, then export) as one row per company — columns `email, company, domain, status, kind, subject, body, location, business_types, award_count, sampled_total, resolution_confidence, synthesis_confidence`. Client-side Blob download, opens in Excel and imports into cold-email platforms. Per-draft `Copy` button (subject + body) for one-off use. Bodies are final per-recipient copy, so the intended flow is approve-all → filter Approved → Export CSV → import to the sending platform.
+
+### Cost (measured, for reference)
+
+USASpending is free. Claude calls only, from logged token counts × current pricing (Haiku 4.5 $1/$5, Sonnet 4.6 $3/$15): resolve ~$0.0003 (Haiku), synthesis ~$0.011, draft ~$0.0095 (Sonnet). Per prospect: personalized draft ~2¢, synthesis-skip ~0.5¢, no-match/freemail <0.1¢. Blended ~$0.70–$2.00 per 100 prospects depending on draft rate. Prompt caching is off but the system prompts are small, so caching would save ~$0.002/100 — not worth wiring up yet.
+
+### Local verification
+
+- `tsc --noEmit` + `eslint` clean.
+- Live: Approve all bulk-approved a pending template (Templates → Approved, "Approved 1 draft"); Export CSV button renders per filter with the row count; Copy added to the detail pane.

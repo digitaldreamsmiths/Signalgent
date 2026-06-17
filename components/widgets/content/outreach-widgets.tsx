@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useCompany } from '@/contexts/company-context'
 import {
   approveDraft,
+  approveDrafts,
   editDraft,
   getOutreachSnapshot,
   ingestProspects,
@@ -25,6 +26,50 @@ function btn(bg: string): React.CSSProperties {
 function btnGhost(color = '#ccc'): React.CSSProperties {
   return { fontSize: 12, fontWeight: 600, color, background: 'transparent', border: `1px solid ${BORDER}`, borderRadius: 6, padding: '6px 14px', cursor: 'pointer' }
 }
+function csvCell(v: unknown): string {
+  const s = v == null ? '' : String(v)
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+}
+
+/** One row per prospect/draft — ready to import into a cold-email platform. */
+function toCsv(rows: OutreachProspectView[]): string {
+  const headers = [
+    'email', 'company', 'domain', 'status', 'kind', 'subject', 'body',
+    'location', 'business_types', 'award_count', 'sampled_total',
+    'resolution_confidence', 'synthesis_confidence',
+  ]
+  const lines = [headers.join(',')]
+  for (const p of rows) {
+    const d = p.draft
+    lines.push([
+      p.email,
+      p.recipient_name ?? '',
+      p.domain ?? '',
+      p.status,
+      d ? (d.is_template ? 'template' : 'personalized') : '',
+      d?.subject ?? '',
+      d?.body ?? '',
+      p.location ?? '',
+      p.business_types.join('; '),
+      p.footprint?.award_count ?? '',
+      p.footprint?.sampled_total ?? '',
+      p.resolution_confidence ?? '',
+      d?.synthesis_confidence ?? '',
+    ].map(csvCell).join(','))
+  }
+  return lines.join('\n')
+}
+
+function downloadCsv(filename: string, csv: string): void {
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 function Pill({ label, color }: { label: string; color: string }) {
   return (
     <span style={{ fontSize: 10, fontWeight: 600, color, border: `1px solid ${color}`, borderRadius: 4, padding: '1px 6px', textTransform: 'uppercase', letterSpacing: 0.3 }}>
@@ -152,6 +197,15 @@ function DraftDetail({ prospect, companyId, onChanged }: { prospect: OutreachPro
             <button disabled={busy} onClick={() => act(() => rejectDraft(companyId, draft.id))} style={btnGhost('#b04545')}>
               Reject
             </button>
+            <button
+              onClick={() => {
+                navigator.clipboard?.writeText(`Subject: ${draft.subject}\n\n${draft.body}`)
+                setError('Copied subject + body to clipboard.')
+              }}
+              style={btnGhost()}
+            >
+              Copy
+            </button>
           </>
         )}
       </div>
@@ -214,6 +268,23 @@ export function OutreachWorkspace() {
     refresh()
   }, [companyId, refresh])
 
+  const handleApproveAll = useCallback(
+    async (ids: string[]) => {
+      if (!companyId || ids.length === 0) return
+      setNotice(null)
+      const r = await approveDrafts(companyId, ids)
+      if (!r.ok) return setNotice(r.error)
+      setNotice(`Approved ${r.data.count} draft(s).`)
+      refresh()
+    },
+    [companyId, refresh],
+  )
+
+  const handleExport = useCallback((rows: OutreachProspectView[], name: string) => {
+    if (rows.length === 0) return
+    downloadCsv(`outreach-${name}.csv`, toCsv(rows))
+  }, [])
+
   if (!companyId) return <div style={{ fontSize: 12, color: MUTED }}>Select a company to start outreach.</div>
 
   const prospects = snapshot?.prospects ?? []
@@ -267,11 +338,25 @@ export function OutreachWorkspace() {
 
       {prospects.length > 0 && (
         <>
-          <div style={{ display: 'flex', gap: 4, borderBottom: `1px solid ${BORDER}` }}>
-            {tab('review', 'To review', lists.review.length)}
-            {tab('templates', 'Templates', lists.templates.length)}
-            {tab('approved', 'Approved', lists.approved.length)}
-            {tab('all', 'All', lists.all.length)}
+          <div style={{ display: 'flex', alignItems: 'center', borderBottom: `1px solid ${BORDER}` }}>
+            <div style={{ display: 'flex', gap: 4 }}>
+              {tab('review', 'To review', lists.review.length)}
+              {tab('templates', 'Templates', lists.templates.length)}
+              {tab('approved', 'Approved', lists.approved.length)}
+              {tab('all', 'All', lists.all.length)}
+            </div>
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, paddingBottom: 4 }}>
+              {(filter === 'review' || filter === 'templates') && current.length > 0 && (
+                <button onClick={() => handleApproveAll(current.map((p) => p.draft!.id))} style={btn('#1D9E75')}>
+                  Approve all ({current.length})
+                </button>
+              )}
+              {current.length > 0 && (
+                <button onClick={() => handleExport(current, filter)} style={btnGhost(ACCENT)}>
+                  Export CSV ({current.length})
+                </button>
+              )}
+            </div>
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 280px) minmax(0, 1fr)', gap: 14, alignItems: 'start' }}>

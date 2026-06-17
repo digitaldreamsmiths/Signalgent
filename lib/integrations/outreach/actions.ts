@@ -282,6 +282,30 @@ export async function approveDraft(companyId: string, draftId: string): Promise<
   return setDraftStatus(companyId, draftId, { status: 'approved' })
 }
 
+/** Bulk-approve the given draft ids (e.g. all pending templates, or all to-review). */
+export async function approveDrafts(
+  companyId: string,
+  draftIds: string[],
+): Promise<ActionResult<{ count: number }>> {
+  try {
+    await requireCompanyAccess(companyId)
+  } catch (err) {
+    if (err instanceof IntegrationAuthError) return { ok: false, error: AUTH_ERROR }
+    throw err
+  }
+  if (draftIds.length === 0) return { ok: true, data: { count: 0 } }
+  const supabase = await createClient()
+  const { data, error } = await supabase
+    .from('outreach_drafts')
+    .update({ status: 'approved', reviewed_at: new Date().toISOString() })
+    .eq('company_id', companyId)
+    .in('id', draftIds)
+    .select('id')
+  if (error) return { ok: false, error: 'Could not approve the drafts.' }
+  revalidatePath('/marketing')
+  return { ok: true, data: { count: data?.length ?? 0 } }
+}
+
 export async function rejectDraft(companyId: string, draftId: string): Promise<ActionResult> {
   return setDraftStatus(companyId, draftId, { status: 'rejected' })
 }
