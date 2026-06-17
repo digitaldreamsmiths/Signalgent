@@ -189,7 +189,7 @@ export async function ingestProspects(
 export async function runNewProspects(
   companyId: string,
   limit: number = RUN_BATCH,
-): Promise<ActionResult<{ processed: number; drafted: number; skipped: number; remaining: number }>> {
+): Promise<ActionResult<{ processed: number; drafted: number; skipped: number; remaining: number; cost_usd: number }>> {
   let access: Awaited<ReturnType<typeof requireCompanyAccess>>
   try {
     access = await requireCompanyAccess(companyId)
@@ -209,7 +209,7 @@ export async function runNewProspects(
 
   if (error) return { ok: false, error: 'Could not load prospects.' }
   if (!pending || pending.length === 0) {
-    return { ok: true, data: { processed: 0, drafted: 0, skipped: 0, remaining: 0 } }
+    return { ok: true, data: { processed: 0, drafted: 0, skipped: 0, remaining: 0, cost_usd: 0 } }
   }
 
   const usage: LLMUsage[] = []
@@ -223,6 +223,7 @@ export async function runNewProspects(
   }
 
   await recordUsage(supabase, companyId, access.userId, usage)
+  const cost_usd = usage.reduce((s, u) => s + usageCostUsd(u), 0)
 
   const { count } = await supabase
     .from('outreach_prospects')
@@ -231,7 +232,7 @@ export async function runNewProspects(
     .eq('status', 'new')
 
   revalidatePath('/marketing')
-  return { ok: true, data: { processed: pending.length, drafted, skipped, remaining: count ?? 0 } }
+  return { ok: true, data: { processed: pending.length, drafted, skipped, remaining: count ?? 0, cost_usd } }
 }
 
 // ── Snapshot read ─────────────────────────────────────────────────────────────
@@ -249,10 +250,13 @@ export async function getOutreachSnapshot(companyId: string): Promise<OutreachSn
   }
 
   const supabase = await createClient()
-  const [{ data: prospects }, { data: drafts }] = await Promise.all([
+  const [{ data: prospects }, { data: drafts }, { data: usageRows }] = await Promise.all([
     supabase.from('outreach_prospects').select('*').eq('company_id', companyId).order('created_at', { ascending: false }),
     supabase.from('outreach_drafts').select('*').eq('company_id', companyId),
+    supabase.from('api_usage').select('cost_usd').eq('company_id', companyId).like('feature', 'outreach:%'),
   ])
+
+  const cost_usd_total = (usageRows ?? []).reduce((s, r) => s + (r.cost_usd ?? 0), 0)
 
   const draftByProspect = new Map<string, OutreachDraftView>()
   for (const d of drafts ?? []) {
@@ -308,7 +312,7 @@ export async function getOutreachSnapshot(companyId: string): Promise<OutreachSn
     needs_review: views.filter((v) => v.needs_review).length,
   }
 
-  return { prospects: views, counts }
+  return { prospects: views, counts, cost_usd_total }
 }
 
 // ── Review actions ────────────────────────────────────────────────────────────
