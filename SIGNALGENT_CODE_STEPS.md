@@ -1653,3 +1653,25 @@ SourceGent is client zero for a govcon cold-outreach intelligence pipeline. Buil
 - **runNewProspects is capped at 15/run** to bound request time; larger lists need repeated runs (or a background job). No streaming progress yet.
 - **Marketing layout** is now mixing a monitoring surface (social analytics, mostly mock) with a doing surface (outreach). A dedicated outreach workspace / sub-nav is the proposed next step.
 - **No `api_usage` logging** for outreach LLM calls yet (console `logUsage` only); USASpending calls uncached across requests beyond the in-process 7-day map.
+
+## Session 19.1 — Outreach UX: Marketing tabs, two-pane workspace, generic template fallback, dash fix
+
+Follow-up to Session 19 from real-use feedback.
+
+### Changes
+
+- **Dash sanitizer broadened.** `sanitizeDashes` (in `draft.ts`) now also collapses `--` (doubled hyphens) and spaced single hyphens used as dashes, not just em/en dashes; in-word hyphens (`service-disabled`) preserved. Draft prompt hardened to forbid all dash-as-punctuation. Existing drafts in the DB backfilled.
+- **Generic template fallback for skipped prospects.** New `lib/integrations/outreach/template.ts` — prospects that can't be personalized (no_results, low_confidence, thin/low-bid synthesis skip, freemail) now get a sendable generic email instead of nothing. NOT fake personalization: zero company-specific claims; body is identical for all, subject optionally addresses a resolved company name. A template is stored as a draft with empty `facts_for_draft` (that emptiness is how the queue distinguishes it from a personalized draft — no schema change).
+- **Resolver precision fix.** `matchScore` now credits PREFIX/token alignment only; a mid-string substring (`ngconstruction` inside `uttingconstruction`) no longer auto-accepts and falls to the AI judge → skip. Fixes a real false positive seen in live data.
+- **Marketing → Overview / Outreach tabs.** `app/(app)/marketing/page.tsx` now has a tab control. Overview = the existing widget grid (unchanged). Outreach = a dedicated two-pane list+detail workspace (`OutreachWorkspace`): filterable prospect list (To review / Templates / Approved / All) + ingest + Run enrichment on the left; selected draft with enrichment context, facts traceability, personalized/template + drift badges, and Approve/Edit/Reject on the right.
+- **Outreach removed from the widget grid** (registry/widget-map/default-layout). `getLayout` now drops placed widgets whose type is no longer in the registry, so a stale saved layout never renders a "Widget not found" tile.
+
+### Local verification
+
+- `tsc --noEmit` + `eslint` clean.
+- Live in preview: Overview/Outreach tabs render; Outreach workspace shows filters + list/detail; ingesting a no-match email produces a `TEMPLATE` draft with the "couldn't personalize: no_results" reason and the generic body signed Eudon Delemar / sourcegent.io; resolver fix verified (`ngconstructionllc.com` → skip, no UTTING).
+
+### Residuals
+
+- **Old pre-19.1 skips have no draft rows** (templates only attach on runs after this change). A re-run backfill (reset to `new`, run) would populate them and re-resolve under the fixed scoring; deferred by choice.
+- Carryover from Session 19: resolver recall edge, `runNewProspects` 15/run cap, no outreach `api_usage` logging.

@@ -16,7 +16,8 @@ export const WIDGET_REGISTRY: WidgetDefinition[] = [
   { id: 'mkt-engagement-trend', type: 'mkt-engagement-trend', label: 'Engagement Trend', description: '7-day engagement rate trend line', size: 'half', mode: 'marketing', requiredServices: ['linkedin_page', 'facebook_page'] },
   { id: 'mkt-top-post', type: 'mkt-top-post', label: 'Top Post', description: 'Best performing post this month', size: 'half', mode: 'marketing', requiredServices: ['linkedin_page', 'facebook_page'] },
   { id: 'mkt-post-frequency', type: 'mkt-post-frequency', label: 'Post Frequency', description: 'Posts per week over the last 8 weeks', size: 'half', mode: 'marketing', requiredServices: ['linkedin_page', 'facebook_page'] },
-  { id: 'mkt-outreach-queue', type: 'mkt-outreach-queue', label: 'Outreach Review', description: 'Govcon cold-outreach: ingest prospects, enrich from USASpending, review AI drafts', size: 'full', mode: 'marketing' },
+  // NOTE: Outreach is NOT a grid widget — it's the Marketing "Outreach" tab
+  // (a focused list+detail workspace), rendered directly by the marketing page.
 
   // COMMUNICATIONS
   { id: 'comms-email-client', type: 'comms-email-client', label: 'Email Client', description: 'Full inbox with AI triage and preview', size: 'full', mode: 'communications', requiredServices: ['gmail', 'outlook'] },
@@ -53,7 +54,7 @@ export const WIDGET_REGISTRY: WidgetDefinition[] = [
 
 export const DEFAULT_LAYOUTS: Record<string, string[]> = {
   dashboard: ['intelligence-briefing', 'mode-tiles', 'setup-checklist', 'suggested-actions'],
-  marketing: ['mkt-kpi-row', 'mkt-outreach-queue', 'mkt-content-calendar', 'mkt-platform-breakdown', 'mkt-engagement-trend', 'mkt-recent-posts'],
+  marketing: ['mkt-kpi-row', 'mkt-content-calendar', 'mkt-platform-breakdown', 'mkt-engagement-trend', 'mkt-recent-posts'],
   communications: ['comms-response-stats', 'comms-unread-summary', 'comms-email-client'],
   finance: ['fin-kpi-row', 'fin-revenue-chart', 'fin-expense-breakdown', 'fin-cashflow', 'fin-recent-transactions'],
   commerce: ['com-order-stats', 'com-products', 'com-orders-kanban', 'com-recent-activity'],

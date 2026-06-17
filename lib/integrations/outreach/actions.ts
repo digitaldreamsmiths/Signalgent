@@ -17,6 +17,7 @@ import { IntegrationAuthError, requireCompanyAccess } from '@/lib/integrations/a
 import type { Database, Json } from '@/lib/types/database.types'
 import { extractDomain } from '../usaspending/resolve'
 import { runPipeline } from './pipeline'
+import { buildTemplateDraft } from './template'
 import type {
   ActionResult,
   OutreachDraftView,
@@ -151,6 +152,25 @@ export async function runNewProspects(
       prospectUpdate.skip_stage = outcome.stage
       prospectUpdate.skip_reason = outcome.reason
       await supabase.from('outreach_prospects').update(prospectUpdate).eq('id', p.id).eq('company_id', companyId)
+      // Can't personalize -> attach a generic, sendable template (empty
+      // facts_for_draft marks it as a template, no fabricated claims).
+      const tmpl = buildTemplateDraft(enriched?.recipient_name ?? null)
+      await supabase.from('outreach_drafts').upsert(
+        {
+          prospect_id: p.id,
+          company_id: companyId,
+          subject: tmpl.subject,
+          body: tmpl.body,
+          angle: null,
+          synthesis_confidence: null,
+          facts_for_draft: [],
+          facts_used: [],
+          drifted_facts: [],
+          clean: true,
+          status: 'pending',
+        },
+        { onConflict: 'prospect_id' },
+      )
       skipped += 1
     }
   }
@@ -187,6 +207,7 @@ export async function getOutreachSnapshot(companyId: string): Promise<OutreachSn
 
   const draftByProspect = new Map<string, OutreachDraftView>()
   for (const d of drafts ?? []) {
+    const facts = asStringArray(d.facts_for_draft)
     draftByProspect.set(d.prospect_id, {
       id: d.id,
       subject: d.subject,
@@ -195,9 +216,10 @@ export async function getOutreachSnapshot(companyId: string): Promise<OutreachSn
       synthesis_confidence: d.synthesis_confidence,
       clean: d.clean,
       drifted_facts: asStringArray(d.drifted_facts),
-      facts_for_draft: asStringArray(d.facts_for_draft),
+      facts_for_draft: facts,
       facts_used: asStringArray(d.facts_used),
       status: d.status,
+      is_template: facts.length === 0,
     })
   }
 
@@ -224,9 +246,9 @@ export async function getOutreachSnapshot(companyId: string): Promise<OutreachSn
   const counts = {
     total: views.length,
     new: views.filter((v) => v.status === 'new').length,
-    drafted: views.filter((v) => v.status === 'drafted').length,
-    skipped: views.filter((v) => v.status === 'skipped').length,
-    approved: (drafts ?? []).filter((d) => d.status === 'approved').length,
+    personalized: views.filter((v) => v.draft && !v.draft.is_template).length,
+    templates: views.filter((v) => v.draft && v.draft.is_template).length,
+    approved: views.filter((v) => v.draft?.status === 'approved').length,
   }
 
   return { prospects: views, counts }

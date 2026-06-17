@@ -4,7 +4,6 @@ import { EmailClient, ResponseStats, UnreadSummary, PriorityBreakdown } from './
 import { FinanceKpiRow, RevenueChart, RecentTransactions, ExpenseBreakdown, CashflowChart, ProfitMargin, RevenueVsExpenses } from './content/finance-widgets'
 import { OrderStats, Products, OrdersKanban, RecentActivity, LowStock, RevenueByProduct } from './content/commerce-widgets'
 import { TrafficChart, EngagementChart, PerformanceTable, TopPages, ConversionStats, BounceRate, ReferralSources } from './content/analytics-widgets'
-import { OutreachReviewQueue } from './content/outreach-widgets'
 
 export const WIDGET_MAP: Record<string, React.ComponentType> = {
   // Dashboard
@@ -22,7 +21,6 @@ export const WIDGET_MAP: Record<string, React.ComponentType> = {
   'mkt-engagement-trend': EngagementTrend,
   'mkt-top-post': TopPost,
   'mkt-post-frequency': PostFrequency,
-  'mkt-outreach-queue': OutreachReviewQueue,
 
   // Communications
   'comms-email-client': EmailClient,

@@ -75,6 +75,8 @@ export interface OutreachDraftView {
   facts_for_draft: string[]
   facts_used: string[]
   status: 'pending' | 'approved' | 'edited' | 'rejected'
+  /** True for the generic fallback (no facts) vs. a personalized draft. */
+  is_template: boolean
 }
 
 export interface OutreachProspectView {
@@ -94,5 +96,14 @@ export interface OutreachProspectView {
 
 export interface OutreachSnapshot {
   prospects: OutreachProspectView[]
-  counts: { total: number; new: number; drafted: number; skipped: number; approved: number }
+  counts: {
+    total: number
+    new: number
+    /** Prospects with a personalized (facts-backed) draft. */
+    personalized: number
+    /** Prospects with the generic fallback template. */
+    templates: number
+    /** Drafts (either kind) marked approved. */
+    approved: number
+  }
 }

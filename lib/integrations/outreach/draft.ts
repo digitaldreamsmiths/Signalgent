@@ -32,7 +32,7 @@ Rules (follow exactly):
 - CTA soft and conditioned on their interest ("if X is on your mind..."). No generic "15 minutes".
 - Close warm and non-transactional. Good wishes either way.
 - The site link (${SENDER.site}) lives in the signature only. The body never sells hard.
-- No em dashes anywhere.
+- No dashes used as punctuation anywhere: no em dashes, no en dashes, no double hyphens (--), no spaced hyphens ( - ). Use commas or separate sentences instead. Normal hyphenated words (service-disabled) are fine.
 - Sign off as "${SENDER.signOff},\\n${SENDER.signatureName}\\n${SENDER.site}".
 
 Output ONLY JSON:
@@ -47,16 +47,19 @@ function renderInput(angle: string | null, facts: string[]): string {
 }
 
 /**
- * Deterministically removes em/en dashes (register forbids them). The draft
- * model leaks them despite the prompt rule, so we fix rather than only flag:
- * " — " / "—" collapse to ", " (the most common rhetorical use), trimming any
- * doubled punctuation that produces.
+ * Deterministically removes dash punctuation the register forbids. The draft
+ * model leaks dashes despite the prompt rule, and substitutes ASCII "--" / " - "
+ * when told not to use em dashes, so we catch all of them and fix rather than
+ * only flag. Single in-word hyphens (service-disabled, veteran-owned) are left
+ * intact — only spaced or doubled hyphens used AS a dash are collapsed to ", ".
  */
 export function sanitizeDashes(text: string): string {
   return text
-    .replace(/\s*[—–]\s*/g, ', ')
-    .replace(/,\s*,/g, ',')
-    .replace(/\s+,/g, ',')
+    .replace(/\s*[—–]\s*/g, ', ') // em / en dash
+    .replace(/\s*-{2,}\s*/g, ', ') // doubled (or more) hyphen used as a dash
+    .replace(/ +- +/g, ', ') // spaced single hyphen used as a dash
+    .replace(/,\s*,/g, ', ') // collapse doubled commas
+    .replace(/\s+,/g, ',') // no space before a comma
 }
 
 /** Drift check + dash sanitize. Body is cleaned; drift on facts_used is reported. */
