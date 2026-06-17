@@ -223,6 +223,11 @@ function DraftDetail({ prospect, companyId, onChanged }: { prospect: OutreachPro
             <button disabled={busy} onClick={() => act(() => rejectDraft(companyId, draft.id))} style={btnGhost('#b04545')}>
               Reject
             </button>
+            {draft.status === 'approved' && (
+              <button disabled={busy} onClick={() => act(() => markExported(companyId, [draft.id]))} style={btn('#378ADD')}>
+                Mark exported
+              </button>
+            )}
             <button
               onClick={() => {
                 navigator.clipboard?.writeText(`Subject: ${draft.subject}\n\n${draft.body}`)
