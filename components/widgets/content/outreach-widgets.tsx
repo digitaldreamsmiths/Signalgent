@@ -622,7 +622,7 @@ export function OutreachWorkspace() {
             {/* List */}
             <div style={{ border: `1px solid ${BORDER}`, borderRadius: 8, overflowY: 'auto', overflowX: 'hidden', minHeight: 0 }}>
               {current.length === 0 && <div style={{ fontSize: 12, color: MUTED, padding: 14 }}>{EMPTY_MSG[filter]}</div>}
-              {current.length > 0 && (filter === 'approved' || filter === 'all') ? (
+              {current.length > 0 && (filter === 'approved' || filter === 'exported' || filter === 'all') ? (
                 // Split into Personalized then Templates, each sorted by name.
                 (() => {
                   const personalized = current.filter((p) => p.draft && !p.draft.is_template).sort(byName)
