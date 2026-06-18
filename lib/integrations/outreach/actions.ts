@@ -21,6 +21,7 @@ import { buildTemplateDraft } from './template'
 import type { LLMUsage } from '../../llm/client'
 import type {
   ActionResult,
+  Disposition,
   OutreachDraftView,
   OutreachProspectView,
   OutreachSnapshot,
@@ -225,7 +226,7 @@ export async function ingestProspects(
   if (error) return { ok: false, error: 'Could not save prospects. Try again.' }
 
   const added = data?.length ?? 0
-  revalidatePath('/marketing')
+  revalidatePath('/outreach')
   return { ok: true, data: { added, duplicates: rows.length - added, invalid } }
 }
 
@@ -280,7 +281,7 @@ export async function runNewProspects(
     .eq('company_id', companyId)
     .eq('status', 'new')
 
-  revalidatePath('/marketing')
+  revalidatePath('/outreach')
   return { ok: true, data: { processed: pending.length, drafted, skipped, remaining: count ?? 0, cost_usd } }
 }
 
@@ -342,6 +343,8 @@ export async function getOutreachSnapshot(companyId: string): Promise<OutreachSn
         ? { award_count: fp.award_count, sampled_total: fp.sampled_total ?? 0 }
         : null,
       draft: draftByProspect.get(p.id) ?? null,
+      disposition: p.disposition,
+      disposition_at: p.disposition_at,
       // A plausible-but-uncertain resolver result (low confidence) — surfaced
       // for manual disambiguation rather than left as a silent skip.
       needs_review:
@@ -351,6 +354,8 @@ export async function getOutreachSnapshot(companyId: string): Promise<OutreachSn
     }
   })
 
+  const sent = views.filter((v) => v.draft?.status === 'exported').length
+  const replied = views.filter((v) => v.disposition === 'interested' || v.disposition === 'not_interested').length
   const counts = {
     total: views.length,
     new: views.filter((v) => v.status === 'new').length,
@@ -359,9 +364,40 @@ export async function getOutreachSnapshot(companyId: string): Promise<OutreachSn
     approved: views.filter((v) => v.draft?.status === 'approved').length,
     exported: views.filter((v) => v.draft?.status === 'exported').length,
     needs_review: views.filter((v) => v.needs_review).length,
+    sent,
+    replied,
+    bounced: views.filter((v) => v.disposition === 'bounced').length,
+    unsubscribed: views.filter((v) => v.disposition === 'unsubscribed').length,
   }
+  const reply_rate = sent > 0 ? replied / sent : 0
 
-  return { prospects: views, counts, cost_usd_total }
+  return { prospects: views, counts, reply_rate, cost_usd_total }
+}
+
+// ── Outcomes ──────────────────────────────────────────────────────────────────
+
+/** Record the conversation outcome for a prospect (manual, post-send). A
+ * non-'open' disposition closes the prospect and suppresses follow-ups. */
+export async function setDisposition(
+  companyId: string,
+  prospectId: string,
+  disposition: Disposition,
+): Promise<ActionResult> {
+  try {
+    await requireCompanyAccess(companyId)
+  } catch (err) {
+    if (err instanceof IntegrationAuthError) return { ok: false, error: AUTH_ERROR }
+    throw err
+  }
+  const supabase = await createClient()
+  const { error } = await supabase
+    .from('outreach_prospects')
+    .update({ disposition, disposition_at: disposition === 'open' ? null : new Date().toISOString() })
+    .eq('id', prospectId)
+    .eq('company_id', companyId)
+  if (error) return { ok: false, error: 'Could not update the outcome.' }
+  revalidatePath('/outreach')
+  return { ok: true, data: undefined }
 }
 
 // ── Review actions ────────────────────────────────────────────────────────────
@@ -384,7 +420,7 @@ async function setDraftStatus(
     .eq('id', draftId)
     .eq('company_id', companyId)
   if (error) return { ok: false, error: 'Could not update the draft.' }
-  revalidatePath('/marketing')
+  revalidatePath('/outreach')
   return { ok: true, data: undefined }
 }
 
@@ -412,7 +448,7 @@ export async function approveDrafts(
     .in('id', draftIds)
     .select('id')
   if (error) return { ok: false, error: 'Could not approve the drafts.' }
-  revalidatePath('/marketing')
+  revalidatePath('/outreach')
   return { ok: true, data: { count: data?.length ?? 0 } }
 }
 
@@ -436,7 +472,7 @@ export async function markExported(
     .in('id', draftIds)
     .select('id')
   if (error) return { ok: false, error: 'Could not mark the drafts exported.' }
-  revalidatePath('/marketing')
+  revalidatePath('/outreach')
   return { ok: true, data: { count: data?.length ?? 0 } }
 }
 
@@ -469,7 +505,7 @@ export async function resolveManual(
   const outcome = await runPipelineFromName(prospect.email, name, usage)
   await persistOutcome(supabase, companyId, prospectId, outcome)
   await recordUsage(supabase, companyId, access.userId, usage)
-  revalidatePath('/marketing')
+  revalidatePath('/outreach')
   return { ok: true, data: { status: outcome.status } }
 }
 

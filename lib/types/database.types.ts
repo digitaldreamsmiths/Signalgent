@@ -252,6 +252,8 @@ export interface Database {
           business_types: string[] | null
           location: string | null
           footprint: Json | null
+          disposition: 'open' | 'interested' | 'not_interested' | 'bounced' | 'unsubscribed'
+          disposition_at: string | null
           enriched_at: string | null
           created_at: string
           updated_at: string
@@ -272,6 +274,8 @@ export interface Database {
           business_types?: string[] | null
           location?: string | null
           footprint?: Json | null
+          disposition?: 'open' | 'interested' | 'not_interested' | 'bounced' | 'unsubscribed'
+          disposition_at?: string | null
           enriched_at?: string | null
           created_at?: string
           updated_at?: string
@@ -290,6 +294,8 @@ export interface Database {
           business_types?: string[] | null
           location?: string | null
           footprint?: Json | null
+          disposition?: 'open' | 'interested' | 'not_interested' | 'bounced' | 'unsubscribed'
+          disposition_at?: string | null
           enriched_at?: string | null
           updated_at?: string
         }

@@ -12,15 +12,36 @@ import {
   rejectDraft,
   resolveManual,
   runNewProspects,
+  setDisposition,
 } from '@/lib/integrations/outreach/actions'
-import type { OutreachSnapshot, OutreachProspectView } from '@/lib/integrations/outreach/types'
+import type { Disposition, OutreachSnapshot, OutreachProspectView } from '@/lib/integrations/outreach/types'
 
 const ACCENT = '#D85A30'
 const BORDER = '#272727'
 const CARD = '#1a1a1a'
 const MUTED = '#8a8a8a'
 
-type Filter = 'review' | 'templates' | 'needs_review' | 'approved' | 'exported' | 'all'
+type Filter = 'review' | 'templates' | 'needs_review' | 'approved' | 'exported' | 'replied' | 'bounced' | 'all'
+
+const DISPO_META: Record<Disposition, { label: string; color: string }> = {
+  open: { label: 'open', color: '#8a8a8a' },
+  interested: { label: 'interested', color: '#1D9E75' },
+  not_interested: { label: 'not interested', color: '#BA7517' },
+  bounced: { label: 'bounced', color: '#b04545' },
+  unsubscribed: { label: 'unsubscribed', color: '#8a8a8a' },
+}
+
+/** Outcome buttons, in funnel order. */
+const DISPOSITIONS: { key: Disposition; label: string; color: string }[] = [
+  { key: 'interested', label: 'Interested', color: '#1D9E75' },
+  { key: 'not_interested', label: 'Not interested', color: '#BA7517' },
+  { key: 'bounced', label: 'Bounced', color: '#b04545' },
+  { key: 'unsubscribed', label: 'Unsubscribed', color: '#8a8a8a' },
+]
+
+function fmtPct(frac: number, sent: number): string {
+  return sent > 0 ? `${Math.round(frac * 100)}%` : '—'
+}
 
 function btn(bg: string): React.CSSProperties {
   return { fontSize: 12, fontWeight: 600, color: '#fff', background: bg, border: 'none', borderRadius: 6, padding: '6px 14px', cursor: 'pointer' }
@@ -108,6 +129,8 @@ const EMPTY_MSG: Record<Filter, string> = {
   needs_review: 'Nothing needs a manual match.',
   approved: 'Nothing approved yet — approve drafts from “To review”.',
   exported: 'Nothing exported yet.',
+  replied: 'No replies recorded yet.',
+  bounced: 'No bounces or unsubscribes.',
   all: 'No drafts yet.',
 }
 
@@ -165,7 +188,28 @@ function DraftDetail({ prospect, companyId, onChanged }: { prospect: OutreachPro
           {prospect.resolution_confidence != null && <span style={{ fontSize: 10, color: MUTED }}>res {prospect.resolution_confidence.toFixed(2)}</span>}
           {draft.synthesis_confidence != null && <span style={{ fontSize: 10, color: MUTED }}>fit {draft.synthesis_confidence.toFixed(2)}</span>}
           <Pill label={draft.status} color={statusColor} />
+          {prospect.disposition !== 'open' && <Pill label={DISPO_META[prospect.disposition].label} color={DISPO_META[prospect.disposition].color} />}
         </div>
+      </div>
+
+      {/* Outcome (recorded manually after send) */}
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 11, color: MUTED, marginRight: 2 }}>Outcome:</span>
+        {DISPOSITIONS.map((d) => (
+          <button
+            key={d.key}
+            disabled={busy}
+            onClick={() => act(() => setDisposition(companyId, prospect.id, d.key))}
+            style={prospect.disposition === d.key ? btn(d.color) : btnGhost(d.color)}
+          >
+            {d.label}
+          </button>
+        ))}
+        {prospect.disposition !== 'open' && (
+          <button disabled={busy} onClick={() => act(() => setDisposition(companyId, prospect.id, 'open'))} style={btnGhost()}>
+            Reopen
+          </button>
+        )}
       </div>
 
       {draft.is_template && prospect.skip_reason && (
@@ -393,6 +437,8 @@ export function OutreachWorkspace() {
     needs_review: prospects.filter((p) => p.needs_review),
     approved: withDraft.filter((p) => p.draft!.status === 'approved'),
     exported: withDraft.filter((p) => p.draft!.status === 'exported'),
+    replied: prospects.filter((p) => p.disposition === 'interested' || p.disposition === 'not_interested'),
+    bounced: prospects.filter((p) => p.disposition === 'bounced' || p.disposition === 'unsubscribed'),
     all: withDraft,
   }
   const current = lists[filter]
@@ -430,9 +476,9 @@ export function OutreachWorkspace() {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 8 }}>
           <Metric label="To review" value={lists.review.length} accent={ACCENT} />
           <Metric label="Prospects" value={c.total} />
-          <Metric label="Personalized" value={c.personalized} />
-          <Metric label="Approved" value={c.approved} accent="#1D9E75" />
-          <Metric label="Exported" value={c.exported} accent="#378ADD" />
+          <Metric label="Sent" value={c.sent} accent="#378ADD" />
+          <Metric label="Replied" value={c.replied} accent="#1D9E75" />
+          <Metric label="Reply rate" value={fmtPct(snapshot?.reply_rate ?? 0, c.sent)} />
           <Metric label="API cost" value={fmtUsd(snapshot?.cost_usd_total ?? 0)} />
         </div>
       )}
@@ -471,6 +517,8 @@ export function OutreachWorkspace() {
               {tab('needs_review', 'Needs review', lists.needs_review.length)}
               {tab('approved', 'Approved', lists.approved.length)}
               {tab('exported', 'Exported', lists.exported.length)}
+              {tab('replied', 'Replied', lists.replied.length)}
+              {tab('bounced', 'Bounced', lists.bounced.length)}
               {tab('all', 'All', lists.all.length)}
             </div>
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, paddingBottom: 4 }}>
@@ -506,11 +554,12 @@ export function OutreachWorkspace() {
                   >
                     <div style={{ fontSize: 13, fontWeight: sel ? 600 : 400, color: '#ddd' }}>{p.recipient_name ?? p.domain}</div>
                     <div style={{ fontSize: 11, color: MUTED, marginTop: 2 }}>{p.email}</div>
-                    <div style={{ display: 'flex', gap: 6, marginTop: 6, alignItems: 'center' }}>
-                      {p.needs_review ? <Pill label="review" color="#e0a060" /> : p.draft!.is_template ? <Pill label="template" color={MUTED} /> : <Pill label="personalized" color="#1D9E75" />}
-                      {!p.draft!.clean && <Pill label="drift" color="#b04545" />}
-                      {p.draft!.status === 'approved' && <Pill label="approved" color="#1D9E75" />}
-                      {p.draft!.status === 'exported' && <Pill label="exported" color="#378ADD" />}
+                    <div style={{ display: 'flex', gap: 6, marginTop: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                      {p.needs_review ? <Pill label="review" color="#e0a060" /> : p.draft ? (p.draft.is_template ? <Pill label="template" color={MUTED} /> : <Pill label="personalized" color="#1D9E75" />) : null}
+                      {p.draft && !p.draft.clean && <Pill label="drift" color="#b04545" />}
+                      {p.draft?.status === 'approved' && <Pill label="approved" color="#1D9E75" />}
+                      {p.draft?.status === 'exported' && <Pill label="exported" color="#378ADD" />}
+                      {p.disposition !== 'open' && <Pill label={DISPO_META[p.disposition].label} color={DISPO_META[p.disposition].color} />}
                     </div>
                   </div>
                 )
