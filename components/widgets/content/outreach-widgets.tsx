@@ -30,7 +30,14 @@ function btnGhost(color = '#ccc'): React.CSSProperties {
 }
 function csvCell(v: unknown): string {
   const s = v == null ? '' : String(v)
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+  // Quote any field with a quote, comma, or newline. Excel keeps a multi-line cell
+  // together only when in-cell breaks are a lone LF while ROWS are separated by
+  // CRLF (see toCsv). So normalize embedded breaks to "\n" and let the row join add
+  // the "\r\n". Normalizing everything to CRLF makes Excel split the body at the
+  // first line break (only "Hi," survives).
+  return /[",\r\n]/.test(s)
+    ? `"${s.replace(/\r\n|\r/g, '\n').replace(/"/g, '""')}"`
+    : s
 }
 
 /** One row per prospect/draft — ready to import into a cold-email platform. */
@@ -40,7 +47,7 @@ function toCsv(rows: OutreachProspectView[]): string {
     'location', 'business_types', 'award_count', 'sampled_total',
     'resolution_confidence', 'synthesis_confidence',
   ]
-  const lines = [headers.join(',')]
+  const lines: string[] = [headers.join(',')]
   for (const p of rows) {
     const d = p.draft
     lines.push([
@@ -59,7 +66,7 @@ function toCsv(rows: OutreachProspectView[]): string {
       d?.synthesis_confidence ?? '',
     ].map(csvCell).join(','))
   }
-  return lines.join('\n')
+  return lines.join('\r\n')
 }
 
 function fmtUsd(n: number): string {
