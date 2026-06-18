@@ -38,3 +38,31 @@ export function buildTemplateDraft(recipientName?: string | null): DraftResult {
 
   return { subject, body, facts_used: [] }
 }
+
+/**
+ * Generic follow-up nudge for a prospect we couldn't personalize. Same register
+ * as the initial template, shorter, no fabricated claims, no guilt-tripping.
+ */
+export function buildTemplateFollowup(recipientName?: string | null): DraftResult {
+  const subject = recipientName
+    ? `Following up: a lighter proposal load for ${recipientName}`
+    : 'Following up: a lighter proposal load for your team'
+
+  const body = sanitizeDashes(
+    [
+      'Hi,',
+      '',
+      `I reached out a little while ago about ${SENDER.product} and wanted to put it back on your radar once more.`,
+      '',
+      'Short version: the contractors using it lean on it to carry the heavy part of proposal and capture work while keeping full control of strategy and voice. The busywork drops, the decisions stay yours.',
+      '',
+      'If easing the proposal load is on your mind for an upcoming pursuit, I am glad to share how other firms are using it. No worries either way.',
+      '',
+      `${SENDER.signOff},`,
+      SENDER.signatureName,
+      SENDER.site,
+    ].join('\n'),
+  )
+
+  return { subject, body, facts_used: [] }
+}

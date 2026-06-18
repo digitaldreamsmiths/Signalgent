@@ -315,6 +315,7 @@ export interface Database {
           drifted_facts: Json
           clean: boolean
           status: 'pending' | 'approved' | 'edited' | 'rejected' | 'exported'
+          step: number
           reviewer_notes: string | null
           reviewed_at: string | null
           created_at: string
@@ -333,6 +334,7 @@ export interface Database {
           drifted_facts?: Json
           clean?: boolean
           status?: 'pending' | 'approved' | 'edited' | 'rejected' | 'exported'
+          step?: number
           reviewer_notes?: string | null
           reviewed_at?: string | null
           created_at?: string
@@ -348,6 +350,7 @@ export interface Database {
           drifted_facts?: Json
           clean?: boolean
           status?: 'pending' | 'approved' | 'edited' | 'rejected' | 'exported'
+          step?: number
           reviewer_notes?: string | null
           reviewed_at?: string | null
           updated_at?: string

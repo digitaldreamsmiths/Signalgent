@@ -75,6 +75,8 @@ export interface OutreachDraftView {
   facts_for_draft: string[]
   facts_used: string[]
   status: 'pending' | 'approved' | 'edited' | 'rejected' | 'exported'
+  /** 1 = initial email, 2+ = follow-up touches. */
+  step: number
   /** True for the generic fallback (no facts) vs. a personalized draft. */
   is_template: boolean
 }
@@ -95,6 +97,9 @@ export interface OutreachProspectView {
   business_types: string[]
   location: string | null
   footprint: { award_count: number; sampled_total: number } | null
+  /** All touches for this prospect, ordered by step (1 = initial). */
+  drafts: OutreachDraftView[]
+  /** The latest touch (highest step), or null. Drives the queue/list/filters. */
   draft: OutreachDraftView | null
   disposition: Disposition
   disposition_at: string | null
