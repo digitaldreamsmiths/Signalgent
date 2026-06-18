@@ -15,17 +15,19 @@ import {
   runNewProspects,
   setDisposition,
 } from '@/lib/integrations/outreach/actions'
-import { queueDraftSend, cancelSend, processSendQueue } from '@/lib/integrations/outreach/sending'
-import type { Disposition, OutreachDraftView, OutreachSnapshot, OutreachProspectView } from '@/lib/integrations/outreach/types'
+import { queueDraftSend, cancelSend, processSendQueue, scheduleDraftSends, getScheduledSends } from '@/lib/integrations/outreach/sending'
+import type { Disposition, OutreachDraftView, OutreachSnapshot, OutreachProspectView, ScheduledSendView } from '@/lib/integrations/outreach/types'
 import { hygieneWarnings } from '@/lib/integrations/outreach/hygiene'
 import { SendingSettingsModal } from './sending-settings-modal'
+import { ScheduledView } from './scheduled-view'
+import { ScheduleDialog } from './schedule-dialog'
 
 const ACCENT = '#D85A30'
 const BORDER = 'var(--app-border)'
 const CARD = 'var(--app-card)'
 const MUTED = 'var(--app-muted)'
 
-type Filter = 'review' | 'templates' | 'needs_review' | 'approved' | 'exported' | 'replied' | 'bounced' | 'all'
+type Filter = 'review' | 'templates' | 'needs_review' | 'approved' | 'exported' | 'replied' | 'bounced' | 'scheduled' | 'all'
 
 const DISPO_META: Record<Disposition, { label: string; color: string }> = {
   open: { label: 'open', color: 'var(--app-muted)' },
@@ -140,6 +142,7 @@ const EMPTY_MSG: Record<Filter, string> = {
   exported: 'Nothing exported yet.',
   replied: 'No replies recorded yet.',
   bounced: 'No bounces or unsubscribes.',
+  scheduled: 'Nothing scheduled yet.',
   all: 'No drafts yet.',
 }
 
@@ -160,21 +163,27 @@ function SectionHeader({ label, count }: { label: string; count: number }) {
   )
 }
 
-function ProspectRow({ p, selected, onSelect }: { p: OutreachProspectView; selected: boolean; onSelect: () => void }) {
+function ProspectRow({ p, selected, onSelect, checked, onToggle }: { p: OutreachProspectView; selected: boolean; onSelect: () => void; checked?: boolean; onToggle?: () => void }) {
   return (
     <div
       onClick={onSelect}
-      style={{ padding: '10px 12px', borderBottom: `1px solid ${BORDER}`, cursor: 'pointer', background: selected ? CARD : 'transparent', borderLeft: `2px solid ${selected ? ACCENT : 'transparent'}` }}
+      style={{ display: 'flex', gap: 8, padding: '10px 12px', borderBottom: `1px solid ${BORDER}`, cursor: 'pointer', background: selected ? CARD : 'transparent', borderLeft: `2px solid ${selected ? ACCENT : 'transparent'}` }}
     >
-      <div style={{ fontSize: 13, fontWeight: selected ? 600 : 400, color: 'var(--app-text)' }}>{p.recipient_name ?? p.domain}</div>
-      <div style={{ fontSize: 11, color: MUTED, marginTop: 2 }}>{p.email}</div>
-      <div style={{ display: 'flex', gap: 6, marginTop: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-        {p.needs_review ? <Pill label="review" color="#e0a060" /> : p.draft ? (p.draft.is_template ? <Pill label="template" color={MUTED} /> : <Pill label="personalized" color="#1D9E75" />) : null}
-        {p.draft && !p.draft.clean && <Pill label="drift" color="#b04545" />}
-        {p.draft?.status === 'approved' && <Pill label="approved" color="#1D9E75" />}
-        {p.draft?.status === 'exported' && <Pill label="exported" color="#378ADD" />}
-        {p.drafts.length > 1 && <Pill label={`${p.drafts.length} touches`} color={MUTED} />}
-        {p.disposition !== 'open' && <Pill label={DISPO_META[p.disposition].label} color={DISPO_META[p.disposition].color} />}
+      {onToggle && (
+        <input type="checkbox" checked={!!checked} onClick={(e) => e.stopPropagation()} onChange={onToggle} style={{ marginTop: 2, flexShrink: 0 }} />
+      )}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 13, fontWeight: selected ? 600 : 400, color: 'var(--app-text)' }}>{p.recipient_name ?? p.domain}</div>
+        <div style={{ fontSize: 11, color: MUTED, marginTop: 2 }}>{p.email}</div>
+        <div style={{ display: 'flex', gap: 6, marginTop: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+          {p.needs_review ? <Pill label="review" color="#e0a060" /> : p.draft ? (p.draft.is_template ? <Pill label="template" color={MUTED} /> : <Pill label="personalized" color="#1D9E75" />) : null}
+          {p.draft && !p.draft.clean && <Pill label="drift" color="#b04545" />}
+          {p.draft?.status === 'approved' && <Pill label="approved" color="#1D9E75" />}
+          {p.draft?.status === 'exported' && <Pill label="exported" color="#378ADD" />}
+          {p.draft?.send?.status === 'queued' && <Pill label="queued" color={ACCENT} />}
+          {p.drafts.length > 1 && <Pill label={`${p.drafts.length} touches`} color={MUTED} />}
+          {p.disposition !== 'open' && <Pill label={DISPO_META[p.disposition].label} color={DISPO_META[p.disposition].color} />}
+        </div>
       </div>
     </div>
   )
@@ -448,11 +457,20 @@ export function OutreachWorkspace() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [sendingModalOpen, setSendingModalOpen] = useState(false)
   const [processing, setProcessing] = useState(false)
+  const [selectedDraftIds, setSelectedDraftIds] = useState<Set<string>>(new Set())
+  const [scheduleDialogOpen, setScheduleDialogOpen] = useState(false)
+  const [scheduling, setScheduling] = useState(false)
+  const [scheduledSends, setScheduledSends] = useState<ScheduledSendView[]>([])
 
   const refresh = useCallback(async () => {
     if (!companyId) return
     const snap = await getOutreachSnapshot(companyId)
     setSnapshot(snap)
+  }, [companyId])
+
+  const loadScheduled = useCallback(async () => {
+    if (!companyId) return
+    setScheduledSends(await getScheduledSends(companyId))
   }, [companyId])
 
   useEffect(() => {
@@ -468,6 +486,10 @@ export function OutreachWorkspace() {
       active = false
     }
   }, [companyId])
+
+  useEffect(() => {
+    if (filter === 'scheduled') loadScheduled()
+  }, [filter, loadScheduled])
 
   const handleIngest = useCallback(async () => {
     if (!companyId || !raw.trim()) return
@@ -558,6 +580,7 @@ export function OutreachWorkspace() {
     exported: withDraft.filter((p) => p.draft!.status === 'exported'),
     replied: prospects.filter((p) => p.disposition === 'interested' || p.disposition === 'not_interested'),
     bounced: prospects.filter((p) => p.disposition === 'bounced' || p.disposition === 'unsubscribed'),
+    scheduled: [], // the Scheduled tab renders ScheduledView from scheduledSends, not this list
     all: withDraft,
   }
   const current = lists[filter]
@@ -572,6 +595,28 @@ export function OutreachWorkspace() {
     if (!r.ok) return setNotice(r.error)
     setNotice(`Sent ${r.data.sent}${r.data.failed ? `, ${r.data.failed} failed` : ''}.`)
     refresh()
+  }
+
+  const toggleDraft = (id: string) =>
+    setSelectedDraftIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+
+  const handleSchedule = async (startIso: string) => {
+    if (!companyId || selectedDraftIds.size === 0) return
+    setScheduling(true)
+    setNotice(null)
+    const r = await scheduleDraftSends(companyId, [...selectedDraftIds], startIso)
+    setScheduling(false)
+    if (!r.ok) return setNotice(r.error)
+    setNotice(`Scheduled ${r.data.scheduled}${r.data.skipped ? `, ${r.data.skipped} skipped (closed or already queued)` : ''}.`)
+    setSelectedDraftIds(new Set())
+    setScheduleDialogOpen(false)
+    refresh()
+    loadScheduled()
   }
 
   const tab = (key: Filter, label: string, count: number) => (
@@ -654,20 +699,34 @@ export function OutreachWorkspace() {
               {tab('exported', 'Exported', lists.exported.length)}
               {tab('replied', 'Replied', lists.replied.length)}
               {tab('bounced', 'Bounced', lists.bounced.length)}
+              {tab('scheduled', 'Scheduled', c?.queued ?? 0)}
               {tab('all', 'All', lists.all.length)}
             </div>
-            <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, paddingBottom: 4 }}>
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, paddingBottom: 4, alignItems: 'center' }}>
               {(filter === 'review' || filter === 'templates') && current.length > 0 && (
                 <button onClick={() => handleApproveAll(current.map((p) => p.draft!.id))} style={btn('#1D9E75')}>
                   Approve all ({current.length})
                 </button>
               )}
               {filter === 'approved' && current.length > 0 && (
-                <button onClick={() => handleMarkExported(current.map((p) => p.draft!.id))} style={btn('#378ADD')}>
-                  Mark all exported ({current.length})
+                <button
+                  onClick={() => setSelectedDraftIds((prev) => prev.size === current.length ? new Set() : new Set(current.map((p) => p.draft!.id)))}
+                  style={btnGhost()}
+                >
+                  {selectedDraftIds.size === current.length ? 'Clear' : 'Select all'}
                 </button>
               )}
-              {current.length > 0 && (
+              {filter === 'approved' && selectedDraftIds.size > 0 && (
+                <button onClick={() => setScheduleDialogOpen(true)} style={btn(ACCENT)}>
+                  Schedule ({selectedDraftIds.size})
+                </button>
+              )}
+              {filter === 'approved' && current.length > 0 && (
+                <button onClick={() => handleMarkExported(current.map((p) => p.draft!.id))} style={btnGhost('#378ADD')}>
+                  Mark all exported
+                </button>
+              )}
+              {filter !== 'scheduled' && current.length > 0 && (
                 <button onClick={() => handleExport(current, filter)} style={btnGhost(ACCENT)}>
                   Export CSV ({current.length})
                 </button>
@@ -675,6 +734,11 @@ export function OutreachWorkspace() {
             </div>
           </div>
 
+          {filter === 'scheduled' ? (
+            companyId && (
+              <ScheduledView companyId={companyId} sends={scheduledSends} onChanged={() => { loadScheduled(); refresh() }} />
+            )
+          ) : (
           <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: 'minmax(0, 300px) minmax(0, 1fr)', gap: 14 }}>
             {/* List */}
             <div style={{ border: `1px solid ${BORDER}`, borderRadius: 8, overflowY: 'auto', overflowX: 'hidden', minHeight: 0 }}>
@@ -684,8 +748,16 @@ export function OutreachWorkspace() {
                 (() => {
                   const personalized = current.filter((p) => p.draft && !p.draft.is_template).sort(byName)
                   const templates = current.filter((p) => p.draft && p.draft.is_template).sort(byName)
+                  const selectable = filter === 'approved'
                   const rowOf = (p: OutreachProspectView) => (
-                    <ProspectRow key={p.id} p={p} selected={selected?.id === p.id} onSelect={() => setSelectedId(p.id)} />
+                    <ProspectRow
+                      key={p.id}
+                      p={p}
+                      selected={selected?.id === p.id}
+                      onSelect={() => setSelectedId(p.id)}
+                      checked={selectable && p.draft ? selectedDraftIds.has(p.draft.id) : undefined}
+                      onToggle={selectable && p.draft ? () => toggleDraft(p.draft!.id) : undefined}
+                    />
                   )
                   return (
                     <>
@@ -717,11 +789,21 @@ export function OutreachWorkspace() {
               )}
             </div>
           </div>
+          )}
         </>
       )}
 
       {sendingModalOpen && companyId && (
         <SendingSettingsModal companyId={companyId} onClose={() => setSendingModalOpen(false)} onSaved={refresh} />
+      )}
+
+      {scheduleDialogOpen && (
+        <ScheduleDialog
+          count={selectedDraftIds.size}
+          busy={scheduling}
+          onConfirm={handleSchedule}
+          onClose={() => setScheduleDialogOpen(false)}
+        />
       )}
     </div>
   )

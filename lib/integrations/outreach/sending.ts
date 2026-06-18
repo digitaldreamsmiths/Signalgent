@@ -3,10 +3,10 @@
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { IntegrationAuthError, requireCompanyAccess } from '@/lib/integrations/auth'
-import type { ActionResult, SendSettings } from './types'
+import type { ActionResult, ScheduledSendView, SendSettings } from './types'
 import { getAccount } from '@/lib/integrations/accounts'
 import { composeEmail } from './send/compose'
-import { loadSettings, nextSlot, runQueue } from './send/worker'
+import { computeBatchSlots, loadSettings, nextSlot, runQueue } from './send/worker'
 
 const AUTH_ERROR = 'You don’t have access to this workspace.'
 
@@ -137,4 +137,172 @@ export async function processSendQueue(companyId: string): Promise<ActionResult<
   const result = await runQueue(supabase, companyId)
   revalidatePath('/outreach')
   return { ok: true, data: result }
+}
+
+// ── Batch scheduling ────────────────────────────────────────────────────────
+
+type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>
+
+/** Shared gate: sending on, sender set, and (for gmail) a connected mailbox. */
+async function ensureSendable(supabase: SupabaseServerClient, companyId: string, settings: SendSettings): Promise<string | null> {
+  if (!settings.active) return 'Turn on sending in Sending settings first.'
+  if (!settings.sender_email?.trim()) return 'Set a sender email in Sending settings first.'
+  if (settings.provider === 'gmail') {
+    const gmail = await getAccount(companyId, 'gmail')
+    if (gmail?.status !== 'connected') return 'Connect Gmail in Settings → Connections first.'
+  }
+  return null
+}
+
+/** Schedule a batch of approved drafts to start sending at a chosen time. */
+export async function scheduleDraftSends(
+  companyId: string,
+  draftIds: string[],
+  startAtIso: string,
+): Promise<ActionResult<{ scheduled: number; skipped: number }>> {
+  try {
+    await requireCompanyAccess(companyId)
+  } catch (err) {
+    if (err instanceof IntegrationAuthError) return { ok: false, error: AUTH_ERROR }
+    throw err
+  }
+  const supabase = await createClient()
+  const settings = await loadSettings(supabase, companyId)
+  const gate = await ensureSendable(supabase, companyId, settings)
+  if (gate) return { ok: false, error: gate }
+  if (draftIds.length === 0) return { ok: true, data: { scheduled: 0, skipped: 0 } }
+
+  const { data: drafts } = await supabase
+    .from('outreach_drafts')
+    .select('id, subject, body, prospect_id')
+    .eq('company_id', companyId)
+    .in('id', draftIds)
+  const { data: existing } = await supabase
+    .from('outreach_sends')
+    .select('draft_id')
+    .eq('company_id', companyId)
+    .in('status', ['queued', 'sending', 'sent'])
+    .in('draft_id', draftIds)
+  const alreadyQueued = new Set((existing ?? []).map((e) => e.draft_id))
+
+  const prospectIds = [...new Set((drafts ?? []).map((d) => d.prospect_id))]
+  const { data: prospects } = await supabase
+    .from('outreach_prospects')
+    .select('id, email, disposition')
+    .in('id', prospectIds.length ? prospectIds : ['00000000-0000-0000-0000-000000000000'])
+  const pById = new Map((prospects ?? []).map((p) => [p.id, p]))
+
+  const eligible = (drafts ?? []).filter((d) => {
+    if (alreadyQueued.has(d.id)) return false
+    const p = pById.get(d.prospect_id)
+    return !!p && p.disposition === 'open' && !!p.email
+  })
+  const skipped = draftIds.length - eligible.length
+  if (eligible.length === 0) return { ok: true, data: { scheduled: 0, skipped } }
+
+  const slots = await computeBatchSlots(supabase, companyId, settings, startAtIso, eligible.length)
+  const rows = eligible.map((d, i) => {
+    const p = pById.get(d.prospect_id)!
+    const composed = composeEmail(d.subject, d.body, settings)
+    return {
+      company_id: companyId,
+      prospect_id: d.prospect_id,
+      draft_id: d.id,
+      provider: settings.provider,
+      recipient_email: p.email,
+      subject: composed.subject,
+      body: composed.body,
+      status: 'queued' as const,
+      scheduled_at: slots[i],
+    }
+  })
+  const { error } = await supabase.from('outreach_sends').insert(rows)
+  if (error) return { ok: false, error: 'Could not schedule the sends.' }
+  revalidatePath('/outreach')
+  return { ok: true, data: { scheduled: rows.length, skipped } }
+}
+
+/** Move a set of queued sends to a new start time (same batch layout). */
+export async function rescheduleSends(
+  companyId: string,
+  sendIds: string[],
+  startAtIso: string,
+): Promise<ActionResult<{ rescheduled: number }>> {
+  try {
+    await requireCompanyAccess(companyId)
+  } catch (err) {
+    if (err instanceof IntegrationAuthError) return { ok: false, error: AUTH_ERROR }
+    throw err
+  }
+  if (sendIds.length === 0) return { ok: true, data: { rescheduled: 0 } }
+  const supabase = await createClient()
+  const settings = await loadSettings(supabase, companyId)
+
+  const { data: sends } = await supabase
+    .from('outreach_sends')
+    .select('id')
+    .eq('company_id', companyId)
+    .eq('status', 'queued')
+    .in('id', sendIds)
+  const ids = (sends ?? []).map((s) => s.id)
+  if (ids.length === 0) return { ok: true, data: { rescheduled: 0 } }
+
+  const slots = await computeBatchSlots(supabase, companyId, settings, startAtIso, ids.length, ids)
+  for (let i = 0; i < ids.length; i++) {
+    await supabase.from('outreach_sends').update({ scheduled_at: slots[i] }).eq('id', ids[i]).eq('company_id', companyId)
+  }
+  revalidatePath('/outreach')
+  return { ok: true, data: { rescheduled: ids.length } }
+}
+
+/** Cancel a set of queued sends. */
+export async function cancelSends(companyId: string, sendIds: string[]): Promise<ActionResult<{ canceled: number }>> {
+  try {
+    await requireCompanyAccess(companyId)
+  } catch (err) {
+    if (err instanceof IntegrationAuthError) return { ok: false, error: AUTH_ERROR }
+    throw err
+  }
+  if (sendIds.length === 0) return { ok: true, data: { canceled: 0 } }
+  const supabase = await createClient()
+  const { data, error } = await supabase
+    .from('outreach_sends')
+    .update({ status: 'canceled' })
+    .eq('company_id', companyId)
+    .eq('status', 'queued')
+    .in('id', sendIds)
+    .select('id')
+  if (error) return { ok: false, error: 'Could not cancel the sends.' }
+  revalidatePath('/outreach')
+  return { ok: true, data: { canceled: data?.length ?? 0 } }
+}
+
+/** All queued sends for the scheduling calendar/list, soonest first. */
+export async function getScheduledSends(companyId: string): Promise<ScheduledSendView[]> {
+  try {
+    await requireCompanyAccess(companyId)
+  } catch (err) {
+    if (err instanceof IntegrationAuthError) return []
+    throw err
+  }
+  const supabase = await createClient()
+  const { data } = await supabase
+    .from('outreach_sends')
+    .select('id, draft_id, prospect_id, recipient_email, scheduled_at')
+    .eq('company_id', companyId)
+    .eq('status', 'queued')
+    .order('scheduled_at', { ascending: true })
+  const prospectIds = [...new Set((data ?? []).map((s) => s.prospect_id))]
+  const { data: prospects } = await supabase
+    .from('outreach_prospects')
+    .select('id, recipient_name')
+    .in('id', prospectIds.length ? prospectIds : ['00000000-0000-0000-0000-000000000000'])
+  const nameById = new Map((prospects ?? []).map((p) => [p.id, p.recipient_name]))
+  return (data ?? []).map((s) => ({
+    id: s.id,
+    draft_id: s.draft_id,
+    recipient_email: s.recipient_email,
+    recipient_name: nameById.get(s.prospect_id) ?? null,
+    scheduled_at: s.scheduled_at,
+  }))
 }

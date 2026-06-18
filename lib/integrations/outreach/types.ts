@@ -93,6 +93,15 @@ export interface OutreachSendView {
   error: string | null
 }
 
+/** A queued send for the scheduling calendar/list. */
+export interface ScheduledSendView {
+  id: string
+  draft_id: string
+  recipient_email: string
+  recipient_name: string | null
+  scheduled_at: string | null
+}
+
 /** Per-company sender identity + drip controls. */
 export interface SendSettings {
   sender_name: string | null
