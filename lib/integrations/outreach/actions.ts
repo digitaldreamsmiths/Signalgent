@@ -135,6 +135,51 @@ async function persistOutcome(
   }
 }
 
+/**
+ * Safeguard: every skipped prospect should carry at least the generic template
+ * draft (the fallback that keeps un-personalizable prospects sendable). Legacy
+ * rows from before the fallback existed — and any where persistOutcome's draft
+ * upsert silently failed — get stranded: counted in the total but with no draft,
+ * so they're invisible in the queue and not re-enrichable. This idempotent sweep
+ * creates the missing template drafts. Returns how many it created.
+ */
+async function backfillTemplateDrafts(supabase: SupabaseServerClient, companyId: string): Promise<number> {
+  const { data: skipped } = await supabase
+    .from('outreach_prospects')
+    .select('id, recipient_name')
+    .eq('company_id', companyId)
+    .eq('status', 'skipped')
+  if (!skipped || skipped.length === 0) return 0
+
+  const { data: drafts } = await supabase
+    .from('outreach_drafts')
+    .select('prospect_id')
+    .eq('company_id', companyId)
+  const haveDraft = new Set((drafts ?? []).map((d) => d.prospect_id))
+
+  const missing = skipped.filter((p) => !haveDraft.has(p.id))
+  if (missing.length === 0) return 0
+
+  const rows = missing.map((p) => {
+    const tmpl = buildTemplateDraft(p.recipient_name ?? null)
+    return {
+      prospect_id: p.id,
+      company_id: companyId,
+      subject: tmpl.subject,
+      body: tmpl.body,
+      angle: null,
+      synthesis_confidence: null,
+      facts_for_draft: [],
+      facts_used: [],
+      drifted_facts: [],
+      clean: true,
+      status: 'pending' as const,
+    }
+  })
+  const { error } = await supabase.from('outreach_drafts').upsert(rows, { onConflict: 'prospect_id' })
+  return error ? 0 : rows.length
+}
+
 // ── Ingest ──────────────────────────────────────────────────────────────────
 
 const EMAIL_RE = /[^\s,;<>"']+@[^\s,;<>"']+\.[^\s,;<>"']+/g
@@ -209,6 +254,7 @@ export async function runNewProspects(
 
   if (error) return { ok: false, error: 'Could not load prospects.' }
   if (!pending || pending.length === 0) {
+    await backfillTemplateDrafts(supabase, companyId)
     return { ok: true, data: { processed: 0, drafted: 0, skipped: 0, remaining: 0, cost_usd: 0 } }
   }
 
@@ -224,6 +270,9 @@ export async function runNewProspects(
 
   await recordUsage(supabase, companyId, access.userId, usage)
   const cost_usd = usage.reduce((s, u) => s + usageCostUsd(u), 0)
+
+  // Safeguard: ensure no prospect skipped this run was left without a draft.
+  await backfillTemplateDrafts(supabase, companyId)
 
   const { count } = await supabase
     .from('outreach_prospects')
