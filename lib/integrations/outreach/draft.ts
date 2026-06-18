@@ -40,10 +40,23 @@ Output ONLY JSON:
 {"subject":"...","body":"...","facts_used":["the exact facts_for_draft strings you used"]}
 facts_used MUST be copied verbatim from facts_for_draft. Do not paraphrase them there.`
 
-function renderInput(angle: string | null, facts: string[]): string {
+/** Optional follow-up context. step > 1 means this is a nudge, not the opener. */
+export interface TouchContext {
+  step: number
+  priorSubject?: string
+}
+
+function renderInput(angle: string | null, facts: string[], touch?: TouchContext): string {
   const lines = ['facts_for_draft (use ONLY these):']
   for (const f of facts) lines.push(`- ${f}`)
   if (angle) lines.push(`\nAngle to lead with: ${angle}`)
+  if (touch && touch.step > 1) {
+    lines.push(
+      `\nThis is FOLLOW-UP #${touch.step}. The prior email${touch.priorSubject ? ` (subject: "${touch.priorSubject}")` : ''} got no reply.`,
+      'Write a SHORTER nudge than the opener: lead with a different fact than the first email would have, add one fresh angle, and keep it to a few sentences.',
+      'Do NOT guilt-trip or say "just following up" / "bumping this" / "circling back". No new facts beyond facts_for_draft. One-line soft CTA. Same register and signature.',
+    )
+  }
   return lines.join('\n')
 }
 
@@ -79,13 +92,13 @@ export function reviewDraft(draft: DraftResult, factsForDraft: string[]): DraftR
   }
 }
 
-export async function draftEmail(synthesis: SynthesisResult, collect?: LLMUsage[]): Promise<DraftReview | null> {
+export async function draftEmail(synthesis: SynthesisResult, collect?: LLMUsage[], touch?: TouchContext): Promise<DraftReview | null> {
   if (synthesis.skip || synthesis.facts_for_draft.length === 0) return null
 
   const out = await callClaudeJSON<Partial<DraftResult>>(
     'draft',
     SYSTEM,
-    renderInput(synthesis.angle, synthesis.facts_for_draft),
+    renderInput(synthesis.angle, synthesis.facts_for_draft, touch),
     1500,
     collect,
   )

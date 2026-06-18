@@ -1,4 +1,15 @@
 export const MODES = {
+  outreach: {
+    id: 'outreach',
+    label: 'Outreach',
+    href: '/outreach',
+    accent: '#D85A30',
+    accentText: '#F0997B',
+    cardBorder: '#272727',
+    cardBg: '#1a1a1a',
+    mutedText: '#5a3020',
+    subtleText: '#3a1a08',
+  },
   dashboard: {
     id: 'dashboard',
     label: 'Dashboard',

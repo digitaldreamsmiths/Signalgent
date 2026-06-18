@@ -17,13 +17,16 @@ import { IntegrationAuthError, requireCompanyAccess } from '@/lib/integrations/a
 import type { Database, Json } from '@/lib/types/database.types'
 import { extractDomain } from '../usaspending/resolve'
 import { runPipeline, runPipelineFromName, type PipelineOutcome } from './pipeline'
-import { buildTemplateDraft } from './template'
+import { buildTemplateDraft, buildTemplateFollowup } from './template'
+import { draftEmail } from './draft'
 import type { LLMUsage } from '../../llm/client'
 import type {
   ActionResult,
+  Disposition,
   OutreachDraftView,
   OutreachProspectView,
   OutreachSnapshot,
+  SynthesisResult,
 } from './types'
 
 type ProspectUpdate = Database['public']['Tables']['outreach_prospects']['Update']
@@ -105,8 +108,9 @@ async function persistOutcome(
         drifted_facts: outcome.review.drifted_facts,
         clean: outcome.review.clean,
         status: 'pending',
+        step: 1,
       },
-      { onConflict: 'prospect_id' },
+      { onConflict: 'prospect_id,step' },
     )
   } else {
     prospectUpdate.status = 'skipped'
@@ -129,10 +133,57 @@ async function persistOutcome(
         drifted_facts: [],
         clean: true,
         status: 'pending',
+        step: 1,
       },
-      { onConflict: 'prospect_id' },
+      { onConflict: 'prospect_id,step' },
     )
   }
+}
+
+/**
+ * Safeguard: every skipped prospect should carry at least the generic template
+ * draft (the fallback that keeps un-personalizable prospects sendable). Legacy
+ * rows from before the fallback existed — and any where persistOutcome's draft
+ * upsert silently failed — get stranded: counted in the total but with no draft,
+ * so they're invisible in the queue and not re-enrichable. This idempotent sweep
+ * creates the missing template drafts. Returns how many it created.
+ */
+async function backfillTemplateDrafts(supabase: SupabaseServerClient, companyId: string): Promise<number> {
+  const { data: skipped } = await supabase
+    .from('outreach_prospects')
+    .select('id, recipient_name')
+    .eq('company_id', companyId)
+    .eq('status', 'skipped')
+  if (!skipped || skipped.length === 0) return 0
+
+  const { data: drafts } = await supabase
+    .from('outreach_drafts')
+    .select('prospect_id')
+    .eq('company_id', companyId)
+  const haveDraft = new Set((drafts ?? []).map((d) => d.prospect_id))
+
+  const missing = skipped.filter((p) => !haveDraft.has(p.id))
+  if (missing.length === 0) return 0
+
+  const rows = missing.map((p) => {
+    const tmpl = buildTemplateDraft(p.recipient_name ?? null)
+    return {
+      prospect_id: p.id,
+      company_id: companyId,
+      subject: tmpl.subject,
+      body: tmpl.body,
+      angle: null,
+      synthesis_confidence: null,
+      facts_for_draft: [],
+      facts_used: [],
+      drifted_facts: [],
+      clean: true,
+      status: 'pending' as const,
+      step: 1,
+    }
+  })
+  const { error } = await supabase.from('outreach_drafts').upsert(rows, { onConflict: 'prospect_id,step' })
+  return error ? 0 : rows.length
 }
 
 // ── Ingest ──────────────────────────────────────────────────────────────────
@@ -180,7 +231,7 @@ export async function ingestProspects(
   if (error) return { ok: false, error: 'Could not save prospects. Try again.' }
 
   const added = data?.length ?? 0
-  revalidatePath('/marketing')
+  revalidatePath('/outreach')
   return { ok: true, data: { added, duplicates: rows.length - added, invalid } }
 }
 
@@ -209,6 +260,7 @@ export async function runNewProspects(
 
   if (error) return { ok: false, error: 'Could not load prospects.' }
   if (!pending || pending.length === 0) {
+    await backfillTemplateDrafts(supabase, companyId)
     return { ok: true, data: { processed: 0, drafted: 0, skipped: 0, remaining: 0, cost_usd: 0 } }
   }
 
@@ -225,13 +277,16 @@ export async function runNewProspects(
   await recordUsage(supabase, companyId, access.userId, usage)
   const cost_usd = usage.reduce((s, u) => s + usageCostUsd(u), 0)
 
+  // Safeguard: ensure no prospect skipped this run was left without a draft.
+  await backfillTemplateDrafts(supabase, companyId)
+
   const { count } = await supabase
     .from('outreach_prospects')
     .select('id', { count: 'exact', head: true })
     .eq('company_id', companyId)
     .eq('status', 'new')
 
-  revalidatePath('/marketing')
+  revalidatePath('/outreach')
   return { ok: true, data: { processed: pending.length, drafted, skipped, remaining: count ?? 0, cost_usd } }
 }
 
@@ -258,10 +313,10 @@ export async function getOutreachSnapshot(companyId: string): Promise<OutreachSn
 
   const cost_usd_total = (usageRows ?? []).reduce((s, r) => s + (r.cost_usd ?? 0), 0)
 
-  const draftByProspect = new Map<string, OutreachDraftView>()
+  const draftsByProspect = new Map<string, OutreachDraftView[]>()
   for (const d of drafts ?? []) {
     const facts = asStringArray(d.facts_for_draft)
-    draftByProspect.set(d.prospect_id, {
+    const view: OutreachDraftView = {
       id: d.id,
       subject: d.subject,
       body: d.body,
@@ -272,9 +327,15 @@ export async function getOutreachSnapshot(companyId: string): Promise<OutreachSn
       facts_for_draft: facts,
       facts_used: asStringArray(d.facts_used),
       status: d.status,
+      step: d.step,
       is_template: facts.length === 0,
-    })
+    }
+    const arr = draftsByProspect.get(d.prospect_id)
+    if (arr) arr.push(view)
+    else draftsByProspect.set(d.prospect_id, [view])
   }
+  // Order each prospect's touches by step (1 = initial email).
+  for (const arr of draftsByProspect.values()) arr.sort((a, b) => a.step - b.step)
 
   const views: OutreachProspectView[] = (prospects ?? []).map((p) => {
     const fp = p.footprint as { award_count?: number; sampled_total?: number } | null
@@ -292,7 +353,10 @@ export async function getOutreachSnapshot(companyId: string): Promise<OutreachSn
       footprint: fp && typeof fp.award_count === 'number'
         ? { award_count: fp.award_count, sampled_total: fp.sampled_total ?? 0 }
         : null,
-      draft: draftByProspect.get(p.id) ?? null,
+      drafts: draftsByProspect.get(p.id) ?? [],
+      draft: (draftsByProspect.get(p.id) ?? []).at(-1) ?? null,
+      disposition: p.disposition,
+      disposition_at: p.disposition_at,
       // A plausible-but-uncertain resolver result (low confidence) — surfaced
       // for manual disambiguation rather than left as a silent skip.
       needs_review:
@@ -302,6 +366,8 @@ export async function getOutreachSnapshot(companyId: string): Promise<OutreachSn
     }
   })
 
+  const sent = views.filter((v) => v.drafts.some((d) => d.status === 'exported')).length
+  const replied = views.filter((v) => v.disposition === 'interested' || v.disposition === 'not_interested').length
   const counts = {
     total: views.length,
     new: views.filter((v) => v.status === 'new').length,
@@ -310,9 +376,146 @@ export async function getOutreachSnapshot(companyId: string): Promise<OutreachSn
     approved: views.filter((v) => v.draft?.status === 'approved').length,
     exported: views.filter((v) => v.draft?.status === 'exported').length,
     needs_review: views.filter((v) => v.needs_review).length,
+    sent,
+    replied,
+    bounced: views.filter((v) => v.disposition === 'bounced').length,
+    unsubscribed: views.filter((v) => v.disposition === 'unsubscribed').length,
+  }
+  const reply_rate = sent > 0 ? replied / sent : 0
+
+  return { prospects: views, counts, reply_rate, cost_usd_total }
+}
+
+// ── Outcomes ──────────────────────────────────────────────────────────────────
+
+/** Record the conversation outcome for a prospect (manual, post-send). A
+ * non-'open' disposition closes the prospect and suppresses follow-ups. */
+export async function setDisposition(
+  companyId: string,
+  prospectId: string,
+  disposition: Disposition,
+): Promise<ActionResult> {
+  try {
+    await requireCompanyAccess(companyId)
+  } catch (err) {
+    if (err instanceof IntegrationAuthError) return { ok: false, error: AUTH_ERROR }
+    throw err
+  }
+  const supabase = await createClient()
+  const { error } = await supabase
+    .from('outreach_prospects')
+    .update({ disposition, disposition_at: disposition === 'open' ? null : new Date().toISOString() })
+    .eq('id', prospectId)
+    .eq('company_id', companyId)
+  if (error) return { ok: false, error: 'Could not update the outcome.' }
+  revalidatePath('/outreach')
+  return { ok: true, data: undefined }
+}
+
+// ── Follow-ups ────────────────────────────────────────────────────────────────
+
+/**
+ * Generate the next touch (follow-up) for a prospect on demand. Reuses the
+ * prospect's already-verified facts/angle from the initial personalized draft
+ * (no re-enrichment, no re-synthesis — one Sonnet draft call), or a generic
+ * follow-up template when the prospect was never personalized. Blocked once the
+ * prospect is closed (replied / bounced / unsubscribed).
+ */
+export async function generateFollowup(companyId: string, prospectId: string): Promise<ActionResult> {
+  let access: Awaited<ReturnType<typeof requireCompanyAccess>>
+  try {
+    access = await requireCompanyAccess(companyId)
+  } catch (err) {
+    if (err instanceof IntegrationAuthError) return { ok: false, error: AUTH_ERROR }
+    throw err
   }
 
-  return { prospects: views, counts, cost_usd_total }
+  const supabase = await createClient()
+  const { data: p } = await supabase
+    .from('outreach_prospects')
+    .select('id, recipient_name, disposition')
+    .eq('id', prospectId)
+    .eq('company_id', companyId)
+    .single()
+  if (!p) return { ok: false, error: 'Prospect not found.' }
+  if (p.disposition !== 'open') {
+    return { ok: false, error: 'This prospect is closed (replied, bounced, or unsubscribed). Reopen it to add a follow-up.' }
+  }
+
+  const { data: existing } = await supabase
+    .from('outreach_drafts')
+    .select('subject, angle, synthesis_confidence, facts_for_draft, step')
+    .eq('prospect_id', prospectId)
+    .eq('company_id', companyId)
+    .order('step', { ascending: true })
+  if (!existing || existing.length === 0) {
+    return { ok: false, error: 'No initial draft to follow up on yet.' }
+  }
+
+  const nextStep = Math.max(...existing.map((d) => d.step)) + 1
+  const priorSubject = existing[existing.length - 1].subject
+  // Reuse the verified facts/angle from the personalized touch when there is one.
+  const personalized = existing.find((d) => asStringArray(d.facts_for_draft).length > 0)
+
+  const usage: LLMUsage[] = []
+  let row: {
+    subject: string
+    body: string
+    angle: string | null
+    synthesis_confidence: number | null
+    facts_for_draft: string[]
+    facts_used: string[]
+    drifted_facts: string[]
+    clean: boolean
+  }
+
+  if (personalized) {
+    const facts = asStringArray(personalized.facts_for_draft)
+    const synthesis: SynthesisResult = {
+      skip: false,
+      skip_reason: null,
+      confidence: personalized.synthesis_confidence ?? 1,
+      angle: personalized.angle,
+      facts_for_draft: facts,
+    }
+    const review = await draftEmail(synthesis, usage, { step: nextStep, priorSubject })
+    if (!review) return { ok: false, error: 'Could not draft a follow-up. Try again.' }
+    row = {
+      subject: review.draft.subject,
+      body: review.draft.body,
+      angle: personalized.angle,
+      synthesis_confidence: personalized.synthesis_confidence,
+      facts_for_draft: facts,
+      facts_used: review.draft.facts_used,
+      drifted_facts: review.drifted_facts,
+      clean: review.clean,
+    }
+  } else {
+    const tmpl = buildTemplateFollowup(p.recipient_name ?? null)
+    row = {
+      subject: tmpl.subject,
+      body: tmpl.body,
+      angle: null,
+      synthesis_confidence: null,
+      facts_for_draft: [],
+      facts_used: [],
+      drifted_facts: [],
+      clean: true,
+    }
+  }
+
+  const { error } = await supabase.from('outreach_drafts').insert({
+    prospect_id: prospectId,
+    company_id: companyId,
+    step: nextStep,
+    status: 'pending',
+    ...row,
+  })
+  if (error) return { ok: false, error: 'Could not save the follow-up.' }
+
+  if (usage.length > 0) await recordUsage(supabase, companyId, access.userId, usage)
+  revalidatePath('/outreach')
+  return { ok: true, data: undefined }
 }
 
 // ── Review actions ────────────────────────────────────────────────────────────
@@ -335,7 +538,7 @@ async function setDraftStatus(
     .eq('id', draftId)
     .eq('company_id', companyId)
   if (error) return { ok: false, error: 'Could not update the draft.' }
-  revalidatePath('/marketing')
+  revalidatePath('/outreach')
   return { ok: true, data: undefined }
 }
 
@@ -363,7 +566,7 @@ export async function approveDrafts(
     .in('id', draftIds)
     .select('id')
   if (error) return { ok: false, error: 'Could not approve the drafts.' }
-  revalidatePath('/marketing')
+  revalidatePath('/outreach')
   return { ok: true, data: { count: data?.length ?? 0 } }
 }
 
@@ -387,7 +590,7 @@ export async function markExported(
     .in('id', draftIds)
     .select('id')
   if (error) return { ok: false, error: 'Could not mark the drafts exported.' }
-  revalidatePath('/marketing')
+  revalidatePath('/outreach')
   return { ok: true, data: { count: data?.length ?? 0 } }
 }
 
@@ -420,7 +623,7 @@ export async function resolveManual(
   const outcome = await runPipelineFromName(prospect.email, name, usage)
   await persistOutcome(supabase, companyId, prospectId, outcome)
   await recordUsage(supabase, companyId, access.userId, usage)
-  revalidatePath('/marketing')
+  revalidatePath('/outreach')
   return { ok: true, data: { status: outcome.status } }
 }
 

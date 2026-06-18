@@ -75,9 +75,15 @@ export interface OutreachDraftView {
   facts_for_draft: string[]
   facts_used: string[]
   status: 'pending' | 'approved' | 'edited' | 'rejected' | 'exported'
+  /** 1 = initial email, 2+ = follow-up touches. */
+  step: number
   /** True for the generic fallback (no facts) vs. a personalized draft. */
   is_template: boolean
 }
+
+/** Outcome of the whole conversation (recorded manually after send). A
+ * non-`open` disposition closes the prospect and suppresses follow-ups. */
+export type Disposition = 'open' | 'interested' | 'not_interested' | 'bounced' | 'unsubscribed'
 
 export interface OutreachProspectView {
   id: string
@@ -91,7 +97,12 @@ export interface OutreachProspectView {
   business_types: string[]
   location: string | null
   footprint: { award_count: number; sampled_total: number } | null
+  /** All touches for this prospect, ordered by step (1 = initial). */
+  drafts: OutreachDraftView[]
+  /** The latest touch (highest step), or null. Drives the queue/list/filters. */
   draft: OutreachDraftView | null
+  disposition: Disposition
+  disposition_at: string | null
   /** Resolver found a plausible-but-uncertain match (low confidence) — surface
    * for manual disambiguation rather than silent skip. */
   needs_review: boolean
@@ -112,7 +123,17 @@ export interface OutreachSnapshot {
     exported: number
     /** Prospects flagged for manual disambiguation. */
     needs_review: number
+    /** Prospects whose draft has been exported (== sent to the sending tool). */
+    sent: number
+    /** Prospects that replied (interested + not_interested). */
+    replied: number
+    /** Prospects marked bounced. */
+    bounced: number
+    /** Prospects marked unsubscribed. */
+    unsubscribed: number
   }
+  /** replied / sent, as a fraction (0 when nothing sent). */
+  reply_rate: number
   /** All-time Anthropic API spend for this company's outreach ($). */
   cost_usd_total: number
 }
