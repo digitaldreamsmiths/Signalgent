@@ -53,21 +53,23 @@ export async function loadSettings(supabase: DB, companyId: string): Promise<Sen
 
 // ── Timezone helpers (no date lib; DST edge cases acceptable for scheduling) ──
 
-interface Wall { y: number; mo: number; d: number; weekday: number }
+interface Wall { y: number; mo: number; d: number; h: number; mi: number; weekday: number }
 
 function parseHM(hm: string): [number, number] {
   const [h, m] = hm.split(':').map((n) => parseInt(n, 10))
   return [h || 0, m || 0]
 }
 
-/** Calendar Y/M/D (+ weekday 0=Sun) of an instant as seen in `tz`. */
+/** Calendar Y/M/D + H:M (+ weekday 0=Sun) of an instant as seen in `tz`. */
 function wallParts(date: Date, tz: string): Wall {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false,
   }).formatToParts(date).reduce<Record<string, string>>((a, p) => ((a[p.type] = p.value), a), {})
   const y = +parts.year, mo = +parts.month, d = +parts.day
+  const h = +parts.hour % 24, mi = +parts.minute
   const weekday = new Date(Date.UTC(y, mo - 1, d)).getUTCDay()
-  return { y, mo, d, weekday }
+  return { y, mo, d, h, mi, weekday }
 }
 
 /** The UTC instant for a wall-clock time (y/mo/d h:m) in `tz`. */
@@ -87,17 +89,6 @@ function nextDayWindowStart(w: Wall, tz: string, wsH: number, wsM: number): Date
   const d = new Date(Date.UTC(w.y, w.mo - 1, w.d))
   d.setUTCDate(d.getUTCDate() + 1)
   return fromZonedWall(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate(), wsH, wsM, tz)
-}
-
-/** True if `now` falls within the Mon–Fri business-hours window in tz. */
-export function withinWindow(now: Date, settings: SendSettings): boolean {
-  const w = wallParts(now, settings.timezone)
-  if (w.weekday === 0 || w.weekday === 6) return false
-  const [wsH, wsM] = parseHM(settings.send_window_start)
-  const [weH, weM] = parseHM(settings.send_window_end)
-  const start = fromZonedWall(w.y, w.mo, w.d, wsH, wsM, settings.timezone).getTime()
-  const end = fromZonedWall(w.y, w.mo, w.d, weH, weM, settings.timezone).getTime()
-  return now.getTime() >= start && now.getTime() < end
 }
 
 /**
@@ -145,14 +136,70 @@ export async function nextSlot(supabase: DB, companyId: string, settings: SendSe
 }
 
 /**
- * Send the due, queued emails for a company (one tick). Re-checks suppression,
- * marks sending → sent/failed, advances the sent draft to 'exported'. Returns
- * counts. No-ops when sending is inactive or outside the business window.
+ * Lay out `count` send slots starting at an explicit `startAt` (honoring the
+ * user's chosen time — NOT clamped to business hours). Each slot is the previous
+ * + min_gap; once a calendar day hits `daily_send_limit` (counting existing
+ * queued/sent sends), the rest roll to the next day at the same wall-clock
+ * start time. Returns ISO strings.
+ */
+export async function computeBatchSlots(
+  supabase: DB,
+  companyId: string,
+  settings: SendSettings,
+  startAtIso: string,
+  count: number,
+  excludeSendIds: string[] = [],
+): Promise<string[]> {
+  const tz = settings.timezone
+  const now = new Date()
+  // Never schedule in the past.
+  let cur = new Date(Math.max(new Date(startAtIso).getTime(), now.getTime()))
+  const startWall = wallParts(cur, tz)
+  const startH = startWall.h
+  const startM = startWall.mi
+
+  const exclude = new Set(excludeSendIds)
+  const { data: rows } = await supabase
+    .from('outreach_sends')
+    .select('id, scheduled_at')
+    .eq('company_id', companyId)
+    .in('status', ['queued', 'sending', 'sent'])
+    .not('scheduled_at', 'is', null)
+  const counts = new Map<string, number>()
+  for (const r of rows ?? []) {
+    if (exclude.has(r.id)) continue // rows being rescheduled shouldn't count against themselves
+    const w = wallParts(new Date(r.scheduled_at as string), tz)
+    const key = `${w.y}-${w.mo}-${w.d}`
+    counts.set(key, (counts.get(key) ?? 0) + 1)
+  }
+
+  const slots: string[] = []
+  for (let i = 0; i < count; i++) {
+    // Roll forward over any day that's already at capacity.
+    for (let guard = 0; guard < 800; guard++) {
+      const w = wallParts(cur, tz)
+      if ((counts.get(`${w.y}-${w.mo}-${w.d}`) ?? 0) < settings.daily_send_limit) break
+      cur = nextDayWindowStart(w, tz, startH, startM)
+    }
+    const w = wallParts(cur, tz)
+    const key = `${w.y}-${w.mo}-${w.d}`
+    counts.set(key, (counts.get(key) ?? 0) + 1)
+    slots.push(cur.toISOString())
+    cur = new Date(cur.getTime() + settings.min_gap_minutes * 60000)
+  }
+  return slots
+}
+
+/**
+ * Send the due, queued emails for a company (one tick). `scheduled_at` is the
+ * source of truth for timing (set by auto-slotting or explicit user scheduling),
+ * so the worker simply sends whatever is due — no business-hours gate here.
+ * Re-checks suppression, marks sending → sent/failed, advances the sent draft to
+ * 'exported'. No-ops when sending is inactive.
  */
 export async function runQueue(supabase: DB, companyId: string): Promise<{ sent: number; failed: number }> {
   const settings = await loadSettings(supabase, companyId)
   if (!settings.active) return { sent: 0, failed: 0 }
-  if (!withinWindow(new Date(), settings)) return { sent: 0, failed: 0 }
 
   let provider
   try {
