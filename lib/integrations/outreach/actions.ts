@@ -19,6 +19,7 @@ import { extractDomain } from '../usaspending/resolve'
 import { runPipeline, runPipelineFromName, type PipelineOutcome } from './pipeline'
 import { buildTemplateDraft, buildTemplateFollowup } from './template'
 import { draftEmail } from './draft'
+import { undeliverableDomains } from './deliverability'
 import type { LLMUsage } from '../../llm/client'
 import type {
   ActionResult,
@@ -193,7 +194,7 @@ const EMAIL_RE = /[^\s,;<>"']+@[^\s,;<>"']+\.[^\s,;<>"']+/g
 export async function ingestProspects(
   companyId: string,
   raw: string,
-): Promise<ActionResult<{ added: number; duplicates: number; invalid: number }>> {
+): Promise<ActionResult<{ added: number; duplicates: number; invalid: number; undeliverable: number }>> {
   try {
     await requireCompanyAccess(companyId)
   } catch (err) {
@@ -218,21 +219,31 @@ export async function ingestProspects(
   }
 
   if (rows.length === 0) {
-    return { ok: true, data: { added: 0, duplicates: 0, invalid } }
+    return { ok: true, data: { added: 0, duplicates: 0, invalid, undeliverable: 0 } }
+  }
+
+  // Deliverability: drop domains that definitively can't receive mail (no MX and
+  // no A record), so dead addresses never reach enrichment or the sending tool.
+  const bad = await undeliverableDomains(rows.map((r) => r.domain).filter((d): d is string => !!d))
+  const sendable = rows.filter((r) => !r.domain || !bad.has(r.domain))
+  const undeliverable = rows.length - sendable.length
+
+  if (sendable.length === 0) {
+    return { ok: true, data: { added: 0, duplicates: 0, invalid, undeliverable } }
   }
 
   const supabase = await createClient()
   // Insert, ignoring rows that already exist (unique company_id+email).
   const { data, error } = await supabase
     .from('outreach_prospects')
-    .upsert(rows, { onConflict: 'company_id,email', ignoreDuplicates: true })
+    .upsert(sendable, { onConflict: 'company_id,email', ignoreDuplicates: true })
     .select('id')
 
   if (error) return { ok: false, error: 'Could not save prospects. Try again.' }
 
   const added = data?.length ?? 0
   revalidatePath('/outreach')
-  return { ok: true, data: { added, duplicates: rows.length - added, invalid } }
+  return { ok: true, data: { added, duplicates: sendable.length - added, invalid, undeliverable } }
 }
 
 // ── Run the pipeline over new prospects ───────────────────────────────────────
