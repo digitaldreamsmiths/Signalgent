@@ -91,6 +91,26 @@ function Pill({ label, color }: { label: string; color: string }) {
   )
 }
 
+/** A compact metric tile for the status bar. Numbers use the mono face. */
+function Metric({ label, value, accent }: { label: string; value: string | number; accent?: string }) {
+  return (
+    <div style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: 8, padding: '8px 12px' }}>
+      <div style={{ fontSize: 9, fontWeight: 600, color: MUTED, textTransform: 'uppercase', letterSpacing: 0.6 }}>{label}</div>
+      <div style={{ fontSize: 20, fontWeight: 600, color: accent ?? '#eee', fontFamily: 'var(--font-mono)', marginTop: 3, lineHeight: 1 }}>{value}</div>
+    </div>
+  )
+}
+
+/** Contextual empty-state copy per filter tab. */
+const EMPTY_MSG: Record<Filter, string> = {
+  review: 'Nothing waiting for review.',
+  templates: 'No template drafts.',
+  needs_review: 'Nothing needs a manual match.',
+  approved: 'Nothing approved yet — approve drafts from “To review”.',
+  exported: 'Nothing exported yet.',
+  all: 'No drafts yet.',
+}
+
 // ── Detail pane ───────────────────────────────────────────────────────────────
 
 function DraftDetail({ prospect, companyId, onChanged }: { prospect: OutreachProspectView; companyId: string; onChanged: () => void }) {
@@ -389,25 +409,33 @@ export function OutreachWorkspace() {
   )
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      {/* Ingest + run */}
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', gap: 12, minHeight: 0 }}>
+      {/* Header: title + intake */}
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <h1 style={{ fontSize: 16, fontWeight: 700, color: '#fff', margin: 0, marginRight: 4, letterSpacing: 0.2 }}>Outreach</h1>
         <input
           value={raw}
           onChange={(e) => setRaw(e.target.value)}
           placeholder="Paste contact emails (any separator)…"
-          style={{ flex: 1, minWidth: 260, background: '#111', border: `1px solid ${BORDER}`, borderRadius: 6, color: '#eee', fontSize: 12, padding: '8px 10px' }}
+          style={{ flex: 1, minWidth: 220, background: '#111', border: `1px solid ${BORDER}`, borderRadius: 6, color: '#eee', fontSize: 12, padding: '8px 10px' }}
         />
         <button onClick={handleIngest} disabled={!raw.trim()} style={btn(ACCENT)}>Add prospects</button>
         <button onClick={handleRun} disabled={running || (c?.new ?? 0) === 0} style={btnGhost(ACCENT)}>
           {running ? 'Running…' : `Run enrichment${c?.new ? ` (${c.new})` : ''}`}
         </button>
-        {c && (
-          <span style={{ fontSize: 11, color: MUTED, marginLeft: 'auto' }}>
-            {c.total} total · {c.personalized} personalized · {c.templates} template · {c.needs_review} need review · {c.approved} approved · {c.exported} exported · <span style={{ color: '#9aa' }}>{fmtUsd(snapshot?.cost_usd_total ?? 0)} API cost</span>
-          </span>
-        )}
       </div>
+
+      {/* Status bar */}
+      {c && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 8 }}>
+          <Metric label="To review" value={lists.review.length} accent={ACCENT} />
+          <Metric label="Prospects" value={c.total} />
+          <Metric label="Personalized" value={c.personalized} />
+          <Metric label="Approved" value={c.approved} accent="#1D9E75" />
+          <Metric label="Exported" value={c.exported} accent="#378ADD" />
+          <Metric label="API cost" value={fmtUsd(snapshot?.cost_usd_total ?? 0)} />
+        </div>
+      )}
       {notice && <div style={{ fontSize: 11, color: '#aaa' }}>{notice}</div>}
 
       {running && progress && (
@@ -422,9 +450,16 @@ export function OutreachWorkspace() {
         </div>
       )}
 
-      {loading && !snapshot && <div style={{ fontSize: 12, color: MUTED }}>Loading…</div>}
+      {loading && !snapshot && (
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, color: MUTED }}>Loading…</div>
+      )}
       {!loading && prospects.length === 0 && (
-        <div style={{ fontSize: 12, color: MUTED }}>No prospects yet. Paste a contact list above to begin.</div>
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>
+          <div>
+            <div style={{ fontSize: 14, color: '#aaa', marginBottom: 4 }}>No prospects yet</div>
+            <div style={{ fontSize: 12, color: MUTED }}>Paste a contact list above, then run enrichment to generate drafts.</div>
+          </div>
+        </div>
       )}
 
       {prospects.length > 0 && (
@@ -457,10 +492,10 @@ export function OutreachWorkspace() {
             </div>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 280px) minmax(0, 1fr)', gap: 14, alignItems: 'start' }}>
+          <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: 'minmax(0, 300px) minmax(0, 1fr)', gap: 14 }}>
             {/* List */}
-            <div style={{ border: `1px solid ${BORDER}`, borderRadius: 8, overflow: 'hidden', maxHeight: 520, overflowY: 'auto' }}>
-              {current.length === 0 && <div style={{ fontSize: 12, color: MUTED, padding: 12 }}>Nothing here.</div>}
+            <div style={{ border: `1px solid ${BORDER}`, borderRadius: 8, overflowY: 'auto', overflowX: 'hidden', minHeight: 0 }}>
+              {current.length === 0 && <div style={{ fontSize: 12, color: MUTED, padding: 14 }}>{EMPTY_MSG[filter]}</div>}
               {current.map((p) => {
                 const sel = selected?.id === p.id
                 return (
@@ -483,11 +518,16 @@ export function OutreachWorkspace() {
             </div>
 
             {/* Detail */}
-            <div>
+            <div style={{ border: `1px solid ${BORDER}`, borderRadius: 8, overflowY: 'auto', minHeight: 0, padding: 16 }}>
               {selected ? (
                 <DraftDetail key={selected.draft!.id} prospect={selected} companyId={companyId} onChanged={refresh} />
               ) : (
-                <div style={{ fontSize: 12, color: MUTED, padding: 16 }}>Select a prospect to review its draft.</div>
+                <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>
+                  <div>
+                    <div style={{ fontSize: 13, color: '#888', marginBottom: 4 }}>No draft selected</div>
+                    <div style={{ fontSize: 11, color: MUTED }}>Pick a prospect from the list to review, edit, and approve its draft.</div>
+                  </div>
+                </div>
               )}
             </div>
           </div>
