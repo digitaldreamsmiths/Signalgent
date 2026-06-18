@@ -10,7 +10,19 @@
  * domain (see plan), so getProvider() throws for them until implemented.
  */
 
+import type { SupabaseClient } from '@supabase/supabase-js'
+import type { Database } from '@/lib/types/database.types'
+import { sendOutreachEmail } from '../../gmail/send'
+
 export type ProviderName = 'dry_run' | 'gmail' | 'resend'
+
+/** Context a provider may need to act for a specific company (token loading,
+ * etc.). The Supabase client lets the cron/service-role path work without an
+ * SSR session. */
+export interface SendContext {
+  companyId: string
+  supabase: SupabaseClient<Database>
+}
 
 export interface SendMessage {
   to: string
@@ -42,10 +54,29 @@ const dryRunProvider: EmailProvider = {
   },
 }
 
-export function getProvider(name: ProviderName): EmailProvider {
+/** Sends new outreach emails from the company's connected Gmail mailbox. */
+function gmailProvider(ctx: SendContext): EmailProvider {
+  return {
+    name: 'gmail',
+    async send(msg) {
+      try {
+        const r = await sendOutreachEmail(
+          ctx.companyId,
+          { to: msg.to, subject: msg.subject, body: msg.body, fromName: msg.fromName, replyTo: msg.replyTo },
+          ctx.supabase,
+        )
+        return { ok: true, providerMessageId: r.messageId }
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : 'Gmail send failed' }
+      }
+    },
+  }
+}
+
+export function getProvider(name: ProviderName, ctx: SendContext): EmailProvider {
   if (name === 'dry_run') return dryRunProvider
-  // TODO(send): implement Gmail (Google Workspace API, reuse the dormant gmail
-  // integration) and/or Resend — only after the AUP check + dedicated sending
-  // domain decision. Until then this is the explicit pluggable seam.
+  if (name === 'gmail') return gmailProvider(ctx)
+  // TODO(send): Resend — only after the AUP check + dedicated sending domain
+  // decision. Until then this is the explicit pluggable seam.
   throw new Error(`Email provider "${name}" is not configured yet.`)
 }

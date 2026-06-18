@@ -10,6 +10,8 @@
  */
 
 import { createClient } from '@/lib/supabase/server'
+import type { SupabaseClient } from '@supabase/supabase-js'
+import type { Database } from '@/lib/types/database.types'
 import type {
   ConnectedAccount,
   InsertTables,
@@ -19,12 +21,17 @@ import type {
 export type ConnectedService = ConnectedAccount['service']
 export type ConnectedStatus = ConnectedAccount['status']
 
+/** A Supabase client callers can inject — e.g. a service-role client from the
+ * unauthenticated cron path, where the default SSR client has no session. */
+type DbClient = SupabaseClient<Database>
+
 /** Fetch a single account by (companyId, service). Returns null if not found. */
 export async function getAccount(
   companyId: string,
-  service: ConnectedService
+  service: ConnectedService,
+  client?: DbClient
 ): Promise<ConnectedAccount | null> {
-  const supabase = await createClient()
+  const supabase = client ?? await createClient()
   const { data, error } = await supabase
     .from('connected_accounts')
     .select('*')
@@ -77,9 +84,10 @@ export async function upsertAccount(
 export async function updateAccount(
   companyId: string,
   service: ConnectedService,
-  patch: UpdateTables<'connected_accounts'>
+  patch: UpdateTables<'connected_accounts'>,
+  client?: DbClient
 ): Promise<ConnectedAccount | null> {
-  const supabase = await createClient()
+  const supabase = client ?? await createClient()
   const { data, error } = await supabase
     .from('connected_accounts')
     .update(patch)
@@ -143,10 +151,11 @@ export async function markSynced(
 export async function markError(
   companyId: string,
   service: ConnectedService,
-  message: string
+  message: string,
+  client?: DbClient
 ): Promise<void> {
   await updateAccount(companyId, service, {
     status: 'error',
     last_error: message.slice(0, 500),
-  })
+  }, client)
 }

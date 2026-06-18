@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { IntegrationAuthError, requireCompanyAccess } from '@/lib/integrations/auth'
 import type { ActionResult, SendSettings } from './types'
+import { getAccount } from '@/lib/integrations/accounts'
 import { composeEmail } from './send/compose'
 import { loadSettings, nextSlot, runQueue } from './send/worker'
 
@@ -52,6 +53,12 @@ export async function queueDraftSend(companyId: string, draftId: string): Promis
   const settings = await loadSettings(supabase, companyId)
   if (!settings.active) return { ok: false, error: 'Turn on sending in Sending settings first.' }
   if (!settings.sender_email?.trim()) return { ok: false, error: 'Set a sender email in Sending settings first.' }
+  if (settings.provider === 'gmail') {
+    const gmail = await getAccount(companyId, 'gmail')
+    if (gmail?.status !== 'connected') {
+      return { ok: false, error: 'Connect Gmail in Settings → Connections first.' }
+    }
+  }
 
   const { data: draft } = await supabase
     .from('outreach_drafts')
