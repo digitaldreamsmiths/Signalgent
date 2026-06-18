@@ -130,8 +130,8 @@ function ServiceCard({ service }: { service: ServiceDef }) {
   return (
     <div
       style={{
-        background: '#161616',
-        border: `1px solid ${connected ? '#1e2e1e' : '#1e1e1e'}`,
+        background: 'var(--app-card-2)',
+        border: `1px solid ${connected ? 'var(--app-border)' : 'var(--app-border)'}`,
         borderRadius: 10,
         padding: '14px 16px',
         display: 'flex',
@@ -145,8 +145,8 @@ function ServiceCard({ service }: { service: ServiceDef }) {
           width: 36,
           height: 36,
           borderRadius: 8,
-          background: '#0e0e0e',
-          border: '1px solid #222',
+          background: 'var(--app-input)',
+          border: '1px solid var(--app-border)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
@@ -159,14 +159,14 @@ function ServiceCard({ service }: { service: ServiceDef }) {
       {/* Text */}
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
-          <span style={{ fontSize: 13, fontWeight: 500, color: '#d0d0d0' }}>{service.label}</span>
+          <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--app-text)' }}>{service.label}</span>
           {connected && (
             <span
               style={{
                 fontSize: 10,
                 color: '#4CAF50',
-                background: '#0d1f0d',
-                border: '1px solid #1e3a1e',
+                background: 'var(--app-card-2)',
+                border: '1px solid var(--app-border)',
                 borderRadius: 4,
                 padding: '1px 6px',
               }}
@@ -178,9 +178,9 @@ function ServiceCard({ service }: { service: ServiceDef }) {
             <span
               style={{
                 fontSize: 10,
-                color: '#666',
-                background: '#111',
-                border: '1px solid #222',
+                color: 'var(--app-muted)',
+                background: 'var(--app-input)',
+                border: '1px solid var(--app-border)',
                 borderRadius: 4,
                 padding: '1px 6px',
               }}
@@ -189,11 +189,11 @@ function ServiceCard({ service }: { service: ServiceDef }) {
             </span>
           )}
         </div>
-        <p style={{ fontSize: 11, color: '#444', margin: 0, lineHeight: 1.5 }}>
+        <p style={{ fontSize: 11, color: 'var(--app-faint)', margin: 0, lineHeight: 1.5 }}>
           {service.description}
         </p>
         {connected && account?.account_identifier && (
-          <p style={{ fontSize: 10, color: '#333', marginTop: 4 }}>
+          <p style={{ fontSize: 10, color: 'var(--app-faint)', marginTop: 4 }}>
             {account.account_identifier}
           </p>
         )}
@@ -208,11 +208,11 @@ function ServiceCard({ service }: { service: ServiceDef }) {
               style={{
                 flex: 1,
                 fontSize: 12,
-                background: '#0e0e0e',
-                border: '1px solid #333',
+                background: 'var(--app-input)',
+                border: '1px solid var(--app-border)',
                 borderRadius: 6,
                 padding: '5px 10px',
-                color: '#ccc',
+                color: 'var(--app-text-2)',
                 outline: 'none',
               }}
               onKeyDown={(e) => e.key === 'Enter' && handleConnect()}
@@ -222,7 +222,7 @@ function ServiceCard({ service }: { service: ServiceDef }) {
               onClick={() => setShowInput(false)}
               style={{
                 fontSize: 11,
-                color: '#444',
+                color: 'var(--app-faint)',
                 background: 'none',
                 border: 'none',
                 cursor: 'pointer',
@@ -243,9 +243,9 @@ function ServiceCard({ service }: { service: ServiceDef }) {
             disabled={disconnecting}
             style={{
               fontSize: 11,
-              color: '#555',
+              color: 'var(--app-muted)',
               background: 'none',
-              border: '1px solid #222',
+              border: '1px solid var(--app-border)',
               borderRadius: 6,
               padding: '5px 12px',
               cursor: 'pointer',
@@ -260,9 +260,9 @@ function ServiceCard({ service }: { service: ServiceDef }) {
             disabled={service.comingSoon}
             style={{
               fontSize: 11,
-              color: service.comingSoon ? '#333' : '#d0d0d0',
-              background: service.comingSoon ? 'none' : '#1e1e1e',
-              border: `1px solid ${service.comingSoon ? '#1a1a1a' : '#2a2a2a'}`,
+              color: service.comingSoon ? 'var(--app-faint)' : 'var(--app-text)',
+              background: service.comingSoon ? 'none' : 'var(--app-border)',
+              border: `1px solid ${service.comingSoon ? 'var(--app-border)' : 'var(--app-border)'}`,
               borderRadius: 6,
               padding: '5px 12px',
               cursor: service.comingSoon ? 'default' : 'pointer',
@@ -288,7 +288,7 @@ export default function ConnectionsPage() {
       {/* Header */}
       <div style={{ marginBottom: 20 }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
-          <h2 style={{ fontSize: 15, fontWeight: 500, color: '#d0d0d0', margin: 0 }}>
+          <h2 style={{ fontSize: 15, fontWeight: 500, color: 'var(--app-text)', margin: 0 }}>
             Connections
           </h2>
           {!isLoading && connectedCount > 0 && (
@@ -297,7 +297,7 @@ export default function ConnectionsPage() {
             </span>
           )}
         </div>
-        <p style={{ fontSize: 12, color: '#444', marginTop: 4 }}>
+        <p style={{ fontSize: 12, color: 'var(--app-faint)', marginTop: 4 }}>
           Connect your platforms to replace sample data with live data in every widget.
         </p>
       </div>
@@ -312,7 +312,7 @@ export default function ConnectionsPage() {
               <p
                 style={{
                   fontSize: 10,
-                  color: '#333',
+                  color: 'var(--app-faint)',
                   textTransform: 'uppercase',
                   letterSpacing: '0.08em',
                   marginBottom: 8,

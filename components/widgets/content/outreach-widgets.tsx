@@ -19,18 +19,18 @@ import type { Disposition, OutreachDraftView, OutreachSnapshot, OutreachProspect
 import { hygieneWarnings } from '@/lib/integrations/outreach/hygiene'
 
 const ACCENT = '#D85A30'
-const BORDER = '#272727'
-const CARD = '#1a1a1a'
-const MUTED = '#8a8a8a'
+const BORDER = 'var(--app-border)'
+const CARD = 'var(--app-card)'
+const MUTED = 'var(--app-muted)'
 
 type Filter = 'review' | 'templates' | 'needs_review' | 'approved' | 'exported' | 'replied' | 'bounced' | 'all'
 
 const DISPO_META: Record<Disposition, { label: string; color: string }> = {
-  open: { label: 'open', color: '#8a8a8a' },
+  open: { label: 'open', color: 'var(--app-muted)' },
   interested: { label: 'interested', color: '#1D9E75' },
   not_interested: { label: 'not interested', color: '#BA7517' },
   bounced: { label: 'bounced', color: '#b04545' },
-  unsubscribed: { label: 'unsubscribed', color: '#8a8a8a' },
+  unsubscribed: { label: 'unsubscribed', color: 'var(--app-muted)' },
 }
 
 /** Outcome buttons, in funnel order. */
@@ -38,7 +38,7 @@ const DISPOSITIONS: { key: Disposition; label: string; color: string }[] = [
   { key: 'interested', label: 'Interested', color: '#1D9E75' },
   { key: 'not_interested', label: 'Not interested', color: '#BA7517' },
   { key: 'bounced', label: 'Bounced', color: '#b04545' },
-  { key: 'unsubscribed', label: 'Unsubscribed', color: '#8a8a8a' },
+  { key: 'unsubscribed', label: 'Unsubscribed', color: 'var(--app-muted)' },
 ]
 
 function fmtPct(frac: number, sent: number): string {
@@ -48,7 +48,7 @@ function fmtPct(frac: number, sent: number): string {
 function btn(bg: string): React.CSSProperties {
   return { fontSize: 12, fontWeight: 600, color: '#fff', background: bg, border: 'none', borderRadius: 6, padding: '6px 14px', cursor: 'pointer' }
 }
-function btnGhost(color = '#ccc'): React.CSSProperties {
+function btnGhost(color = 'var(--app-text-2)'): React.CSSProperties {
   return { fontSize: 12, fontWeight: 600, color, background: 'transparent', border: `1px solid ${BORDER}`, borderRadius: 6, padding: '6px 14px', cursor: 'pointer' }
 }
 function csvCell(v: unknown): string {
@@ -124,7 +124,7 @@ function Metric({ label, value, accent }: { label: string; value: string | numbe
   return (
     <div style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: 8, padding: '8px 12px' }}>
       <div style={{ fontSize: 9, fontWeight: 600, color: MUTED, textTransform: 'uppercase', letterSpacing: 0.6 }}>{label}</div>
-      <div style={{ fontSize: 20, fontWeight: 600, color: accent ?? '#eee', fontFamily: 'var(--font-mono)', marginTop: 3, lineHeight: 1 }}>{value}</div>
+      <div style={{ fontSize: 20, fontWeight: 600, color: accent ?? 'var(--app-text)', fontFamily: 'var(--font-mono)', marginTop: 3, lineHeight: 1 }}>{value}</div>
     </div>
   )
 }
@@ -152,8 +152,8 @@ const byName = (a: OutreachProspectView, b: OutreachProspectView) =>
 /** Sticky section divider inside the scrolling list. */
 function SectionHeader({ label, count }: { label: string; count: number }) {
   return (
-    <div style={{ position: 'sticky', top: 0, zIndex: 1, background: '#161616', borderBottom: `1px solid ${BORDER}`, padding: '6px 12px', fontSize: 9, fontWeight: 600, color: MUTED, textTransform: 'uppercase', letterSpacing: 0.6 }}>
-      {label} <span style={{ color: '#666' }}>{count}</span>
+    <div style={{ position: 'sticky', top: 0, zIndex: 1, background: 'var(--app-card-2)', borderBottom: `1px solid ${BORDER}`, padding: '6px 12px', fontSize: 9, fontWeight: 600, color: MUTED, textTransform: 'uppercase', letterSpacing: 0.6 }}>
+      {label} <span style={{ color: 'var(--app-muted)' }}>{count}</span>
     </div>
   )
 }
@@ -164,7 +164,7 @@ function ProspectRow({ p, selected, onSelect }: { p: OutreachProspectView; selec
       onClick={onSelect}
       style={{ padding: '10px 12px', borderBottom: `1px solid ${BORDER}`, cursor: 'pointer', background: selected ? CARD : 'transparent', borderLeft: `2px solid ${selected ? ACCENT : 'transparent'}` }}
     >
-      <div style={{ fontSize: 13, fontWeight: selected ? 600 : 400, color: '#ddd' }}>{p.recipient_name ?? p.domain}</div>
+      <div style={{ fontSize: 13, fontWeight: selected ? 600 : 400, color: 'var(--app-text)' }}>{p.recipient_name ?? p.domain}</div>
       <div style={{ fontSize: 11, color: MUTED, marginTop: 2 }}>{p.email}</div>
       <div style={{ display: 'flex', gap: 6, marginTop: 6, alignItems: 'center', flexWrap: 'wrap' }}>
         {p.needs_review ? <Pill label="review" color="#e0a060" /> : p.draft ? (p.draft.is_template ? <Pill label="template" color={MUTED} /> : <Pill label="personalized" color="#1D9E75" />) : null}
@@ -212,7 +212,7 @@ function TouchCard({ draft, companyId, onChanged }: { draft: OutreachDraftView; 
   return (
     <div style={{ border: `1px solid ${BORDER}`, borderRadius: 8, padding: 12, background: CARD, display: 'flex', flexDirection: 'column', gap: 8 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 11, fontWeight: 600, color: '#aaa' }}>{touchLabel(draft.step)}</span>
+        <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--app-text-2)' }}>{touchLabel(draft.step)}</span>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
           {draft.is_template ? <Pill label="template" color={MUTED} /> : <Pill label="personalized" color="#1D9E75" />}
           {!draft.clean && <Pill label="drift" color="#b04545" />}
@@ -232,13 +232,13 @@ function TouchCard({ draft, companyId, onChanged }: { draft: OutreachDraftView; 
 
       {editing ? (
         <>
-          <input value={subject} onChange={(e) => setSubject(e.target.value)} style={{ width: '100%', background: '#111', border: `1px solid ${BORDER}`, borderRadius: 6, color: '#eee', fontSize: 12, padding: '6px 8px' }} />
-          <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={12} style={{ width: '100%', background: '#111', border: `1px solid ${BORDER}`, borderRadius: 6, color: '#eee', fontSize: 12, padding: '6px 8px', resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.5 }} />
+          <input value={subject} onChange={(e) => setSubject(e.target.value)} style={{ width: '100%', background: 'var(--app-input)', border: `1px solid ${BORDER}`, borderRadius: 6, color: 'var(--app-text)', fontSize: 12, padding: '6px 8px' }} />
+          <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={12} style={{ width: '100%', background: 'var(--app-input)', border: `1px solid ${BORDER}`, borderRadius: 6, color: 'var(--app-text)', fontSize: 12, padding: '6px 8px', resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.5 }} />
         </>
       ) : (
         <div>
-          <div style={{ fontSize: 12, fontWeight: 600, color: '#ccc', marginBottom: 6 }}>{draft.subject}</div>
-          <div style={{ fontSize: 12, color: '#bbb', whiteSpace: 'pre-wrap', lineHeight: 1.55 }}>{draft.body}</div>
+          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--app-text-2)', marginBottom: 6 }}>{draft.subject}</div>
+          <div style={{ fontSize: 12, color: 'var(--app-text-2)', whiteSpace: 'pre-wrap', lineHeight: 1.55 }}>{draft.body}</div>
         </div>
       )}
 
@@ -251,7 +251,7 @@ function TouchCard({ draft, companyId, onChanged }: { draft: OutreachDraftView; 
             {draft.facts_for_draft.map((f, i) => {
               const used = draft.facts_used.some((u) => u.trim().toLowerCase() === f.trim().toLowerCase())
               return (
-                <div key={i} style={{ fontSize: 11, color: used ? '#bbb' : '#666' }}>
+                <div key={i} style={{ fontSize: 11, color: used ? 'var(--app-text-2)' : 'var(--app-muted)' }}>
                   {used ? '✓ ' : '· '}
                   {f}
                 </div>
@@ -314,7 +314,7 @@ function DraftDetail({ prospect, companyId, onChanged }: { prospect: OutreachPro
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
         <div>
-          <div style={{ fontSize: 15, fontWeight: 600, color: '#eee' }}>{prospect.recipient_name ?? prospect.domain}</div>
+          <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--app-text)' }}>{prospect.recipient_name ?? prospect.domain}</div>
           <div style={{ fontSize: 11, color: MUTED, marginTop: 2 }}>
             {prospect.email}
             {prospect.business_types.length > 0 && ` · ${prospect.business_types.includes('service_disabled_veteran_owned_business') ? 'SDVOSB' : prospect.business_types.includes('small_business') ? 'Small business' : prospect.business_types[0]}`}
@@ -353,7 +353,7 @@ function DraftDetail({ prospect, companyId, onChanged }: { prospect: OutreachPro
       )}
 
       {prospect.needs_review && (
-        <div style={{ border: `1px solid ${BORDER}`, borderRadius: 8, padding: 10, background: '#15110d' }}>
+        <div style={{ border: `1px solid ${BORDER}`, borderRadius: 8, padding: 10, background: 'var(--app-card-2)' }}>
           <div style={{ fontSize: 11, color: '#e0a060', marginBottom: 6 }}>
             Uncertain match. Type the correct company name (as it appears in federal records) to re-resolve.
           </div>
@@ -362,7 +362,7 @@ function DraftDetail({ prospect, companyId, onChanged }: { prospect: OutreachPro
               value={manualName}
               onChange={(e) => setManualName(e.target.value)}
               placeholder="e.g. Eagle Contractors Inc"
-              style={{ flex: 1, background: '#111', border: `1px solid ${BORDER}`, borderRadius: 6, color: '#eee', fontSize: 12, padding: '6px 8px' }}
+              style={{ flex: 1, background: 'var(--app-input)', border: `1px solid ${BORDER}`, borderRadius: 6, color: 'var(--app-text)', fontSize: 12, padding: '6px 8px' }}
             />
             <button disabled={busy || !manualName.trim()} onClick={() => act(() => resolveManual(companyId, prospect.id, manualName))} style={btn(ACCENT)}>Resolve</button>
           </div>
@@ -536,12 +536,12 @@ export function OutreachWorkspace() {
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', gap: 12, minHeight: 0 }}>
       {/* Header: title + intake */}
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-        <h1 style={{ fontSize: 16, fontWeight: 700, color: '#fff', margin: 0, marginRight: 4, letterSpacing: 0.2 }}>Outreach</h1>
+        <h1 style={{ fontSize: 16, fontWeight: 700, color: 'var(--app-text)', margin: 0, marginRight: 4, letterSpacing: 0.2 }}>Outreach</h1>
         <input
           value={raw}
           onChange={(e) => setRaw(e.target.value)}
           placeholder="Paste contact emails (any separator)…"
-          style={{ flex: 1, minWidth: 220, background: '#111', border: `1px solid ${BORDER}`, borderRadius: 6, color: '#eee', fontSize: 12, padding: '8px 10px' }}
+          style={{ flex: 1, minWidth: 220, background: 'var(--app-input)', border: `1px solid ${BORDER}`, borderRadius: 6, color: 'var(--app-text)', fontSize: 12, padding: '8px 10px' }}
         />
         <button onClick={handleIngest} disabled={!raw.trim()} style={btn(ACCENT)}>Add prospects</button>
         <button onClick={handleRun} disabled={running || (c?.new ?? 0) === 0} style={btnGhost(ACCENT)}>
@@ -560,15 +560,15 @@ export function OutreachWorkspace() {
           <Metric label="API cost" value={fmtUsd(snapshot?.cost_usd_total ?? 0)} />
         </div>
       )}
-      {notice && <div style={{ fontSize: 11, color: '#aaa' }}>{notice}</div>}
+      {notice && <div style={{ fontSize: 11, color: 'var(--app-text-2)' }}>{notice}</div>}
 
       {running && progress && (
         <div style={{ border: `1px solid ${BORDER}`, borderRadius: 8, padding: 10, background: CARD }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#ccc', marginBottom: 6 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--app-text-2)', marginBottom: 6 }}>
             <span>Enriching {progress.processed}{progress.total ? ` of ${progress.total}` : ''}…</span>
             <span style={{ color: MUTED }}>{progress.drafted} personalized · {progress.skipped} template · {fmtUsd(progress.cost)} this run</span>
           </div>
-          <div style={{ height: 6, background: '#111', borderRadius: 3, overflow: 'hidden' }}>
+          <div style={{ height: 6, background: 'var(--app-input)', borderRadius: 3, overflow: 'hidden' }}>
             <div style={{ height: '100%', width: `${progress.total ? Math.round((progress.processed / progress.total) * 100) : 0}%`, background: ACCENT, transition: 'width 0.3s' }} />
           </div>
         </div>
@@ -580,7 +580,7 @@ export function OutreachWorkspace() {
       {!loading && prospects.length === 0 && (
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>
           <div>
-            <div style={{ fontSize: 14, color: '#aaa', marginBottom: 4 }}>No prospects yet</div>
+            <div style={{ fontSize: 14, color: 'var(--app-text-2)', marginBottom: 4 }}>No prospects yet</div>
             <div style={{ fontSize: 12, color: MUTED }}>Paste a contact list above, then run enrichment to generate drafts.</div>
           </div>
         </div>
@@ -653,7 +653,7 @@ export function OutreachWorkspace() {
               ) : (
                 <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>
                   <div>
-                    <div style={{ fontSize: 13, color: '#888', marginBottom: 4 }}>No draft selected</div>
+                    <div style={{ fontSize: 13, color: 'var(--app-muted)', marginBottom: 4 }}>No draft selected</div>
                     <div style={{ fontSize: 11, color: MUTED }}>Pick a prospect from the list to review, edit, and approve its draft.</div>
                   </div>
                 </div>

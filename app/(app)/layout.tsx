@@ -26,7 +26,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     <ModeProvider>
       <CompanyProvider>
         <ConnectedAccountsProvider>
-        <div className="flex h-screen flex-col overflow-hidden" style={{ background: '#0e0e0e' }}>
+        <div className="flex h-screen flex-col overflow-hidden" style={{ background: 'var(--app-bg)' }}>
           <Topbar />
           {/* Accent line */}
           <div
