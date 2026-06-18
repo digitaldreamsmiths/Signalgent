@@ -5,7 +5,6 @@ import { ModeProvider } from '@/contexts/mode-context'
 import { CompanyProvider } from '@/contexts/company-context'
 import { ConnectedAccountsProvider } from '@/contexts/connected-accounts-context'
 import { Topbar } from '@/components/layout/topbar'
-import { BottomDock } from '@/components/layout/bottom-dock'
 import { CommandPalette } from '@/components/command-palette'
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
@@ -43,7 +42,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           <main className="flex-1 overflow-y-auto" style={{ padding: 20 }}>
             {children}
           </main>
-          <BottomDock />
         </div>
         <CommandPalette open={commandPaletteOpen} onClose={closePalette} />
         </ConnectedAccountsProvider>

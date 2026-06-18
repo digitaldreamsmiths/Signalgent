@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Search, ArrowRight } from 'lucide-react'
-import { MODES, type ModeId } from '@/contexts/mode-context'
+import { MODES } from '@/contexts/mode-context'
 import { cn } from '@/lib/utils'
 
 interface CommandItem {
@@ -36,37 +36,13 @@ export function CommandPalette({
   )
 
   const items: CommandItem[] = [
-    ...Object.entries(MODES).map(([id, m]) => ({
-      id: `nav-${id}`,
-      label: m.label,
-      description: `Go to ${m.label}`,
-      action: () => navigate(m.href),
+    {
+      id: 'nav-outreach',
+      label: MODES.outreach.label,
+      description: `Go to ${MODES.outreach.label}`,
+      action: () => navigate(MODES.outreach.href),
       group: 'Navigate',
-      accent: m.accent,
-    })),
-    {
-      id: 'action-compose',
-      label: 'Compose email',
-      description: 'Draft a new message',
-      action: () => navigate('/communications'),
-      group: 'Quick Actions',
-      accent: MODES.communications.accent,
-    },
-    {
-      id: 'action-campaign',
-      label: 'New campaign',
-      description: 'Create a marketing campaign',
-      action: () => navigate('/marketing'),
-      group: 'Quick Actions',
-      accent: MODES.marketing.accent,
-    },
-    {
-      id: 'action-revenue',
-      label: 'View revenue',
-      description: 'Financial summary',
-      action: () => navigate('/finance'),
-      group: 'Quick Actions',
-      accent: MODES.finance.accent,
+      accent: MODES.outreach.accent,
     },
   ]
 

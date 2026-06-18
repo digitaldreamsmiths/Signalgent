@@ -38,15 +38,15 @@ export async function updateSession(request: NextRequest) {
 
   const pathname = request.nextUrl.pathname
 
-  // Auth pages — redirect logged-in users to dashboard
+  // Auth pages — redirect logged-in users to the app
   if (user && (pathname === '/login' || pathname === '/signup')) {
     const url = request.nextUrl.clone()
-    url.pathname = '/dashboard'
+    url.pathname = '/outreach'
     return NextResponse.redirect(url)
   }
 
   // Protected routes — redirect unauthenticated to login
-  const protectedPaths = ['/dashboard', '/marketing', '/communications', '/finance', '/commerce', '/analytics', '/onboarding', '/settings']
+  const protectedPaths = ['/outreach', '/onboarding', '/settings']
   const isProtected = protectedPaths.some((p) => pathname.startsWith(p))
 
   if (!user && isProtected) {

@@ -30,7 +30,7 @@ function injectModeVars(modeId: ModeId) {
 }
 
 export function ModeProvider({ children }: { children: ReactNode }) {
-  const [mode, setModeState] = useState<ModeId>('dashboard')
+  const [mode, setModeState] = useState<ModeId>('outreach')
 
   const setMode = useCallback((newMode: ModeId) => {
     setModeState(newMode)
