@@ -79,6 +79,35 @@ export interface OutreachDraftView {
   step: number
   /** True for the generic fallback (no facts) vs. a personalized draft. */
   is_template: boolean
+  /** The latest send attempt for this draft, if any. */
+  send: OutreachSendView | null
+}
+
+export type SendStatus = 'queued' | 'sending' | 'sent' | 'failed' | 'canceled'
+
+export interface OutreachSendView {
+  id: string
+  status: SendStatus
+  scheduled_at: string | null
+  sent_at: string | null
+  error: string | null
+}
+
+/** Per-company sender identity + drip controls. */
+export interface SendSettings {
+  sender_name: string | null
+  sender_email: string | null
+  reply_to: string | null
+  daily_send_limit: number
+  send_window_start: string
+  send_window_end: string
+  timezone: string
+  min_gap_minutes: number
+  signature: string | null
+  physical_address: string | null
+  unsubscribe_line: string | null
+  provider: 'dry_run' | 'gmail' | 'resend'
+  active: boolean
 }
 
 /** Outcome of the whole conversation (recorded manually after send). A
@@ -131,6 +160,8 @@ export interface OutreachSnapshot {
     bounced: number
     /** Prospects marked unsubscribed. */
     unsubscribed: number
+    /** Sends currently waiting in the drip queue. */
+    queued: number
   }
   /** replied / sent, as a fraction (0 when nothing sent). */
   reply_rate: number
