@@ -13,6 +13,8 @@
  * access token back to the DB.
  */
 
+import type { SupabaseClient } from '@supabase/supabase-js'
+import type { Database } from '@/lib/types/database.types'
 import { decryptNullable, encrypt } from '../crypto'
 import {
   getAccount,
@@ -21,6 +23,8 @@ import {
   type ConnectedService,
 } from '../accounts'
 import { refreshAccessToken } from './fetch'
+
+type DbClient = SupabaseClient<Database>
 
 /** Refresh when the access token has this many seconds or less to live. */
 const REFRESH_SKEW_SEC = 60
@@ -50,9 +54,10 @@ export interface LoadedGoogleCreds {
  */
 export async function loadGoogleCredentials(
   companyId: string,
-  service: ConnectedService
+  service: ConnectedService,
+  client?: DbClient
 ): Promise<LoadedGoogleCreds | null> {
-  const row = await getAccount(companyId, service)
+  const row = await getAccount(companyId, service, client)
   if (!row) return null
   if (row.status !== 'connected') return null
   if (!row.access_token) return null
@@ -63,7 +68,7 @@ export async function loadGoogleCredentials(
     accessToken = decryptNullable(row.access_token)
     refreshToken = decryptNullable(row.refresh_token)
   } catch {
-    await markError(companyId, service, 'Token decryption failed')
+    await markError(companyId, service, 'Token decryption failed', client)
     return null
   }
   if (!accessToken) return null
@@ -80,7 +85,7 @@ export async function loadGoogleCredentials(
   // Need to refresh. Without a refresh token we cannot recover — mark the
   // row so the UI can prompt reconnect.
   if (!refreshToken) {
-    await markError(companyId, service, 'Access token expired and no refresh token on file')
+    await markError(companyId, service, 'Access token expired and no refresh token on file', client)
     return null
   }
 
@@ -93,11 +98,11 @@ export async function loadGoogleCredentials(
       scope: refreshed.scope ?? row.scope,
       last_error: null,
       status: 'connected',
-    })
+    }, client)
     return { accessToken: refreshed.access_token, accountIdentifier }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    await markError(companyId, service, `Token refresh failed: ${msg}`)
+    await markError(companyId, service, `Token refresh failed: ${msg}`, client)
     return null
   }
 }

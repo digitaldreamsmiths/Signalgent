@@ -11,6 +11,8 @@
  * the orchestration here keeps fetch.ts pure.
  */
 
+import type { SupabaseClient } from '@supabase/supabase-js'
+import type { Database } from '@/lib/types/database.types'
 import { loadGmailCredentials } from './tokens'
 import {
   getThread,
@@ -19,6 +21,7 @@ import {
   type GmailHeader,
 } from './fetch'
 import { invalidateCommunicationsSnapshot } from './snapshot'
+import { base64UrlEncode, buildMessageMime } from './mime'
 
 export interface SendReplyArgs {
   companyId: string
@@ -57,14 +60,6 @@ function reSubject(subject: string | null): string {
   if (!trimmed) return 'Re:'
   if (/^re:/i.test(trimmed)) return trimmed
   return `Re: ${trimmed}`
-}
-
-function base64UrlEncode(input: string): string {
-  return Buffer.from(input, 'utf-8')
-    .toString('base64')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/, '')
 }
 
 function buildReplyMime(args: {
@@ -149,6 +144,51 @@ export async function sendReply(args: SendReplyArgs): Promise<SendReplyResult> {
   // read reflects the reply.
   await invalidateCommunicationsSnapshot(args.companyId)
 
+  return { messageId: result.id, threadId: result.threadId }
+}
+
+// ── New-message send (outreach) ───────────────────────────────────────────────
+
+export interface SendOutreachArgs {
+  to: string
+  subject: string
+  body: string
+  /** Display name for the From header (address is always the connected mailbox). */
+  fromName?: string | null
+  replyTo?: string | null
+}
+
+export interface SendOutreachResult {
+  messageId: string
+  threadId: string
+}
+
+/**
+ * Send a NEW outreach email (not a reply) from the company's connected Gmail
+ * mailbox. Gmail only sends as the authenticated account, so the From address is
+ * always the connected mailbox; `fromName` becomes the display name. Accepts an
+ * optional Supabase client so the cron/service-role path can load credentials
+ * without an SSR session.
+ */
+export async function sendOutreachEmail(
+  companyId: string,
+  args: SendOutreachArgs,
+  client?: SupabaseClient<Database>,
+): Promise<SendOutreachResult> {
+  const creds = await loadGmailCredentials(companyId, client)
+  if (!creds) throw new Error('Gmail is not connected for this company.')
+  if (!args.to.trim()) throw new Error('Recipient email is empty.')
+  if (!args.body.trim()) throw new Error('Email body is empty.')
+
+  const from = args.fromName?.trim() ? `${args.fromName.trim()} <${creds.emailAddress}>` : creds.emailAddress
+  const mime = buildMessageMime({
+    from,
+    to: args.to,
+    subject: args.subject,
+    replyTo: args.replyTo?.trim() || null,
+    body: args.body,
+  })
+  const result = await sendMessage({ accessToken: creds.accessToken, rawBase64Url: base64UrlEncode(mime) })
   return { messageId: result.id, threadId: result.threadId }
 }
 

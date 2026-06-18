@@ -7,6 +7,8 @@
  * loader with its own `ConnectedService` constant.
  */
 
+import type { SupabaseClient } from '@supabase/supabase-js'
+import type { Database } from '@/lib/types/database.types'
 import { encryptNullable } from '../crypto'
 import {
   getAccount,
@@ -63,9 +65,10 @@ export async function saveGmailCredentials(
  * `accountIdentifier` back to `emailAddress` for Gmail callers.
  */
 export async function loadGmailCredentials(
-  companyId: string
+  companyId: string,
+  client?: SupabaseClient<Database>
 ): Promise<{ accessToken: string; emailAddress: string } | null> {
-  const creds = await loadGoogleCredentials(companyId, SERVICE)
+  const creds = await loadGoogleCredentials(companyId, SERVICE, client)
   if (!creds) return null
   return { accessToken: creds.accessToken, emailAddress: creds.accountIdentifier }
 }

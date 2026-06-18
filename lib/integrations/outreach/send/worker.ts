@@ -156,7 +156,7 @@ export async function runQueue(supabase: DB, companyId: string): Promise<{ sent:
 
   let provider
   try {
-    provider = getProvider(settings.provider as ProviderName)
+    provider = getProvider(settings.provider as ProviderName, { companyId, supabase })
   } catch {
     return { sent: 0, failed: 0 } // misconfigured provider — nothing to do this tick
   }

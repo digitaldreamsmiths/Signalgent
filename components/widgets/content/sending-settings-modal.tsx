@@ -76,9 +76,12 @@ export function SendingSettingsModal({ companyId, onClose, onSaved }: { companyI
               <label style={labelStyle}>Provider</label>
               <select value={form.provider} onChange={(e) => set('provider', e.target.value as SendSettings['provider'])} style={inputStyle}>
                 <option value="dry_run">Dry run (test — records sent, no real email)</option>
-                <option value="gmail" disabled>Gmail (coming soon)</option>
+                <option value="gmail">Gmail (sends from your connected mailbox)</option>
                 <option value="resend" disabled>Resend (coming soon)</option>
               </select>
+              {form.provider === 'gmail' && (
+                <div style={{ fontSize: 10, color: MUTED, marginTop: 4 }}>Connect Gmail in Settings → Connections (grants send access). Sends from the connected mailbox.</div>
+              )}
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
