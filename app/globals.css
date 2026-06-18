@@ -89,6 +89,18 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.90 0 0);
   --sidebar-ring: oklch(0.708 0 0);
+
+  /* App surface tokens (used by inline-styled outreach UI). Light values. */
+  --app-bg: #f6f6f4;
+  --app-card: #ffffff;
+  --app-card-2: #f0efec;
+  --app-input: #ffffff;
+  --app-border: #e4e3df;
+  --app-text: #1b1b1a;
+  --app-text-2: #3d3d3a;
+  --app-muted: #6c6c68;
+  --app-faint: #9a9a96;
+  --app-hover: rgba(0, 0, 0, 0.04);
 }
 
 .dark {
@@ -126,6 +138,18 @@
   --sidebar-accent-foreground: oklch(0.93 0 0);
   --sidebar-border: oklch(1 0 0 / 8%);
   --sidebar-ring: oklch(0.62 0.24 268 / 0.6);
+
+  /* App surface tokens. Dark values = the exact current hex (look unchanged). */
+  --app-bg: #0e0e0e;
+  --app-card: #1a1a1a;
+  --app-card-2: #161616;
+  --app-input: #111111;
+  --app-border: #272727;
+  --app-text: #eeeeee;
+  --app-text-2: #cccccc;
+  --app-muted: #8a8a8a;
+  --app-faint: #555555;
+  --app-hover: rgba(255, 255, 255, 0.05);
 }
 
 @layer base {

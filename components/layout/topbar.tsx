@@ -1,7 +1,9 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { LogOut, User, Settings } from 'lucide-react'
+import { useTheme } from 'next-themes'
+import { LogOut, User, Settings, Sun, Moon } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { CompanySwitcher } from '@/components/layout/company-switcher'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
@@ -16,6 +18,10 @@ import {
 export function Topbar() {
   const router = useRouter()
   const supabase = createClient()
+  const { theme, setTheme } = useTheme()
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => setMounted(true), [])
+  const isDark = theme !== 'light'
 
   async function handleSignOut() {
     await supabase.auth.signOut()
@@ -26,11 +32,11 @@ export function Topbar() {
   return (
     <header
       className="flex shrink-0 items-center justify-between px-5"
-      style={{ height: 44, background: 'hsl(var(--background))', position: 'relative' }}
+      style={{ height: 44, background: 'var(--app-bg)', position: 'relative' }}
     >
       {/* Left: Wordmark + Company Switcher */}
       <div className="flex items-center gap-4">
-        <span style={{ fontSize: 13, fontWeight: 500, letterSpacing: '-0.02em', color: '#999' }}>
+        <span style={{ fontSize: 13, fontWeight: 500, letterSpacing: '-0.02em', color: 'var(--app-muted)' }}>
           Signalgent
         </span>
         <CompanySwitcher />
@@ -40,7 +46,7 @@ export function Topbar() {
       <DropdownMenu>
         <DropdownMenuTrigger className="flex items-center justify-center rounded-full p-0.5 hover:opacity-80 transition-opacity">
           <Avatar className="h-7 w-7">
-            <AvatarFallback className="text-[10px]" style={{ background: '#222', color: '#888' }}>
+            <AvatarFallback className="text-[10px]" style={{ background: 'var(--app-card-2)', color: 'var(--app-muted)' }}>
               U
             </AvatarFallback>
           </Avatar>
@@ -53,6 +59,10 @@ export function Topbar() {
           <DropdownMenuItem className="gap-2" onClick={() => router.push('/settings/connections')}>
             <Settings className="h-4 w-4" />
             Settings
+          </DropdownMenuItem>
+          <DropdownMenuItem className="gap-2" onClick={() => setTheme(isDark ? 'light' : 'dark')}>
+            {mounted && !isDark ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
+            {mounted ? (isDark ? 'Light mode' : 'Dark mode') : 'Theme'}
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem onClick={handleSignOut} className="gap-2">

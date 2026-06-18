@@ -27,7 +27,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning className={`${plusJakarta.variable} ${jetbrainsMono.variable} h-full`}>
-      <body className="min-h-full font-sans antialiased" style={{ background: '#0e0e0e', color: '#ccc' }}>
+      <body className="min-h-full font-sans antialiased" style={{ background: 'var(--app-bg)', color: 'var(--app-text-2)' }}>
         <ThemeProvider
           attribute="class"
           defaultTheme="dark"

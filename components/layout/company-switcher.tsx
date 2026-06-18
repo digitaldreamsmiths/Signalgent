@@ -66,7 +66,7 @@ export function CompanySwitcher() {
   )
 
   if (isLoading) {
-    return <div style={{ width: 100, height: 28, borderRadius: 20, background: '#1a1a1a' }} />
+    return <div style={{ width: 100, height: 28, borderRadius: 20, background: 'var(--app-card)' }} />
   }
 
   const hasCompanies = companies.length > 0
@@ -82,20 +82,20 @@ export function CompanySwitcher() {
           gap: 8,
           background: 'transparent',
           border: hasCompanies
-            ? `1px solid ${open ? 'rgba(255,255,255,0.30)' : 'rgba(255,255,255,0.10)'}`
-            : '1px dashed rgba(255,255,255,0.15)',
+            ? `1px solid ${open ? 'var(--app-faint)' : 'var(--app-border)'}`
+            : '1px dashed var(--app-border)',
           borderRadius: 20,
           padding: '4px 10px 4px 6px',
           cursor: 'pointer',
           fontSize: 12,
-          color: 'rgba(255,255,255,0.7)',
+          color: 'var(--app-text-2)',
           transition: 'border-color 150ms',
         }}
         onMouseEnter={(e) => {
-          if (!open) e.currentTarget.style.borderColor = 'rgba(255,255,255,0.20)'
+          if (!open) e.currentTarget.style.borderColor = 'var(--app-faint)'
         }}
         onMouseLeave={(e) => {
-          if (!open) e.currentTarget.style.borderColor = hasCompanies ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.15)'
+          if (!open) e.currentTarget.style.borderColor = 'var(--app-border)'
         }}
       >
         {activeCompany ? (
@@ -107,7 +107,7 @@ export function CompanySwitcher() {
             </svg>
           </>
         ) : (
-          <span style={{ color: '#666' }}>Add company</span>
+          <span style={{ color: 'var(--app-muted)' }}>Add company</span>
         )}
       </button>
 
@@ -119,8 +119,8 @@ export function CompanySwitcher() {
             top: 'calc(100% + 8px)',
             left: 0,
             minWidth: 240,
-            background: '#1a1a1a',
-            border: '1px solid #2a2a2a',
+            background: 'var(--app-card)',
+            border: '1px solid var(--app-border)',
             borderRadius: 10,
             padding: 6,
             zIndex: 50,
@@ -141,21 +141,21 @@ export function CompanySwitcher() {
                       gap: 10,
                       width: '100%',
                       padding: '8px 10px',
-                      background: isActive ? '#252525' : 'transparent',
+                      background: isActive ? 'var(--app-hover)' : 'transparent',
                       border: 'none',
                       borderRadius: 7,
                       cursor: 'pointer',
                       textAlign: 'left',
                       transition: 'background 100ms',
                     }}
-                    onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.background = '#222' }}
+                    onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.background = 'var(--app-hover)' }}
                     onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.background = 'transparent' }}
                   >
                     <CompanyAvatar name={company.name} size={32} />
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13, color: '#ffffff' }}>{company.name}</div>
+                      <div style={{ fontSize: 13, color: 'var(--app-text)' }}>{company.name}</div>
                       {company.industry && (
-                        <div style={{ fontSize: 11, color: '#666666', marginTop: 1 }}>{company.industry}</div>
+                        <div style={{ fontSize: 11, color: 'var(--app-muted)', marginTop: 1 }}>{company.industry}</div>
                       )}
                     </div>
                     {isActive && (
@@ -170,7 +170,7 @@ export function CompanySwitcher() {
           )}
 
           {/* Divider */}
-          {companies.length > 0 && <div style={{ height: 1, background: '#222', margin: '2px 0' }} />}
+          {companies.length > 0 && <div style={{ height: 1, background: 'var(--app-border)', margin: '2px 0' }} />}
 
           {/* Add company */}
           <button
@@ -188,21 +188,21 @@ export function CompanySwitcher() {
               textAlign: 'left',
               transition: 'background 100ms',
             }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = '#222' }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--app-hover)' }}
             onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
           >
-            <svg width="14" height="14" viewBox="0 0 14 14" stroke="#888" strokeWidth="1.5" fill="none">
+            <svg width="14" height="14" viewBox="0 0 14 14" stroke="var(--app-muted)" strokeWidth="1.5" fill="none">
               <line x1="7" y1="3" x2="7" y2="11" />
               <line x1="3" y1="7" x2="11" y2="7" />
             </svg>
-            <span style={{ fontSize: 12, color: '#888' }}>Add company</span>
+            <span style={{ fontSize: 12, color: 'var(--app-muted)' }}>Add company</span>
           </button>
 
           {/* Divider */}
-          <div style={{ height: 1, background: '#222', margin: '2px 0' }} />
+          <div style={{ height: 1, background: 'var(--app-border)', margin: '2px 0' }} />
 
           {/* Manage */}
-          <div style={{ padding: '6px 10px', fontSize: 11, color: '#555' }}>
+          <div style={{ padding: '6px 10px', fontSize: 11, color: 'var(--app-faint)' }}>
             Manage companies
           </div>
         </div>

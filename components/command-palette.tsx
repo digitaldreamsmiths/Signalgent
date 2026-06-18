@@ -100,27 +100,27 @@ export function CommandPalette({
       <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
       <div
         className="relative w-full max-w-lg overflow-hidden"
-        style={{ background: '#1a1a1a', border: '1px solid #333', borderRadius: 12 }}
+        style={{ background: 'var(--app-card)', border: '1px solid var(--app-border)', borderRadius: 12 }}
         onKeyDown={handleKeyDown}
       >
-        <div className="flex items-center gap-3 px-4 py-3" style={{ borderBottom: '1px solid #222' }}>
-          <Search className="h-4 w-4 shrink-0" style={{ color: '#555' }} />
+        <div className="flex items-center gap-3 px-4 py-3" style={{ borderBottom: '1px solid var(--app-border)' }}>
+          <Search className="h-4 w-4 shrink-0" style={{ color: 'var(--app-muted)' }} />
           <input
             ref={inputRef}
             type="text"
             placeholder="Search commands..."
             className="flex-1 bg-transparent text-sm outline-none"
-            style={{ color: '#ccc' }}
+            style={{ color: 'var(--app-text-2)' }}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
-          <kbd style={{ fontSize: 10, color: '#444', background: '#222', borderRadius: 4, padding: '2px 6px', border: '1px solid #333' }}>ESC</kbd>
+          <kbd style={{ fontSize: 10, color: 'var(--app-faint)', background: 'var(--app-card-2)', borderRadius: 4, padding: '2px 6px', border: '1px solid var(--app-border)' }}>ESC</kbd>
         </div>
 
         <div className="max-h-[320px] overflow-y-auto p-2">
           {Object.entries(groups).map(([group, groupItems]) => (
             <div key={group} className="mb-2 last:mb-0">
-              <div style={{ fontSize: 10, fontWeight: 500, color: '#444', padding: '4px 8px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              <div style={{ fontSize: 10, fontWeight: 500, color: 'var(--app-faint)', padding: '4px 8px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                 {group}
               </div>
               {groupItems.map((item) => {
@@ -135,8 +135,8 @@ export function CommandPalette({
                     style={{
                       padding: '8px',
                       borderRadius: 8,
-                      background: idx === selectedIndex ? 'rgba(255,255,255,0.05)' : 'transparent',
-                      color: idx === selectedIndex ? '#ddd' : '#777',
+                      background: idx === selectedIndex ? 'var(--app-hover)' : 'transparent',
+                      color: idx === selectedIndex ? 'var(--app-text)' : 'var(--app-muted)',
                       transition: 'background 100ms',
                       border: 'none',
                       cursor: 'pointer',
@@ -147,17 +147,17 @@ export function CommandPalette({
                         width: 8,
                         height: 8,
                         borderRadius: '50%',
-                        background: item.accent || '#555',
+                        background: item.accent || 'var(--app-muted)',
                         flexShrink: 0,
                       }}
                     />
                     <div className="flex-1 min-w-0">
                       <div style={{ fontWeight: 500 }}>{item.label}</div>
                       {item.description && (
-                        <div style={{ fontSize: 11, color: '#555' }}>{item.description}</div>
+                        <div style={{ fontSize: 11, color: 'var(--app-muted)' }}>{item.description}</div>
                       )}
                     </div>
-                    {idx === selectedIndex && <ArrowRight className="h-3 w-3 shrink-0" style={{ color: '#555' }} />}
+                    {idx === selectedIndex && <ArrowRight className="h-3 w-3 shrink-0" style={{ color: 'var(--app-muted)' }} />}
                   </button>
                 )
               })}
@@ -165,7 +165,7 @@ export function CommandPalette({
           ))}
 
           {filtered.length === 0 && (
-            <div className="py-8 text-center text-sm" style={{ color: '#444' }}>
+            <div className="py-8 text-center text-sm" style={{ color: 'var(--app-faint)' }}>
               No results for &ldquo;{query}&rdquo;
             </div>
           )}
