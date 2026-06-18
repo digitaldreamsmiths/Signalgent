@@ -227,6 +227,17 @@ export async function runQueue(supabase: DB, companyId: string): Promise<{ sent:
       continue
     }
     await supabase.from('outreach_sends').update({ status: 'sending' }).eq('id', s.id)
+    // Thread follow-ups under the prospect's most recent sent email.
+    const { data: prior } = await supabase
+      .from('outreach_sends')
+      .select('thread_id, message_id_header')
+      .eq('company_id', companyId)
+      .eq('prospect_id', s.prospect_id)
+      .eq('status', 'sent')
+      .not('thread_id', 'is', null)
+      .order('sent_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
     let res
     try {
       res = await provider.send({
@@ -236,12 +247,15 @@ export async function runQueue(supabase: DB, companyId: string): Promise<{ sent:
         replyTo: settings.reply_to,
         subject: s.subject,
         body: s.body,
+        threadId: prior?.thread_id ?? null,
+        inReplyTo: prior?.message_id_header ?? null,
+        references: prior?.message_id_header ?? null,
       })
     } catch (e) {
       res = { ok: false, error: e instanceof Error ? e.message : 'send failed' }
     }
     if (res.ok) {
-      await supabase.from('outreach_sends').update({ status: 'sent', sent_at: new Date().toISOString(), provider_message_id: res.providerMessageId ?? null }).eq('id', s.id)
+      await supabase.from('outreach_sends').update({ status: 'sent', sent_at: new Date().toISOString(), provider_message_id: res.providerMessageId ?? null, thread_id: res.threadId ?? null, message_id_header: res.messageIdHeader ?? null }).eq('id', s.id)
       await supabase.from('outreach_drafts').update({ status: 'exported' }).eq('id', s.draft_id)
       sent++
     } else {

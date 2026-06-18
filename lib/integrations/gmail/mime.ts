@@ -11,13 +11,16 @@ export function base64UrlEncode(input: string): string {
     .replace(/=+$/, '')
 }
 
-/** RFC822 MIME for a NEW (non-reply) plain-text message. */
+/** RFC822 MIME for a plain-text message. Pass inReplyTo/references to thread a
+ * follow-up into an existing conversation. */
 export function buildMessageMime(args: {
   from: string
   to: string
   subject: string
   replyTo: string | null
   body: string
+  inReplyTo?: string | null
+  references?: string | null
 }): string {
   const lines = [
     `From: ${args.from}`,
@@ -28,6 +31,8 @@ export function buildMessageMime(args: {
     'Content-Transfer-Encoding: 7bit',
   ]
   if (args.replyTo) lines.push(`Reply-To: ${args.replyTo}`)
+  if (args.inReplyTo) lines.push(`In-Reply-To: ${args.inReplyTo}`)
+  if (args.references) lines.push(`References: ${args.references}`)
   lines.push('') // blank line separating headers from body
   lines.push(args.body)
   return lines.join('\r\n')

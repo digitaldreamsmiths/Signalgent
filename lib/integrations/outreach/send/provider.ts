@@ -31,11 +31,18 @@ export interface SendMessage {
   replyTo?: string | null
   subject: string
   body: string
+  /** Threading for follow-ups (reply into an existing conversation). */
+  threadId?: string | null
+  inReplyTo?: string | null
+  references?: string | null
 }
 
 export interface SendResult {
   ok: boolean
   providerMessageId?: string
+  /** Provider thread id + RFC822 Message-ID, persisted so later touches thread. */
+  threadId?: string | null
+  messageIdHeader?: string | null
   error?: string
 }
 
@@ -62,10 +69,13 @@ function gmailProvider(ctx: SendContext): EmailProvider {
       try {
         const r = await sendOutreachEmail(
           ctx.companyId,
-          { to: msg.to, subject: msg.subject, body: msg.body, fromName: msg.fromName, replyTo: msg.replyTo },
+          {
+            to: msg.to, subject: msg.subject, body: msg.body, fromName: msg.fromName, replyTo: msg.replyTo,
+            threadId: msg.threadId, inReplyTo: msg.inReplyTo, references: msg.references,
+          },
           ctx.supabase,
         )
-        return { ok: true, providerMessageId: r.messageId }
+        return { ok: true, providerMessageId: r.messageId, threadId: r.threadId, messageIdHeader: r.messageIdHeader }
       } catch (e) {
         return { ok: false, error: e instanceof Error ? e.message : 'Gmail send failed' }
       }

@@ -15,6 +15,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/lib/types/database.types'
 import { loadGmailCredentials } from './tokens'
 import {
+  getMessage,
   getThread,
   modifyThreadLabels,
   sendMessage,
@@ -156,11 +157,17 @@ export interface SendOutreachArgs {
   /** Display name for the From header (address is always the connected mailbox). */
   fromName?: string | null
   replyTo?: string | null
+  /** Threading for follow-ups: reply into an existing Gmail thread. */
+  threadId?: string | null
+  inReplyTo?: string | null
+  references?: string | null
 }
 
 export interface SendOutreachResult {
   messageId: string
   threadId: string
+  /** The sent message's RFC822 Message-ID header (for threading later touches). */
+  messageIdHeader: string | null
 }
 
 /**
@@ -187,9 +194,25 @@ export async function sendOutreachEmail(
     subject: args.subject,
     replyTo: args.replyTo?.trim() || null,
     body: args.body,
+    inReplyTo: args.inReplyTo ?? null,
+    references: args.references ?? null,
   })
-  const result = await sendMessage({ accessToken: creds.accessToken, rawBase64Url: base64UrlEncode(mime) })
-  return { messageId: result.id, threadId: result.threadId }
+  const result = await sendMessage({
+    accessToken: creds.accessToken,
+    rawBase64Url: base64UrlEncode(mime),
+    threadId: args.threadId ?? undefined,
+  })
+
+  // Read back the RFC822 Message-ID so later touches can thread under this one.
+  let messageIdHeader: string | null = null
+  try {
+    const msg = await getMessage({ accessToken: creds.accessToken, id: result.id, format: 'metadata', metadataHeaders: ['Message-ID'] })
+    messageIdHeader = headerValue(msg.payload?.headers, 'Message-ID')
+  } catch {
+    // Non-fatal: threading just won't chain off this message.
+  }
+
+  return { messageId: result.id, threadId: result.threadId, messageIdHeader }
 }
 
 export async function archiveThread(args: {

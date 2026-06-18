@@ -426,6 +426,8 @@ export interface Database {
           scheduled_at: string | null
           sent_at: string | null
           provider_message_id: string | null
+          thread_id: string | null
+          message_id_header: string | null
           error: string | null
           created_at: string
           updated_at: string
@@ -443,6 +445,8 @@ export interface Database {
           scheduled_at?: string | null
           sent_at?: string | null
           provider_message_id?: string | null
+          thread_id?: string | null
+          message_id_header?: string | null
           error?: string | null
           created_at?: string
           updated_at?: string
@@ -452,6 +456,8 @@ export interface Database {
           scheduled_at?: string | null
           sent_at?: string | null
           provider_message_id?: string | null
+          thread_id?: string | null
+          message_id_header?: string | null
           error?: string | null
           updated_at?: string
         }
