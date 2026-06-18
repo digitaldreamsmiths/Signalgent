@@ -16,6 +16,7 @@ import {
   setDisposition,
 } from '@/lib/integrations/outreach/actions'
 import type { Disposition, OutreachDraftView, OutreachSnapshot, OutreachProspectView } from '@/lib/integrations/outreach/types'
+import { hygieneWarnings } from '@/lib/integrations/outreach/hygiene'
 
 const ACCENT = '#D85A30'
 const BORDER = '#272727'
@@ -169,6 +170,8 @@ function TouchCard({ draft, companyId, onChanged }: { draft: OutreachDraftView; 
   const statusColor =
     draft.status === 'approved' ? '#1D9E75' : draft.status === 'rejected' ? '#b04545' : draft.status === 'edited' ? '#BA7517' : draft.status === 'exported' ? '#378ADD' : ACCENT
 
+  const warnings = hygieneWarnings(draft.subject, draft.body)
+
   return (
     <div style={{ border: `1px solid ${BORDER}`, borderRadius: 8, padding: 12, background: CARD, display: 'flex', flexDirection: 'column', gap: 8 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -176,6 +179,7 @@ function TouchCard({ draft, companyId, onChanged }: { draft: OutreachDraftView; 
         <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
           {draft.is_template ? <Pill label="template" color={MUTED} /> : <Pill label="personalized" color="#1D9E75" />}
           {!draft.clean && <Pill label="drift" color="#b04545" />}
+          {warnings.length > 0 && <Pill label="hygiene" color="#e0a060" />}
           {draft.synthesis_confidence != null && <span style={{ fontSize: 10, color: MUTED }}>fit {draft.synthesis_confidence.toFixed(2)}</span>}
           <Pill label={draft.status} color={statusColor} />
         </div>
@@ -183,6 +187,10 @@ function TouchCard({ draft, companyId, onChanged }: { draft: OutreachDraftView; 
 
       {!draft.clean && draft.drifted_facts.length > 0 && (
         <div style={{ fontSize: 11, color: '#d98a8a' }}>Used facts not in the approved set: {draft.drifted_facts.join('; ')}</div>
+      )}
+
+      {warnings.length > 0 && (
+        <div style={{ fontSize: 11, color: '#e0a060' }}>Deliverability: {warnings.join(' · ')}</div>
       )}
 
       {editing ? (
@@ -389,7 +397,11 @@ export function OutreachWorkspace() {
     const r = await ingestProspects(companyId, raw)
     if (!r.ok) return setNotice(r.error)
     setRaw('')
-    setNotice(`Added ${r.data.added}. ${r.data.duplicates} duplicate(s), ${r.data.invalid} invalid.`)
+    setNotice(
+      `Added ${r.data.added}. ${r.data.duplicates} duplicate(s), ${r.data.invalid} invalid` +
+        (r.data.undeliverable > 0 ? `, ${r.data.undeliverable} undeliverable (no mail server)` : '') +
+        '.',
+    )
     refresh()
   }, [companyId, raw, refresh])
 
