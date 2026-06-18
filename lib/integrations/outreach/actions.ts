@@ -26,6 +26,7 @@ import type {
   Disposition,
   OutreachDraftView,
   OutreachProspectView,
+  OutreachSendView,
   OutreachSnapshot,
   SynthesisResult,
 } from './types'
@@ -316,13 +317,24 @@ export async function getOutreachSnapshot(companyId: string): Promise<OutreachSn
   }
 
   const supabase = await createClient()
-  const [{ data: prospects }, { data: drafts }, { data: usageRows }] = await Promise.all([
+  const [{ data: prospects }, { data: drafts }, { data: usageRows }, { data: sends }] = await Promise.all([
     supabase.from('outreach_prospects').select('*').eq('company_id', companyId).order('created_at', { ascending: false }),
     supabase.from('outreach_drafts').select('*').eq('company_id', companyId),
     supabase.from('api_usage').select('cost_usd').eq('company_id', companyId).like('feature', 'outreach:%'),
+    supabase.from('outreach_sends').select('id, draft_id, status, scheduled_at, sent_at, error').eq('company_id', companyId).order('created_at', { ascending: false }),
   ])
 
   const cost_usd_total = (usageRows ?? []).reduce((s, r) => s + (r.cost_usd ?? 0), 0)
+
+  // Latest send per draft (rows arrive newest-first, so first seen wins).
+  const sendByDraft = new Map<string, OutreachSendView>()
+  let queued = 0
+  for (const s of sends ?? []) {
+    if (s.status === 'queued') queued += 1
+    if (!sendByDraft.has(s.draft_id)) {
+      sendByDraft.set(s.draft_id, { id: s.id, status: s.status, scheduled_at: s.scheduled_at, sent_at: s.sent_at, error: s.error })
+    }
+  }
 
   const draftsByProspect = new Map<string, OutreachDraftView[]>()
   for (const d of drafts ?? []) {
@@ -340,6 +352,7 @@ export async function getOutreachSnapshot(companyId: string): Promise<OutreachSn
       status: d.status,
       step: d.step,
       is_template: facts.length === 0,
+      send: sendByDraft.get(d.id) ?? null,
     }
     const arr = draftsByProspect.get(d.prospect_id)
     if (arr) arr.push(view)
@@ -391,6 +404,7 @@ export async function getOutreachSnapshot(companyId: string): Promise<OutreachSn
     replied,
     bounced: views.filter((v) => v.disposition === 'bounced').length,
     unsubscribed: views.filter((v) => v.disposition === 'unsubscribed').length,
+    queued,
   }
   const reply_rate = sent > 0 ? replied / sent : 0
 

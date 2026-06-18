@@ -15,8 +15,10 @@ import {
   runNewProspects,
   setDisposition,
 } from '@/lib/integrations/outreach/actions'
+import { queueDraftSend, cancelSend, processSendQueue } from '@/lib/integrations/outreach/sending'
 import type { Disposition, OutreachDraftView, OutreachSnapshot, OutreachProspectView } from '@/lib/integrations/outreach/types'
 import { hygieneWarnings } from '@/lib/integrations/outreach/hygiene'
+import { SendingSettingsModal } from './sending-settings-modal'
 
 const ACCENT = '#D85A30'
 const BORDER = 'var(--app-border)'
@@ -184,6 +186,31 @@ function touchLabel(step: number): string {
   return step === 1 ? 'Initial email' : `Follow-up ${step - 1}`
 }
 
+function fmtWhen(iso: string | null): string {
+  if (!iso) return ''
+  try {
+    return new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+  } catch {
+    return ''
+  }
+}
+
+function sendLabel(send: NonNullable<OutreachDraftView['send']>): string {
+  switch (send.status) {
+    case 'queued': return `Queued · ${fmtWhen(send.scheduled_at)}`
+    case 'sending': return 'Sending…'
+    case 'sent': return `Sent · ${fmtWhen(send.sent_at)}`
+    case 'failed': return `Send failed: ${send.error ?? 'unknown error'}`
+    default: return ''
+  }
+}
+
+function sendColor(status: string): string {
+  if (status === 'sent') return '#378ADD'
+  if (status === 'failed') return '#b04545'
+  return ACCENT
+}
+
 /** One touch (draft) in a prospect's sequence, with its own review actions. */
 function TouchCard({ draft, companyId, onChanged }: { draft: OutreachDraftView; companyId: string; onChanged: () => void }) {
   const [editing, setEditing] = useState(false)
@@ -263,6 +290,15 @@ function TouchCard({ draft, companyId, onChanged }: { draft: OutreachDraftView; 
 
       {error && <div style={{ fontSize: 11, color: '#d98a8a' }}>{error}</div>}
 
+      {draft.send && draft.send.status !== 'canceled' && (
+        <div style={{ fontSize: 11, color: sendColor(draft.send.status), display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <span>{sendLabel(draft.send)}</span>
+          {draft.send.status === 'queued' && (
+            <button disabled={busy} onClick={() => act(() => cancelSend(companyId, draft.send!.id))} style={btnGhost()}>Cancel send</button>
+          )}
+        </div>
+      )}
+
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         {editing ? (
           <>
@@ -274,8 +310,11 @@ function TouchCard({ draft, companyId, onChanged }: { draft: OutreachDraftView; 
             <button disabled={busy} onClick={() => act(() => approveDraft(companyId, draft.id))} style={btn('#1D9E75')}>Approve</button>
             <button disabled={busy} onClick={() => setEditing(true)} style={btnGhost()}>Edit</button>
             <button disabled={busy} onClick={() => act(() => rejectDraft(companyId, draft.id))} style={btnGhost('#b04545')}>Reject</button>
+            {draft.status === 'approved' && (!draft.send || draft.send.status === 'failed' || draft.send.status === 'canceled') && (
+              <button disabled={busy} onClick={() => act(() => queueDraftSend(companyId, draft.id))} style={btn(ACCENT)}>Queue to send</button>
+            )}
             {draft.status === 'approved' && (
-              <button disabled={busy} onClick={() => act(() => markExported(companyId, [draft.id]))} style={btn('#378ADD')}>Mark exported</button>
+              <button disabled={busy} onClick={() => act(() => markExported(companyId, [draft.id]))} style={btnGhost('#378ADD')}>Mark exported</button>
             )}
             <button
               onClick={() => {
@@ -407,6 +446,8 @@ export function OutreachWorkspace() {
   const [progress, setProgress] = useState<{ processed: number; total: number; drafted: number; skipped: number; cost: number } | null>(null)
   const [filter, setFilter] = useState<Filter>('review')
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [sendingModalOpen, setSendingModalOpen] = useState(false)
+  const [processing, setProcessing] = useState(false)
 
   const refresh = useCallback(async () => {
     if (!companyId) return
@@ -522,6 +563,17 @@ export function OutreachWorkspace() {
   const current = lists[filter]
   const selected = current.find((p) => p.id === selectedId) ?? current[0] ?? null
 
+  const handleProcessQueue = async () => {
+    if (!companyId) return
+    setProcessing(true)
+    setNotice(null)
+    const r = await processSendQueue(companyId)
+    setProcessing(false)
+    if (!r.ok) return setNotice(r.error)
+    setNotice(`Sent ${r.data.sent}${r.data.failed ? `, ${r.data.failed} failed` : ''}.`)
+    refresh()
+  }
+
   const tab = (key: Filter, label: string, count: number) => (
     <button
       key={key}
@@ -544,6 +596,10 @@ export function OutreachWorkspace() {
           style={{ flex: 1, minWidth: 220, background: 'var(--app-input)', border: `1px solid ${BORDER}`, borderRadius: 6, color: 'var(--app-text)', fontSize: 12, padding: '8px 10px' }}
         />
         <button onClick={handleIngest} disabled={!raw.trim()} style={btn(ACCENT)}>Add prospects</button>
+        <button onClick={() => setSendingModalOpen(true)} style={btnGhost()}>Sending</button>
+        <button onClick={handleProcessQueue} disabled={processing || (c?.queued ?? 0) === 0} style={btnGhost(ACCENT)}>
+          {processing ? 'Processing…' : `Process queue${c?.queued ? ` (${c.queued})` : ''}`}
+        </button>
         <button onClick={handleRun} disabled={running || (c?.new ?? 0) === 0} style={btnGhost(ACCENT)}>
           {running ? 'Running…' : `Run enrichment${c?.new ? ` (${c.new})` : ''}`}
         </button>
@@ -555,6 +611,7 @@ export function OutreachWorkspace() {
           <Metric label="To review" value={lists.review.length} accent={ACCENT} />
           <Metric label="Prospects" value={c.total} />
           <Metric label="Sent" value={c.sent} accent="#378ADD" />
+          <Metric label="Queued" value={c.queued} accent={c.queued > 0 ? ACCENT : undefined} />
           <Metric label="Replied" value={c.replied} accent="#1D9E75" />
           <Metric label="Reply rate" value={fmtPct(snapshot?.reply_rate ?? 0, c.sent)} />
           <Metric label="API cost" value={fmtUsd(snapshot?.cost_usd_total ?? 0)} />
@@ -661,6 +718,10 @@ export function OutreachWorkspace() {
             </div>
           </div>
         </>
+      )}
+
+      {sendingModalOpen && companyId && (
+        <SendingSettingsModal companyId={companyId} onClose={() => setSendingModalOpen(false)} onSaved={refresh} />
       )}
     </div>
   )

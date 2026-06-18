@@ -357,6 +357,106 @@ export interface Database {
         }
         Relationships: []
       }
+      outreach_settings: {
+        Row: {
+          company_id: string
+          sender_name: string | null
+          sender_email: string | null
+          reply_to: string | null
+          daily_send_limit: number
+          send_window_start: string
+          send_window_end: string
+          timezone: string
+          min_gap_minutes: number
+          signature: string | null
+          physical_address: string | null
+          unsubscribe_line: string | null
+          provider: 'dry_run' | 'gmail' | 'resend'
+          active: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          company_id: string
+          sender_name?: string | null
+          sender_email?: string | null
+          reply_to?: string | null
+          daily_send_limit?: number
+          send_window_start?: string
+          send_window_end?: string
+          timezone?: string
+          min_gap_minutes?: number
+          signature?: string | null
+          physical_address?: string | null
+          unsubscribe_line?: string | null
+          provider?: 'dry_run' | 'gmail' | 'resend'
+          active?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          sender_name?: string | null
+          sender_email?: string | null
+          reply_to?: string | null
+          daily_send_limit?: number
+          send_window_start?: string
+          send_window_end?: string
+          timezone?: string
+          min_gap_minutes?: number
+          signature?: string | null
+          physical_address?: string | null
+          unsubscribe_line?: string | null
+          provider?: 'dry_run' | 'gmail' | 'resend'
+          active?: boolean
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      outreach_sends: {
+        Row: {
+          id: string
+          company_id: string
+          prospect_id: string
+          draft_id: string
+          provider: string
+          recipient_email: string
+          subject: string
+          body: string
+          status: 'queued' | 'sending' | 'sent' | 'failed' | 'canceled'
+          scheduled_at: string | null
+          sent_at: string | null
+          provider_message_id: string | null
+          error: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          company_id: string
+          prospect_id: string
+          draft_id: string
+          provider: string
+          recipient_email: string
+          subject: string
+          body: string
+          status?: 'queued' | 'sending' | 'sent' | 'failed' | 'canceled'
+          scheduled_at?: string | null
+          sent_at?: string | null
+          provider_message_id?: string | null
+          error?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          status?: 'queued' | 'sending' | 'sent' | 'failed' | 'canceled'
+          scheduled_at?: string | null
+          sent_at?: string | null
+          provider_message_id?: string | null
+          error?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: Record<string, never>
     Functions: Record<string, never>
