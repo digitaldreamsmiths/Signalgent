@@ -437,6 +437,30 @@ export async function setDisposition(
   return { ok: true, data: undefined }
 }
 
+/** Permanently delete prospects (cascades to their drafts + sends). */
+export async function deleteProspects(
+  companyId: string,
+  prospectIds: string[],
+): Promise<ActionResult<{ deleted: number }>> {
+  try {
+    await requireCompanyAccess(companyId)
+  } catch (err) {
+    if (err instanceof IntegrationAuthError) return { ok: false, error: AUTH_ERROR }
+    throw err
+  }
+  if (prospectIds.length === 0) return { ok: true, data: { deleted: 0 } }
+  const supabase = await createClient()
+  const { data, error } = await supabase
+    .from('outreach_prospects')
+    .delete()
+    .eq('company_id', companyId)
+    .in('id', prospectIds)
+    .select('id')
+  if (error) return { ok: false, error: 'Could not delete the prospects.' }
+  revalidatePath('/outreach')
+  return { ok: true, data: { deleted: data?.length ?? 0 } }
+}
+
 // ── Follow-ups ────────────────────────────────────────────────────────────────
 
 /**

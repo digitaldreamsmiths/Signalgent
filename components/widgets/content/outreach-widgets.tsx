@@ -5,6 +5,7 @@ import { useCompany } from '@/contexts/company-context'
 import {
   approveDraft,
   approveDrafts,
+  deleteProspects,
   editDraft,
   generateFollowup,
   getOutreachSnapshot,
@@ -138,8 +139,8 @@ const EMPTY_MSG: Record<Filter, string> = {
   review: 'Nothing waiting for review.',
   templates: 'No template drafts.',
   needs_review: 'Nothing needs a manual match.',
-  approved: 'Nothing approved yet — approve drafts from “To review”.',
-  exported: 'Nothing exported yet.',
+  approved: 'Nothing ready to email yet — approve drafts from “To review”.',
+  exported: 'Nothing sent yet.',
   replied: 'No replies recorded yet.',
   bounced: 'No bounces or unsubscribes.',
   scheduled: 'Nothing scheduled yet.',
@@ -323,7 +324,7 @@ function TouchCard({ draft, companyId, onChanged }: { draft: OutreachDraftView; 
               <button disabled={busy} onClick={() => act(() => queueDraftSend(companyId, draft.id))} style={btn(ACCENT)}>Queue to send</button>
             )}
             {draft.status === 'approved' && (
-              <button disabled={busy} onClick={() => act(() => markExported(companyId, [draft.id]))} style={btnGhost('#378ADD')}>Mark exported</button>
+              <button disabled={busy} onClick={() => act(() => markExported(companyId, [draft.id]))} style={btnGhost('#378ADD')}>Mark as sent</button>
             )}
             <button
               onClick={() => {
@@ -343,6 +344,7 @@ function DraftDetail({ prospect, companyId, onChanged }: { prospect: OutreachPro
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [manualName, setManualName] = useState('')
+  const [confirmDelete, setConfirmDelete] = useState(false)
 
   const act = useCallback(
     async (fn: () => Promise<{ ok: boolean; error?: string }>, after?: () => void) => {
@@ -373,6 +375,13 @@ function DraftDetail({ prospect, companyId, onChanged }: { prospect: OutreachPro
         <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           {prospect.resolution_confidence != null && <span style={{ fontSize: 10, color: MUTED }}>res {prospect.resolution_confidence.toFixed(2)}</span>}
           {prospect.disposition !== 'open' && <Pill label={DISPO_META[prospect.disposition].label} color={DISPO_META[prospect.disposition].color} />}
+          <button
+            disabled={busy}
+            onClick={() => (confirmDelete ? act(() => deleteProspects(companyId, [prospect.id])) : setConfirmDelete(true))}
+            style={confirmDelete ? btn('#b04545') : btnGhost('#b04545')}
+          >
+            {confirmDelete ? 'Confirm delete' : 'Delete'}
+          </button>
         </div>
       </div>
 
@@ -461,6 +470,7 @@ export function OutreachWorkspace() {
   const [scheduleDialogOpen, setScheduleDialogOpen] = useState(false)
   const [scheduling, setScheduling] = useState(false)
   const [scheduledSends, setScheduledSends] = useState<ScheduledSendView[]>([])
+  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false)
 
   const refresh = useCallback(async () => {
     if (!companyId) return
@@ -597,13 +607,29 @@ export function OutreachWorkspace() {
     refresh()
   }
 
-  const toggleDraft = (id: string) =>
+  const toggleDraft = (id: string) => {
+    setConfirmBulkDelete(false)
     setSelectedDraftIds((prev) => {
       const next = new Set(prev)
       if (next.has(id)) next.delete(id)
       else next.add(id)
       return next
     })
+  }
+
+  const handleBulkDelete = async () => {
+    if (!companyId || selectedDraftIds.size === 0) return
+    const prospectIds = current.filter((p) => p.draft && selectedDraftIds.has(p.draft.id)).map((p) => p.id)
+    if (prospectIds.length === 0) return
+    setNotice(null)
+    const r = await deleteProspects(companyId, prospectIds)
+    if (!r.ok) return setNotice(r.error)
+    setNotice(`Deleted ${r.data.deleted} prospect(s).`)
+    setSelectedDraftIds(new Set())
+    setConfirmBulkDelete(false)
+    setSelectedId(null)
+    refresh()
+  }
 
   const handleSchedule = async (startIso: string) => {
     if (!companyId || selectedDraftIds.size === 0) return
@@ -695,8 +721,8 @@ export function OutreachWorkspace() {
               {tab('review', 'To review', lists.review.length)}
               {tab('templates', 'Templates', lists.templates.length)}
               {tab('needs_review', 'Needs review', lists.needs_review.length)}
-              {tab('approved', 'Approved', lists.approved.length)}
-              {tab('exported', 'Exported', lists.exported.length)}
+              {tab('approved', 'Ready to email', lists.approved.length)}
+              {tab('exported', 'Sent', lists.exported.length)}
               {tab('replied', 'Replied', lists.replied.length)}
               {tab('bounced', 'Bounced', lists.bounced.length)}
               {tab('scheduled', 'Scheduled', c?.queued ?? 0)}
@@ -710,7 +736,7 @@ export function OutreachWorkspace() {
               )}
               {filter === 'approved' && current.length > 0 && (
                 <button
-                  onClick={() => setSelectedDraftIds((prev) => prev.size === current.length ? new Set() : new Set(current.map((p) => p.draft!.id)))}
+                  onClick={() => { setConfirmBulkDelete(false); setSelectedDraftIds((prev) => prev.size === current.length ? new Set() : new Set(current.map((p) => p.draft!.id))) }}
                   style={btnGhost()}
                 >
                   {selectedDraftIds.size === current.length ? 'Clear' : 'Select all'}
@@ -721,9 +747,17 @@ export function OutreachWorkspace() {
                   Schedule ({selectedDraftIds.size})
                 </button>
               )}
-              {filter === 'approved' && current.length > 0 && (
-                <button onClick={() => handleMarkExported(current.map((p) => p.draft!.id))} style={btnGhost('#378ADD')}>
-                  Mark all exported
+              {filter === 'approved' && selectedDraftIds.size > 0 && (
+                <button onClick={() => { handleMarkExported([...selectedDraftIds]); setSelectedDraftIds(new Set()) }} style={btnGhost('#378ADD')}>
+                  Mark as sent
+                </button>
+              )}
+              {filter === 'approved' && selectedDraftIds.size > 0 && (
+                <button
+                  onClick={() => (confirmBulkDelete ? handleBulkDelete() : setConfirmBulkDelete(true))}
+                  style={confirmBulkDelete ? btn('#b04545') : btnGhost('#b04545')}
+                >
+                  {confirmBulkDelete ? 'Confirm delete' : `Delete (${selectedDraftIds.size})`}
                 </button>
               )}
               {filter !== 'scheduled' && current.length > 0 && (
