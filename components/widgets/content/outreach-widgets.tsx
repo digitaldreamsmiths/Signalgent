@@ -141,6 +141,43 @@ const EMPTY_MSG: Record<Filter, string> = {
   all: 'No drafts yet.',
 }
 
+// ── List ──────────────────────────────────────────────────────────────────────
+
+function displayName(p: OutreachProspectView): string {
+  return p.recipient_name ?? p.domain ?? p.email
+}
+const byName = (a: OutreachProspectView, b: OutreachProspectView) =>
+  displayName(a).localeCompare(displayName(b))
+
+/** Sticky section divider inside the scrolling list. */
+function SectionHeader({ label, count }: { label: string; count: number }) {
+  return (
+    <div style={{ position: 'sticky', top: 0, zIndex: 1, background: '#161616', borderBottom: `1px solid ${BORDER}`, padding: '6px 12px', fontSize: 9, fontWeight: 600, color: MUTED, textTransform: 'uppercase', letterSpacing: 0.6 }}>
+      {label} <span style={{ color: '#666' }}>{count}</span>
+    </div>
+  )
+}
+
+function ProspectRow({ p, selected, onSelect }: { p: OutreachProspectView; selected: boolean; onSelect: () => void }) {
+  return (
+    <div
+      onClick={onSelect}
+      style={{ padding: '10px 12px', borderBottom: `1px solid ${BORDER}`, cursor: 'pointer', background: selected ? CARD : 'transparent', borderLeft: `2px solid ${selected ? ACCENT : 'transparent'}` }}
+    >
+      <div style={{ fontSize: 13, fontWeight: selected ? 600 : 400, color: '#ddd' }}>{p.recipient_name ?? p.domain}</div>
+      <div style={{ fontSize: 11, color: MUTED, marginTop: 2 }}>{p.email}</div>
+      <div style={{ display: 'flex', gap: 6, marginTop: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+        {p.needs_review ? <Pill label="review" color="#e0a060" /> : p.draft ? (p.draft.is_template ? <Pill label="template" color={MUTED} /> : <Pill label="personalized" color="#1D9E75" />) : null}
+        {p.draft && !p.draft.clean && <Pill label="drift" color="#b04545" />}
+        {p.draft?.status === 'approved' && <Pill label="approved" color="#1D9E75" />}
+        {p.draft?.status === 'exported' && <Pill label="exported" color="#378ADD" />}
+        {p.drafts.length > 1 && <Pill label={`${p.drafts.length} touches`} color={MUTED} />}
+        {p.disposition !== 'open' && <Pill label={DISPO_META[p.disposition].label} color={DISPO_META[p.disposition].color} />}
+      </div>
+    </div>
+  )
+}
+
 // ── Detail pane ───────────────────────────────────────────────────────────────
 
 function touchLabel(step: number): string {
@@ -585,27 +622,28 @@ export function OutreachWorkspace() {
             {/* List */}
             <div style={{ border: `1px solid ${BORDER}`, borderRadius: 8, overflowY: 'auto', overflowX: 'hidden', minHeight: 0 }}>
               {current.length === 0 && <div style={{ fontSize: 12, color: MUTED, padding: 14 }}>{EMPTY_MSG[filter]}</div>}
-              {current.map((p) => {
-                const sel = selected?.id === p.id
-                return (
-                  <div
-                    key={p.id}
-                    onClick={() => setSelectedId(p.id)}
-                    style={{ padding: '10px 12px', borderBottom: `1px solid ${BORDER}`, cursor: 'pointer', background: sel ? CARD : 'transparent', borderLeft: `2px solid ${sel ? ACCENT : 'transparent'}` }}
-                  >
-                    <div style={{ fontSize: 13, fontWeight: sel ? 600 : 400, color: '#ddd' }}>{p.recipient_name ?? p.domain}</div>
-                    <div style={{ fontSize: 11, color: MUTED, marginTop: 2 }}>{p.email}</div>
-                    <div style={{ display: 'flex', gap: 6, marginTop: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-                      {p.needs_review ? <Pill label="review" color="#e0a060" /> : p.draft ? (p.draft.is_template ? <Pill label="template" color={MUTED} /> : <Pill label="personalized" color="#1D9E75" />) : null}
-                      {p.draft && !p.draft.clean && <Pill label="drift" color="#b04545" />}
-                      {p.draft?.status === 'approved' && <Pill label="approved" color="#1D9E75" />}
-                      {p.draft?.status === 'exported' && <Pill label="exported" color="#378ADD" />}
-                      {p.drafts.length > 1 && <Pill label={`${p.drafts.length} touches`} color={MUTED} />}
-                      {p.disposition !== 'open' && <Pill label={DISPO_META[p.disposition].label} color={DISPO_META[p.disposition].color} />}
-                    </div>
-                  </div>
-                )
-              })}
+              {current.length > 0 && (filter === 'approved' || filter === 'all') ? (
+                // Split into Personalized then Templates, each sorted by name.
+                (() => {
+                  const personalized = current.filter((p) => p.draft && !p.draft.is_template).sort(byName)
+                  const templates = current.filter((p) => p.draft && p.draft.is_template).sort(byName)
+                  const rowOf = (p: OutreachProspectView) => (
+                    <ProspectRow key={p.id} p={p} selected={selected?.id === p.id} onSelect={() => setSelectedId(p.id)} />
+                  )
+                  return (
+                    <>
+                      {personalized.length > 0 && <SectionHeader label="Personalized" count={personalized.length} />}
+                      {personalized.map(rowOf)}
+                      {templates.length > 0 && <SectionHeader label="Templates" count={templates.length} />}
+                      {templates.map(rowOf)}
+                    </>
+                  )
+                })()
+              ) : (
+                current.map((p) => (
+                  <ProspectRow key={p.id} p={p} selected={selected?.id === p.id} onSelect={() => setSelectedId(p.id)} />
+                ))
+              )}
             </div>
 
             {/* Detail */}
