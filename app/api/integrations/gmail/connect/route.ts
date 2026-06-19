@@ -18,7 +18,9 @@ import { buildAuthorizeUrl } from '@/lib/integrations/gmail/fetch'
 import { GMAIL_SERVICE } from '@/lib/integrations/gmail/tokens'
 
 export async function GET(request: NextRequest) {
-  const companyId = request.nextUrl.searchParams.get('companyId')
+  // The connections UI sends `company_id` (the app-wide convention); accept the
+  // legacy `companyId` too so old links keep working.
+  const companyId = request.nextUrl.searchParams.get('company_id') ?? request.nextUrl.searchParams.get('companyId')
 
   try {
     if (!companyId) {
