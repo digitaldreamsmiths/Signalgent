@@ -17,7 +17,7 @@ import { saveGmailCredentials, GMAIL_SERVICE } from '@/lib/integrations/gmail/to
 import { invalidateCommunicationsSnapshot } from '@/lib/integrations/gmail/snapshot'
 
 function redirectToCommunications(origin: string, params: Record<string, string>): NextResponse {
-  const url = new URL('/communications', origin)
+  const url = new URL('/settings/connections', origin)
   for (const [k, v] of Object.entries(params)) {
     url.searchParams.set(k, v)
   }
