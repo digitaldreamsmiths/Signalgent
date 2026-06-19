@@ -27,7 +27,7 @@ function redirectToMarketing(
   origin: string,
   params: Record<string, string>
 ): NextResponse {
-  const url = new URL('/marketing', origin)
+  const url = new URL('/settings/connections', origin)
   for (const [k, v] of Object.entries(params)) {
     url.searchParams.set(k, v)
   }

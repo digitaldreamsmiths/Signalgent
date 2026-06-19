@@ -46,7 +46,7 @@ function redirectToCommerce(
   params: Record<string, string>,
   cookieKeyToClear?: string
 ): NextResponse {
-  const url = new URL('/commerce', origin)
+  const url = new URL('/settings/connections', origin)
   for (const [k, v] of Object.entries(params)) {
     url.searchParams.set(k, v)
   }

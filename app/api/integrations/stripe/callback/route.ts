@@ -17,7 +17,7 @@ import { saveStripeCredentials, STRIPE_SERVICE } from '@/lib/integrations/stripe
 import { invalidateFinanceSnapshot } from '@/lib/integrations/stripe/snapshot'
 
 function redirectToFinance(origin: string, params: Record<string, string>): NextResponse {
-  const url = new URL('/finance', origin)
+  const url = new URL('/settings/connections', origin)
   for (const [k, v] of Object.entries(params)) {
     url.searchParams.set(k, v)
   }
