@@ -60,7 +60,9 @@ export function buildAuthorizeUrl(args: {
   url.searchParams.set('scope', args.scope)
   url.searchParams.set('state', args.state)
   url.searchParams.set('access_type', 'offline')
-  url.searchParams.set('prompt', 'consent')
+  // consent → always re-issue a refresh token; select_account → let the user
+  // pick WHICH Google account (so they can switch the connected mailbox).
+  url.searchParams.set('prompt', 'consent select_account')
   return url.toString()
 }
 
