@@ -320,10 +320,10 @@ function TouchCard({ draft, companyId, onChanged }: { draft: OutreachDraftView; 
             <button disabled={busy} onClick={() => act(() => approveDraft(companyId, draft.id))} style={btn('#1D9E75')}>Approve</button>
             <button disabled={busy} onClick={() => setEditing(true)} style={btnGhost()}>Edit</button>
             <button disabled={busy} onClick={() => act(() => rejectDraft(companyId, draft.id))} style={btnGhost('#b04545')}>Reject</button>
-            {draft.status === 'approved' && (!draft.send || draft.send.status === 'failed' || draft.send.status === 'canceled') && (
+            {(draft.status === 'approved' || draft.status === 'edited') && (!draft.send || draft.send.status === 'failed' || draft.send.status === 'canceled') && (
               <button disabled={busy} onClick={() => act(() => queueDraftSend(companyId, draft.id))} style={btn(ACCENT)}>Queue to send</button>
             )}
-            {draft.status === 'approved' && (
+            {(draft.status === 'approved' || draft.status === 'edited') && (
               <button disabled={busy} onClick={() => act(() => markExported(companyId, [draft.id]))} style={btnGhost('#378ADD')}>Mark as sent</button>
             )}
             <button
@@ -586,7 +586,7 @@ export function OutreachWorkspace() {
     review: withDraft.filter((p) => !p.draft!.is_template && p.draft!.status === 'pending'),
     templates: withDraft.filter((p) => p.draft!.is_template && p.draft!.status === 'pending' && !p.needs_review),
     needs_review: prospects.filter((p) => p.needs_review),
-    approved: withDraft.filter((p) => p.draft!.status === 'approved'),
+    approved: withDraft.filter((p) => p.draft!.status === 'approved' || p.draft!.status === 'edited'),
     exported: withDraft.filter((p) => p.draft!.status === 'exported'),
     replied: prospects.filter((p) => p.disposition === 'interested' || p.disposition === 'not_interested'),
     bounced: prospects.filter((p) => p.disposition === 'bounced' || p.disposition === 'unsubscribed'),
