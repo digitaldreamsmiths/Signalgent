@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useCompany } from '@/contexts/company-context'
 import {
   approveDraft,
@@ -471,6 +471,7 @@ export function OutreachWorkspace() {
   const [scheduling, setScheduling] = useState(false)
   const [scheduledSends, setScheduledSends] = useState<ScheduledSendView[]>([])
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const refresh = useCallback(async () => {
     if (!companyId) return
@@ -501,19 +502,38 @@ export function OutreachWorkspace() {
     if (filter === 'scheduled') loadScheduled()
   }, [filter, loadScheduled])
 
-  const handleIngest = useCallback(async () => {
-    if (!companyId || !raw.trim()) return
-    setNotice(null)
-    const r = await ingestProspects(companyId, raw)
-    if (!r.ok) return setNotice(r.error)
-    setRaw('')
-    setNotice(
-      `Added ${r.data.added}. ${r.data.duplicates} duplicate(s), ${r.data.invalid} invalid` +
-        (r.data.undeliverable > 0 ? `, ${r.data.undeliverable} undeliverable (no mail server)` : '') +
-        '.',
-    )
-    refresh()
-  }, [companyId, raw, refresh])
+  // Shared ingest core: takes any text blob (pasted or read from a file),
+  // hands it to the server action (which regex-extracts emails regardless of
+  // separators/columns), then reports the result.
+  const ingest = useCallback(
+    async (text: string, onSuccess?: () => void) => {
+      if (!companyId || !text.trim()) return
+      setNotice(null)
+      const r = await ingestProspects(companyId, text)
+      if (!r.ok) return setNotice(r.error)
+      onSuccess?.()
+      setNotice(
+        `Added ${r.data.added}. ${r.data.duplicates} duplicate(s), ${r.data.invalid} invalid` +
+          (r.data.undeliverable > 0 ? `, ${r.data.undeliverable} undeliverable (no mail server)` : '') +
+          '.',
+      )
+      refresh()
+    },
+    [companyId, refresh],
+  )
+
+  const handleIngest = useCallback(() => ingest(raw, () => setRaw('')), [ingest, raw])
+
+  const handleFileUpload = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0]
+      e.target.value = '' // reset so the same file can be re-selected
+      if (!file) return
+      const text = await file.text()
+      await ingest(text)
+    },
+    [ingest],
+  )
 
   // Chunked run: processes the queue 5 at a time, updating the progress panel
   // and the live list after each chunk, until the queue drains. This both shows
@@ -667,6 +687,14 @@ export function OutreachWorkspace() {
           style={{ flex: 1, minWidth: 220, background: 'var(--app-input)', border: `1px solid ${BORDER}`, borderRadius: 6, color: 'var(--app-text)', fontSize: 12, padding: '8px 10px' }}
         />
         <button onClick={handleIngest} disabled={!raw.trim()} style={btn(ACCENT)}>Add prospects</button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".csv,.txt,.tsv,text/csv,text/plain,text/tab-separated-values"
+          onChange={handleFileUpload}
+          style={{ display: 'none' }}
+        />
+        <button onClick={() => fileInputRef.current?.click()} style={btnGhost()} title="Upload a CSV or TXT file of email addresses">Upload file</button>
         <button onClick={() => setSendingModalOpen(true)} style={btnGhost()}>Sending</button>
         <button onClick={handleProcessQueue} disabled={processing || (c?.queued ?? 0) === 0} style={btnGhost(ACCENT)}>
           {processing ? 'Processing…' : `Process queue${c?.queued ? ` (${c.queued})` : ''}`}
