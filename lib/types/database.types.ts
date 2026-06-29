@@ -374,6 +374,15 @@ export interface Database {
           provider: 'dry_run' | 'gmail' | 'resend'
           active: boolean
           last_reply_scan_at: string | null
+          warmup_enabled: boolean
+          warmup_start_per_day: number
+          warmup_increment_per_day: number
+          warmup_started_at: string | null
+          bounce_pause_enabled: boolean
+          bounce_pause_threshold: number
+          bounce_pause_window_days: number
+          bounce_pause_min_sends: number
+          pause_reason: 'manual' | 'bounce_rate' | null
           created_at: string
           updated_at: string
         }
@@ -393,6 +402,15 @@ export interface Database {
           provider?: 'dry_run' | 'gmail' | 'resend'
           active?: boolean
           last_reply_scan_at?: string | null
+          warmup_enabled?: boolean
+          warmup_start_per_day?: number
+          warmup_increment_per_day?: number
+          warmup_started_at?: string | null
+          bounce_pause_enabled?: boolean
+          bounce_pause_threshold?: number
+          bounce_pause_window_days?: number
+          bounce_pause_min_sends?: number
+          pause_reason?: 'manual' | 'bounce_rate' | null
           created_at?: string
           updated_at?: string
         }
@@ -411,6 +429,15 @@ export interface Database {
           provider?: 'dry_run' | 'gmail' | 'resend'
           active?: boolean
           last_reply_scan_at?: string | null
+          warmup_enabled?: boolean
+          warmup_start_per_day?: number
+          warmup_increment_per_day?: number
+          warmup_started_at?: string | null
+          bounce_pause_enabled?: boolean
+          bounce_pause_threshold?: number
+          bounce_pause_window_days?: number
+          bounce_pause_min_sends?: number
+          pause_reason?: 'manual' | 'bounce_rate' | null
           updated_at?: string
         }
         Relationships: []
