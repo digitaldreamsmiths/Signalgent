@@ -127,6 +127,8 @@ export interface OutreachProspectView {
   id: string
   email: string
   domain: string | null
+  /** When the prospect was ingested (ISO). Drives the Contacts "Added" column. */
+  created_at: string
   status: 'new' | 'enriched' | 'skipped' | 'drafted' | 'error'
   skip_stage: string | null
   skip_reason: string | null
