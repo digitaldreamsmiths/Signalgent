@@ -16,7 +16,7 @@ import {
   runNewProspects,
   setDisposition,
 } from '@/lib/integrations/outreach/actions'
-import { queueDraftSend, cancelSend, processSendQueue, scheduleDraftSends, getScheduledSends } from '@/lib/integrations/outreach/sending'
+import { queueDraftSend, cancelSend, processSendQueue, scheduleDraftSends, getScheduledSends, scanRepliesNow } from '@/lib/integrations/outreach/sending'
 import type { Disposition, OutreachDraftView, OutreachSnapshot, OutreachProspectView, ScheduledSendView } from '@/lib/integrations/outreach/types'
 import { hygieneWarnings } from '@/lib/integrations/outreach/hygiene'
 import { SendingSettingsModal } from './sending-settings-modal'
@@ -32,6 +32,7 @@ type Filter = 'contacts' | 'review' | 'templates' | 'needs_review' | 'approved' 
 
 const DISPO_META: Record<Disposition, { label: string; color: string }> = {
   open: { label: 'open', color: 'var(--app-muted)' },
+  replied: { label: 'replied', color: '#378ADD' },
   interested: { label: 'interested', color: '#1D9E75' },
   not_interested: { label: 'not interested', color: '#BA7517' },
   bounced: { label: 'bounced', color: '#b04545' },
@@ -592,6 +593,7 @@ export function OutreachWorkspace() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [sendingModalOpen, setSendingModalOpen] = useState(false)
   const [processing, setProcessing] = useState(false)
+  const [scanning, setScanning] = useState(false)
   const [selectedDraftIds, setSelectedDraftIds] = useState<Set<string>>(new Set())
   const [scheduleDialogOpen, setScheduleDialogOpen] = useState(false)
   const [scheduling, setScheduling] = useState(false)
@@ -735,7 +737,7 @@ export function OutreachWorkspace() {
     needs_review: prospects.filter((p) => p.needs_review),
     approved: withDraft.filter((p) => p.draft!.status === 'approved' || p.draft!.status === 'edited'),
     exported: withDraft.filter((p) => p.draft!.status === 'exported'),
-    replied: prospects.filter((p) => p.disposition === 'interested' || p.disposition === 'not_interested'),
+    replied: prospects.filter((p) => p.disposition === 'replied' || p.disposition === 'interested' || p.disposition === 'not_interested'),
     bounced: prospects.filter((p) => p.disposition === 'bounced' || p.disposition === 'unsubscribed'),
     scheduled: [], // the Scheduled tab renders ScheduledView from scheduledSends, not this list
     all: withDraft,
@@ -751,6 +753,21 @@ export function OutreachWorkspace() {
     setProcessing(false)
     if (!r.ok) return setNotice(r.error)
     setNotice(`Sent ${r.data.sent}${r.data.failed ? `, ${r.data.failed} failed` : ''}.`)
+    refresh()
+  }
+
+  const handleScanReplies = async () => {
+    if (!companyId) return
+    setScanning(true)
+    setNotice(null)
+    const r = await scanRepliesNow(companyId)
+    setScanning(false)
+    if (!r.ok) return setNotice(r.error)
+    setNotice(
+      r.data.replied === 0 && r.data.bounced === 0
+        ? `No new replies or bounces${r.data.skipped ? ` (${r.data.skipped})` : ''}.`
+        : `Found ${r.data.replied} repl${r.data.replied === 1 ? 'y' : 'ies'}, ${r.data.bounced} bounce${r.data.bounced === 1 ? '' : 's'}.`,
+    )
     refresh()
   }
 
@@ -823,6 +840,9 @@ export function OutreachWorkspace() {
         />
         <button onClick={() => fileInputRef.current?.click()} style={btnGhost()} title="Upload a CSV or TXT file of email addresses">Upload file</button>
         <button onClick={() => setSendingModalOpen(true)} style={btnGhost()}>Sending</button>
+        <button onClick={handleScanReplies} disabled={scanning} style={btnGhost()} title="Check Gmail for replies and bounces, then update outcomes">
+          {scanning ? 'Scanning…' : 'Scan replies'}
+        </button>
         <button onClick={handleProcessQueue} disabled={processing || (c?.queued ?? 0) === 0} style={btnGhost(ACCENT)}>
           {processing ? 'Processing…' : `Process queue${c?.queued ? ` (${c.queued})` : ''}`}
         </button>

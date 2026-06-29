@@ -32,18 +32,15 @@ import {
   type GmailMessage,
   type GmailThreadRef,
 } from './fetch'
+import {
+  THREAD_FETCH_CONCURRENCY,
+  INTER_BATCH_PAUSE_MS,
+  runChunked,
+  withRateLimitRetry,
+} from './concurrency'
 
 const CACHE_TTL_SEC = 30 * 60
 const MAX_THREADS = 200 // cap traversal for bounded latency on huge inboxes
-// Gmail's undocumented per-user concurrent-request ceiling 429s under
-// 'rateLimitExceeded' / 'Too many concurrent requests' well before the
-// published QPS quota — empirically ~5 concurrent keeps the whole
-// 200-thread batch clean. Paired with a short inter-batch pause so a
-// slow response doesn't let the next batch stack on top.
-const THREAD_FETCH_CONCURRENCY = 5
-const INTER_BATCH_PAUSE_MS = 120
-const MAX_RETRIES_ON_RATE_LIMIT = 3
-const RETRY_BACKOFF_MS = 600
 
 export interface GmailResponseStats {
   responseRate: number
@@ -92,54 +89,6 @@ function analyzeThread(messages: GmailMessage[]): ThreadVerdict | null {
   return { firstInbound, firstSentAfter }
 }
 
-async function runChunked<T, R>(
-  items: T[],
-  concurrency: number,
-  worker: (item: T) => Promise<R>,
-  pauseBetweenBatchesMs = 0
-): Promise<R[]> {
-  const out: R[] = []
-  for (let i = 0; i < items.length; i += concurrency) {
-    const slice = items.slice(i, i + concurrency)
-    const results = await Promise.all(slice.map(worker))
-    out.push(...results)
-    if (pauseBetweenBatchesMs > 0 && i + concurrency < items.length) {
-      await sleep(pauseBetweenBatchesMs)
-    }
-  }
-  return out
-}
-
-function isRateLimitError(err: unknown): boolean {
-  return err instanceof Error && /\(429\)|rateLimitExceeded|RESOURCE_EXHAUSTED/i.test(err.message)
-}
-
-async function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
-/**
- * getThread with narrow retry on rate-limit errors. Gmail occasionally
- * 429s under burst load even with modest concurrency — a short backoff
- * is enough to clear it. Non-429 errors propagate immediately.
- */
-async function fetchThreadWithRetry(accessToken: string, id: string) {
-  let attempt = 0
-  let lastErr: unknown
-  while (attempt <= MAX_RETRIES_ON_RATE_LIMIT) {
-    try {
-      return await getThread({ accessToken, id, format: 'minimal' })
-    } catch (err) {
-      lastErr = err
-      if (!isRateLimitError(err)) throw err
-      attempt += 1
-      if (attempt > MAX_RETRIES_ON_RATE_LIMIT) break
-      await sleep(RETRY_BACKOFF_MS * attempt)
-    }
-  }
-  throw lastErr
-}
-
 /**
  * Compute response-rate and average-reply-time over the last 30 days.
  * Cached per company for 30 minutes.
@@ -177,7 +126,7 @@ export async function computeResponseStats(
     THREAD_FETCH_CONCURRENCY,
     async (ref) => {
       try {
-        return await fetchThreadWithRetry(accessToken, ref.id)
+        return await withRateLimitRetry(() => getThread({ accessToken, id: ref.id, format: 'minimal' }))
       } catch (err) {
         threadFailures += 1
         console.warn(

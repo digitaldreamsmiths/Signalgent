@@ -7,6 +7,7 @@ import type { ActionResult, ScheduledSendView, SendSettings } from './types'
 import { getAccount } from '@/lib/integrations/accounts'
 import { composeEmail } from './send/compose'
 import { computeBatchSlots, loadSettings, nextSlot, runQueue } from './send/worker'
+import { scanReplies } from './send/scan'
 
 const AUTH_ERROR = 'You don’t have access to this workspace.'
 
@@ -135,6 +136,21 @@ export async function processSendQueue(companyId: string): Promise<ActionResult<
   }
   const supabase = await createClient()
   const result = await runQueue(supabase, companyId)
+  revalidatePath('/outreach')
+  return { ok: true, data: result }
+}
+
+/** Manually run the reply/bounce scanner (the "Scan replies" button). Bypasses
+ * the cron throttle via { force: true }. */
+export async function scanRepliesNow(companyId: string): Promise<ActionResult<{ replied: number; bounced: number; skipped?: string }>> {
+  try {
+    await requireCompanyAccess(companyId)
+  } catch (err) {
+    if (err instanceof IntegrationAuthError) return { ok: false, error: AUTH_ERROR }
+    throw err
+  }
+  const supabase = await createClient()
+  const result = await scanReplies(supabase, companyId, { force: true })
   revalidatePath('/outreach')
   return { ok: true, data: result }
 }

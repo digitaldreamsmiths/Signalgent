@@ -119,9 +119,11 @@ export interface SendSettings {
   active: boolean
 }
 
-/** Outcome of the whole conversation (recorded manually after send). A
- * non-`open` disposition closes the prospect and suppresses follow-ups. */
-export type Disposition = 'open' | 'interested' | 'not_interested' | 'bounced' | 'unsubscribed'
+/** Outcome of the whole conversation. A non-`open` disposition closes the
+ * prospect and suppresses follow-ups. `replied` is set automatically by the
+ * reply scanner (a neutral "got a response" state) and is then triaged by hand
+ * into `interested`/`not_interested`; the rest are recorded manually. */
+export type Disposition = 'open' | 'replied' | 'interested' | 'not_interested' | 'bounced' | 'unsubscribed'
 
 export interface OutreachProspectView {
   id: string
