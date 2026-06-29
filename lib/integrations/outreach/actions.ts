@@ -392,7 +392,9 @@ export async function getOutreachSnapshot(companyId: string): Promise<OutreachSn
   })
 
   const sent = views.filter((v) => v.drafts.some((d) => d.status === 'exported')).length
-  const replied = views.filter((v) => v.disposition === 'interested' || v.disposition === 'not_interested').length
+  // Any inbound response counts toward reply rate: the auto-detected neutral
+  // 'replied' state plus the manually-triaged interested/not_interested.
+  const replied = views.filter((v) => v.disposition === 'replied' || v.disposition === 'interested' || v.disposition === 'not_interested').length
   const counts = {
     total: views.length,
     new: views.filter((v) => v.status === 'new').length,

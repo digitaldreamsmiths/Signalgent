@@ -252,7 +252,7 @@ export interface Database {
           business_types: string[] | null
           location: string | null
           footprint: Json | null
-          disposition: 'open' | 'interested' | 'not_interested' | 'bounced' | 'unsubscribed'
+          disposition: 'open' | 'replied' | 'interested' | 'not_interested' | 'bounced' | 'unsubscribed'
           disposition_at: string | null
           enriched_at: string | null
           created_at: string
@@ -274,7 +274,7 @@ export interface Database {
           business_types?: string[] | null
           location?: string | null
           footprint?: Json | null
-          disposition?: 'open' | 'interested' | 'not_interested' | 'bounced' | 'unsubscribed'
+          disposition?: 'open' | 'replied' | 'interested' | 'not_interested' | 'bounced' | 'unsubscribed'
           disposition_at?: string | null
           enriched_at?: string | null
           created_at?: string
@@ -294,7 +294,7 @@ export interface Database {
           business_types?: string[] | null
           location?: string | null
           footprint?: Json | null
-          disposition?: 'open' | 'interested' | 'not_interested' | 'bounced' | 'unsubscribed'
+          disposition?: 'open' | 'replied' | 'interested' | 'not_interested' | 'bounced' | 'unsubscribed'
           disposition_at?: string | null
           enriched_at?: string | null
           updated_at?: string
@@ -373,6 +373,7 @@ export interface Database {
           unsubscribe_line: string | null
           provider: 'dry_run' | 'gmail' | 'resend'
           active: boolean
+          last_reply_scan_at: string | null
           created_at: string
           updated_at: string
         }
@@ -391,6 +392,7 @@ export interface Database {
           unsubscribe_line?: string | null
           provider?: 'dry_run' | 'gmail' | 'resend'
           active?: boolean
+          last_reply_scan_at?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -408,6 +410,7 @@ export interface Database {
           unsubscribe_line?: string | null
           provider?: 'dry_run' | 'gmail' | 'resend'
           active?: boolean
+          last_reply_scan_at?: string | null
           updated_at?: string
         }
         Relationships: []
@@ -425,6 +428,8 @@ export interface Database {
           status: 'queued' | 'sending' | 'sent' | 'failed' | 'canceled'
           scheduled_at: string | null
           sent_at: string | null
+          replied_at: string | null
+          bounced_at: string | null
           provider_message_id: string | null
           thread_id: string | null
           message_id_header: string | null
@@ -444,6 +449,8 @@ export interface Database {
           status?: 'queued' | 'sending' | 'sent' | 'failed' | 'canceled'
           scheduled_at?: string | null
           sent_at?: string | null
+          replied_at?: string | null
+          bounced_at?: string | null
           provider_message_id?: string | null
           thread_id?: string | null
           message_id_header?: string | null
@@ -455,6 +462,8 @@ export interface Database {
           status?: 'queued' | 'sending' | 'sent' | 'failed' | 'canceled'
           scheduled_at?: string | null
           sent_at?: string | null
+          replied_at?: string | null
+          bounced_at?: string | null
           provider_message_id?: string | null
           thread_id?: string | null
           message_id_header?: string | null

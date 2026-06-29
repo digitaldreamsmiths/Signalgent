@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { createClient as createServiceClient } from '@supabase/supabase-js'
 import type { Database } from '@/lib/types/database.types'
 import { runQueue } from '@/lib/integrations/outreach/send/worker'
+import { scanReplies } from '@/lib/integrations/outreach/send/scan'
 
 /**
  * Drip worker tick. Processes the due send queue for every company with sending
@@ -36,12 +37,18 @@ async function handle(request: Request) {
 
   let sent = 0
   let failed = 0
+  let replied = 0
+  let bounced = 0
   for (const c of companies ?? []) {
     const r = await runQueue(svc, c.company_id)
     sent += r.sent
     failed += r.failed
+    // Close the loop: detect inbound replies/bounces and suppress those prospects.
+    const scan = await scanReplies(svc, c.company_id)
+    replied += scan.replied
+    bounced += scan.bounced
   }
-  return NextResponse.json({ companies: companies?.length ?? 0, sent, failed })
+  return NextResponse.json({ companies: companies?.length ?? 0, sent, failed, replied, bounced })
 }
 
 // Vercel Cron invokes via GET; Supabase pg_cron (pg_net) posts. Support both.
