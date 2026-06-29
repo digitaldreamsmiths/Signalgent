@@ -367,6 +367,7 @@ export async function getOutreachSnapshot(companyId: string): Promise<OutreachSn
       id: p.id,
       email: p.email,
       domain: p.domain,
+      created_at: p.created_at,
       status: p.status,
       skip_stage: p.skip_stage,
       skip_reason: p.skip_reason,

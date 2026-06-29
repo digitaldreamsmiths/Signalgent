@@ -28,7 +28,7 @@ const BORDER = 'var(--app-border)'
 const CARD = 'var(--app-card)'
 const MUTED = 'var(--app-muted)'
 
-type Filter = 'review' | 'templates' | 'needs_review' | 'approved' | 'exported' | 'replied' | 'bounced' | 'scheduled' | 'all'
+type Filter = 'contacts' | 'review' | 'templates' | 'needs_review' | 'approved' | 'exported' | 'replied' | 'bounced' | 'scheduled' | 'all'
 
 const DISPO_META: Record<Disposition, { label: string; color: string }> = {
   open: { label: 'open', color: 'var(--app-muted)' },
@@ -136,6 +136,7 @@ function Metric({ label, value, accent }: { label: string; value: string | numbe
 
 /** Contextual empty-state copy per filter tab. */
 const EMPTY_MSG: Record<Filter, string> = {
+  contacts: 'No contacts yet — paste or upload emails above.',
   review: 'Nothing waiting for review.',
   templates: 'No template drafts.',
   needs_review: 'Nothing needs a manual match.',
@@ -185,6 +186,131 @@ function ProspectRow({ p, selected, onSelect, checked, onToggle }: { p: Outreach
           {p.drafts.length > 1 && <Pill label={`${p.drafts.length} touches`} color={MUTED} />}
           {p.disposition !== 'open' && <Pill label={DISPO_META[p.disposition].label} color={DISPO_META[p.disposition].color} />}
         </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Contacts table ──────────────────────────────────────────────────────────
+
+type ContactSortKey = 'email' | 'name' | 'status' | 'added'
+
+/** Status badge color per prospect lifecycle stage. */
+const STATUS_COLOR: Record<OutreachProspectView['status'], string> = {
+  new: MUTED,
+  enriched: '#378ADD',
+  drafted: '#1D9E75',
+  skipped: '#BA7517',
+  error: '#b04545',
+}
+
+/** Master list of every ingested email — visible before enrichment, sortable by
+ * any column, with per-row and bulk delete. This is the only place raw `new`
+ * prospects (no draft yet) surface, since the workflow tabs all require a draft. */
+function ContactsTable({ prospects, companyId, onChanged }: { prospects: OutreachProspectView[]; companyId: string; onChanged: () => void }) {
+  const [sortKey, setSortKey] = useState<ContactSortKey>('added')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [confirmId, setConfirmId] = useState<string | null>(null)
+  const [confirmBulk, setConfirmBulk] = useState(false)
+  const [busy, setBusy] = useState(false)
+
+  const dir = sortDir === 'asc' ? 1 : -1
+  const cmp = (a: OutreachProspectView, b: OutreachProspectView): number => {
+    switch (sortKey) {
+      case 'email': return a.email.localeCompare(b.email)
+      case 'name': return (a.recipient_name ?? '').localeCompare(b.recipient_name ?? '')
+      case 'status': return a.status.localeCompare(b.status)
+      case 'added': return a.created_at.localeCompare(b.created_at)
+    }
+  }
+  const sorted = [...prospects].sort((a, b) => cmp(a, b) * dir)
+
+  const toggleSort = (k: ContactSortKey) => {
+    if (k === sortKey) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+    else { setSortKey(k); setSortDir(k === 'added' ? 'desc' : 'asc') }
+  }
+
+  const allChecked = sorted.length > 0 && selected.size === sorted.length
+  const toggleAll = () => { setConfirmBulk(false); setSelected(allChecked ? new Set() : new Set(sorted.map((p) => p.id))) }
+  const toggleOne = (id: string) => {
+    setConfirmBulk(false)
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const del = async (ids: string[]) => {
+    if (ids.length === 0) return
+    setBusy(true)
+    await deleteProspects(companyId, ids)
+    setBusy(false)
+    setConfirmId(null)
+    setConfirmBulk(false)
+    setSelected((prev) => { const n = new Set(prev); ids.forEach((id) => n.delete(id)); return n })
+    onChanged()
+  }
+
+  const th: React.CSSProperties = { textAlign: 'left', fontSize: 9, fontWeight: 600, color: MUTED, textTransform: 'uppercase', letterSpacing: 0.6, padding: '8px 12px', cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }
+  const td: React.CSSProperties = { fontSize: 12, color: 'var(--app-text)', padding: '8px 12px', borderTop: `1px solid ${BORDER}` }
+  const caret = (k: ContactSortKey) => (sortKey === k ? (sortDir === 'asc' ? ' ▲' : ' ▼') : '')
+
+  return (
+    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', border: `1px solid ${BORDER}`, borderRadius: 8, overflow: 'hidden' }}>
+      {selected.size > 0 && (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '8px 12px', borderBottom: `1px solid ${BORDER}`, background: 'var(--app-card-2)' }}>
+          <span style={{ fontSize: 11, color: MUTED }}>{selected.size} selected</span>
+          <button
+            disabled={busy}
+            onClick={() => (confirmBulk ? del([...selected]) : setConfirmBulk(true))}
+            style={confirmBulk ? btn('#b04545') : btnGhost('#b04545')}
+          >
+            {confirmBulk ? `Confirm delete (${selected.size})` : `Delete (${selected.size})`}
+          </button>
+          {confirmBulk && <button disabled={busy} onClick={() => setConfirmBulk(false)} style={btnGhost()}>Cancel</button>}
+        </div>
+      )}
+      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr style={{ position: 'sticky', top: 0, zIndex: 1, background: 'var(--app-card-2)' }}>
+              <th style={{ ...th, width: 32, cursor: 'default' }}>
+                <input type="checkbox" checked={allChecked} onChange={toggleAll} />
+              </th>
+              <th style={th} onClick={() => toggleSort('email')}>Email{caret('email')}</th>
+              <th style={th} onClick={() => toggleSort('name')}>Name{caret('name')}</th>
+              <th style={th} onClick={() => toggleSort('status')}>Status{caret('status')}</th>
+              <th style={th} onClick={() => toggleSort('added')}>Added{caret('added')}</th>
+              <th style={{ ...th, cursor: 'default', textAlign: 'right' }} />
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((p) => (
+              <tr key={p.id} style={{ background: selected.has(p.id) ? CARD : 'transparent' }}>
+                <td style={{ ...td, width: 32 }}>
+                  <input type="checkbox" checked={selected.has(p.id)} onChange={() => toggleOne(p.id)} />
+                </td>
+                <td style={{ ...td, fontFamily: 'var(--font-mono)' }}>{p.email}</td>
+                <td style={td}>{p.recipient_name ?? <span style={{ color: MUTED }}>—</span>}</td>
+                <td style={td}><Pill label={p.status} color={STATUS_COLOR[p.status]} /></td>
+                <td style={{ ...td, color: MUTED, whiteSpace: 'nowrap' }}>{fmtWhen(p.created_at)}</td>
+                <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap' }}>
+                  {confirmId === p.id ? (
+                    <>
+                      <button disabled={busy} onClick={() => del([p.id])} style={btn('#b04545')}>Confirm</button>
+                      <button disabled={busy} onClick={() => setConfirmId(null)} style={{ ...btnGhost(), marginLeft: 6 }}>Cancel</button>
+                    </>
+                  ) : (
+                    <button disabled={busy} onClick={() => setConfirmId(p.id)} style={btnGhost('#b04545')}>Delete</button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   )
@@ -603,6 +729,7 @@ export function OutreachWorkspace() {
   const c = snapshot?.counts
   const withDraft = prospects.filter((p) => p.draft)
   const lists: Record<Filter, OutreachProspectView[]> = {
+    contacts: prospects,
     review: withDraft.filter((p) => !p.draft!.is_template && p.draft!.status === 'pending'),
     templates: withDraft.filter((p) => p.draft!.is_template && p.draft!.status === 'pending' && !p.needs_review),
     needs_review: prospects.filter((p) => p.needs_review),
@@ -746,6 +873,7 @@ export function OutreachWorkspace() {
         <>
           <div style={{ display: 'flex', alignItems: 'center', borderBottom: `1px solid ${BORDER}` }}>
             <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+              {tab('contacts', 'Contacts', lists.contacts.length)}
               {tab('review', 'To review', lists.review.length)}
               {tab('templates', 'Templates', lists.templates.length)}
               {tab('needs_review', 'Needs review', lists.needs_review.length)}
@@ -800,6 +928,8 @@ export function OutreachWorkspace() {
             companyId && (
               <ScheduledView companyId={companyId} sends={scheduledSends} onChanged={() => { loadScheduled(); refresh() }} />
             )
+          ) : filter === 'contacts' ? (
+            <ContactsTable prospects={current} companyId={companyId} onChanged={refresh} />
           ) : (
           <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: 'minmax(0, 300px) minmax(0, 1fr)', gap: 14 }}>
             {/* List */}
