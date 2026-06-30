@@ -14,10 +14,13 @@
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { IntegrationAuthError, requireCompanyAccess } from '@/lib/integrations/auth'
-import type { Database, Json } from '@/lib/types/database.types'
+import type { Database } from '@/lib/types/database.types'
 import { extractDomain } from '../usaspending/resolve'
-import { runPipeline, runPipelineFromName, type PipelineOutcome } from './pipeline'
-import { buildTemplateDraft, buildTemplateFollowup } from './template'
+import { runPipelineFromName } from './pipeline'
+import { buildTemplateFollowup } from './template'
+import { persistOutcome, recordUsage, runEnrichmentBatch, enrichToBuffer, RUN_BATCH } from './enrich-run'
+import { loadSettings, getEffectiveDailyCap } from './send/worker'
+import { recentBounceStats } from './send/scan'
 import { draftEmail } from './draft'
 import { undeliverableDomains } from './deliverability'
 import type { LLMUsage } from '../../llm/client'
@@ -31,162 +34,8 @@ import type {
   SynthesisResult,
 } from './types'
 
-type ProspectUpdate = Database['public']['Tables']['outreach_prospects']['Update']
-type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>
-
 const AUTH_ERROR = 'You don’t have access to this workspace.'
 
-/** Hard cap on prospects enriched per runNewProspects call (bounds request time).
- * The client loops, calling with a smaller chunk size, to process larger lists. */
-const RUN_BATCH = 15
-
-/** Per-1M-token prices ($) by model, for api_usage cost. */
-const PRICE: Record<string, { in: number; out: number }> = {
-  'claude-haiku-4-5': { in: 1, out: 5 },
-  'claude-sonnet-4-6': { in: 3, out: 15 },
-}
-
-function usageCostUsd(u: LLMUsage): number {
-  const p = PRICE[u.model] ?? { in: 0, out: 0 }
-  return (u.inputTokens / 1e6) * p.in + (u.outputTokens / 1e6) * p.out
-}
-
-/** Record per-call LLM usage to api_usage. Best-effort. */
-async function recordUsage(
-  supabase: SupabaseServerClient,
-  companyId: string,
-  userId: string,
-  usage: LLMUsage[],
-): Promise<void> {
-  if (usage.length === 0) return
-  const rows = usage.map((u) => ({
-    company_id: companyId,
-    user_id: userId,
-    service: 'anthropic' as const,
-    model: u.model,
-    input_tokens: u.inputTokens,
-    output_tokens: u.outputTokens,
-    cost_usd: Math.round(usageCostUsd(u) * 1e6) / 1e6,
-    feature: `outreach:${u.task}`,
-  }))
-  await supabase.from('api_usage').insert(rows)
-}
-
-/** Persist a pipeline outcome for a prospect (shared by run + manual resolve). */
-async function persistOutcome(
-  supabase: SupabaseServerClient,
-  companyId: string,
-  prospectId: string,
-  outcome: PipelineOutcome,
-): Promise<void> {
-  const enriched = 'enriched' in outcome ? outcome.enriched : undefined
-  const prospectUpdate: ProspectUpdate = { enriched_at: new Date().toISOString() }
-  if (enriched) {
-    prospectUpdate.recipient_name = enriched.recipient_name
-    prospectUpdate.recipient_id = enriched.recipient_id
-    prospectUpdate.uei = enriched.uei
-    prospectUpdate.resolution_confidence = enriched.resolution_confidence
-    prospectUpdate.resolution_method = enriched.resolution_method
-    prospectUpdate.business_types = enriched.business_types
-    prospectUpdate.location = enriched.location
-    prospectUpdate.footprint = enriched.footprint as unknown as Json
-  }
-
-  if (outcome.status === 'drafted') {
-    prospectUpdate.status = 'drafted'
-    prospectUpdate.skip_stage = null
-    prospectUpdate.skip_reason = null
-    await supabase.from('outreach_prospects').update(prospectUpdate).eq('id', prospectId).eq('company_id', companyId)
-    await supabase.from('outreach_drafts').upsert(
-      {
-        prospect_id: prospectId,
-        company_id: companyId,
-        subject: outcome.review.draft.subject,
-        body: outcome.review.draft.body,
-        angle: outcome.synthesis.angle,
-        synthesis_confidence: outcome.synthesis.confidence,
-        facts_for_draft: outcome.synthesis.facts_for_draft,
-        facts_used: outcome.review.draft.facts_used,
-        drifted_facts: outcome.review.drifted_facts,
-        clean: outcome.review.clean,
-        status: 'pending',
-        step: 1,
-      },
-      { onConflict: 'prospect_id,step' },
-    )
-  } else {
-    prospectUpdate.status = 'skipped'
-    prospectUpdate.skip_stage = outcome.stage
-    prospectUpdate.skip_reason = outcome.reason
-    await supabase.from('outreach_prospects').update(prospectUpdate).eq('id', prospectId).eq('company_id', companyId)
-    // Can't personalize -> attach a generic, sendable template (empty
-    // facts_for_draft marks it as a template, no fabricated claims).
-    const tmpl = buildTemplateDraft(enriched?.recipient_name ?? null)
-    await supabase.from('outreach_drafts').upsert(
-      {
-        prospect_id: prospectId,
-        company_id: companyId,
-        subject: tmpl.subject,
-        body: tmpl.body,
-        angle: null,
-        synthesis_confidence: null,
-        facts_for_draft: [],
-        facts_used: [],
-        drifted_facts: [],
-        clean: true,
-        status: 'pending',
-        step: 1,
-      },
-      { onConflict: 'prospect_id,step' },
-    )
-  }
-}
-
-/**
- * Safeguard: every skipped prospect should carry at least the generic template
- * draft (the fallback that keeps un-personalizable prospects sendable). Legacy
- * rows from before the fallback existed — and any where persistOutcome's draft
- * upsert silently failed — get stranded: counted in the total but with no draft,
- * so they're invisible in the queue and not re-enrichable. This idempotent sweep
- * creates the missing template drafts. Returns how many it created.
- */
-async function backfillTemplateDrafts(supabase: SupabaseServerClient, companyId: string): Promise<number> {
-  const { data: skipped } = await supabase
-    .from('outreach_prospects')
-    .select('id, recipient_name')
-    .eq('company_id', companyId)
-    .eq('status', 'skipped')
-  if (!skipped || skipped.length === 0) return 0
-
-  const { data: drafts } = await supabase
-    .from('outreach_drafts')
-    .select('prospect_id')
-    .eq('company_id', companyId)
-  const haveDraft = new Set((drafts ?? []).map((d) => d.prospect_id))
-
-  const missing = skipped.filter((p) => !haveDraft.has(p.id))
-  if (missing.length === 0) return 0
-
-  const rows = missing.map((p) => {
-    const tmpl = buildTemplateDraft(p.recipient_name ?? null)
-    return {
-      prospect_id: p.id,
-      company_id: companyId,
-      subject: tmpl.subject,
-      body: tmpl.body,
-      angle: null,
-      synthesis_confidence: null,
-      facts_for_draft: [],
-      facts_used: [],
-      drifted_facts: [],
-      clean: true,
-      status: 'pending' as const,
-      step: 1,
-    }
-  })
-  const { error } = await supabase.from('outreach_drafts').upsert(rows, { onConflict: 'prospect_id,step' })
-  return error ? 0 : rows.length
-}
 
 // ── Ingest ──────────────────────────────────────────────────────────────────
 
@@ -262,44 +111,28 @@ export async function runNewProspects(
   }
 
   const supabase = await createClient()
-  const { data: pending, error } = await supabase
-    .from('outreach_prospects')
-    .select('id, email')
-    .eq('company_id', companyId)
-    .eq('status', 'new')
-    .order('created_at', { ascending: true })
-    .limit(Math.max(1, Math.min(limit, RUN_BATCH)))
-
-  if (error) return { ok: false, error: 'Could not load prospects.' }
-  if (!pending || pending.length === 0) {
-    await backfillTemplateDrafts(supabase, companyId)
-    return { ok: true, data: { processed: 0, drafted: 0, skipped: 0, remaining: 0, cost_usd: 0 } }
-  }
-
-  const usage: LLMUsage[] = []
-  let drafted = 0
-  let skipped = 0
-  for (const p of pending) {
-    const outcome = await runPipeline(p.email, usage)
-    await persistOutcome(supabase, companyId, p.id, outcome)
-    if (outcome.status === 'drafted') drafted += 1
-    else skipped += 1
-  }
-
-  await recordUsage(supabase, companyId, access.userId, usage)
-  const cost_usd = usage.reduce((s, u) => s + usageCostUsd(u), 0)
-
-  // Safeguard: ensure no prospect skipped this run was left without a draft.
-  await backfillTemplateDrafts(supabase, companyId)
-
-  const { count } = await supabase
-    .from('outreach_prospects')
-    .select('id', { count: 'exact', head: true })
-    .eq('company_id', companyId)
-    .eq('status', 'new')
-
+  const data = await runEnrichmentBatch(supabase, companyId, limit, access.userId)
   revalidatePath('/outreach')
-  return { ok: true, data: { processed: pending.length, drafted, skipped, remaining: count ?? 0, cost_usd } }
+  return { ok: true, data }
+}
+
+/** Enrich one wave: top up the enriched-and-ready buffer to ~3 days of send
+ * capacity. The "Enrich wave" button and the cron both use this — enrichment is
+ * intentionally incremental so federal-award facts stay fresh. */
+export async function enrichWaveNow(
+  companyId: string,
+): Promise<ActionResult<{ enriched: number; drafted: number; skipped: number; remaining: number; cost_usd: number; note?: string }>> {
+  let access: Awaited<ReturnType<typeof requireCompanyAccess>>
+  try {
+    access = await requireCompanyAccess(companyId)
+  } catch (err) {
+    if (err instanceof IntegrationAuthError) return { ok: false, error: AUTH_ERROR }
+    throw err
+  }
+  const supabase = await createClient()
+  const data = await enrichToBuffer(supabase, companyId, access.userId)
+  revalidatePath('/outreach')
+  return { ok: true, data }
 }
 
 // ── Snapshot read ─────────────────────────────────────────────────────────────
@@ -411,7 +244,16 @@ export async function getOutreachSnapshot(companyId: string): Promise<OutreachSn
   }
   const reply_rate = sent > 0 ? replied / sent : 0
 
-  return { prospects: views, counts, reply_rate, cost_usd_total }
+  const settings = await loadSettings(supabase, companyId)
+  const { rate: bounce_rate_7d } = await recentBounceStats(supabase, companyId, 7)
+  const sending = {
+    active: settings.active,
+    pause_reason: settings.pause_reason,
+    effective_daily_cap: getEffectiveDailyCap(settings),
+    bounce_rate_7d,
+  }
+
+  return { prospects: views, counts, reply_rate, cost_usd_total, sending }
 }
 
 // ── Outcomes ──────────────────────────────────────────────────────────────────

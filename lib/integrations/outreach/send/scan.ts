@@ -16,6 +16,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/lib/types/database.types'
+import { loadSettings } from './worker'
 import { loadGmailCredentials } from '@/lib/integrations/gmail/tokens'
 import { getThread, type GmailMessage } from '@/lib/integrations/gmail/fetch'
 import {
@@ -189,4 +190,44 @@ export async function scanReplies(supabase: DB, companyId: string, opts: { force
 
   await supabase.from('outreach_settings').update({ last_reply_scan_at: new Date().toISOString() }).eq('company_id', companyId)
   return { replied, bounced }
+}
+
+export interface BounceStats {
+  sent: number
+  bounced: number
+  rate: number
+}
+
+/** Bounce rate over the last `windowDays` of actual sends. A send counts as
+ * bounced if its thread produced a bounce (bounced_at set by the scanner). */
+export async function recentBounceStats(supabase: DB, companyId: string, windowDays: number): Promise<BounceStats> {
+  const cutoff = new Date(Date.now() - windowDays * 86400_000).toISOString()
+  const { data } = await supabase
+    .from('outreach_sends')
+    .select('bounced_at')
+    .eq('company_id', companyId)
+    .eq('status', 'sent')
+    .gte('sent_at', cutoff)
+  const rows = data ?? []
+  const sent = rows.length
+  const bounced = rows.filter((r) => r.bounced_at !== null).length
+  return { sent, bounced, rate: sent > 0 ? bounced / sent : 0 }
+}
+
+/** Auto-pause: when the recent bounce rate exceeds the configured threshold (with
+ * a minimum sample), flip sending off and record why. Called on the cron before
+ * runQueue. Returns whether it paused this tick. */
+export async function enforceBouncePause(supabase: DB, companyId: string): Promise<{ paused: boolean; rate: number }> {
+  const settings = await loadSettings(supabase, companyId)
+  if (!settings.active || !settings.bounce_pause_enabled) return { paused: false, rate: 0 }
+  const { sent, rate } = await recentBounceStats(supabase, companyId, settings.bounce_pause_window_days)
+  if (sent < settings.bounce_pause_min_sends || rate <= settings.bounce_pause_threshold) {
+    return { paused: false, rate }
+  }
+  await supabase
+    .from('outreach_settings')
+    .update({ active: false, pause_reason: 'bounce_rate' })
+    .eq('company_id', companyId)
+  console.warn(`[auto-pause] company ${companyId} paused: bounce rate ${(rate * 100).toFixed(1)}% over ${sent} sends`)
+  return { paused: true, rate }
 }

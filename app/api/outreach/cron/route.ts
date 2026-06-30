@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server'
 import { createClient as createServiceClient } from '@supabase/supabase-js'
 import type { Database } from '@/lib/types/database.types'
 import { runQueue } from '@/lib/integrations/outreach/send/worker'
-import { scanReplies } from '@/lib/integrations/outreach/send/scan'
+import { scanReplies, enforceBouncePause } from '@/lib/integrations/outreach/send/scan'
+import { enrichToBuffer } from '@/lib/integrations/outreach/enrich-run'
 
 /**
  * Drip worker tick. Processes the due send queue for every company with sending
@@ -39,7 +40,14 @@ async function handle(request: Request) {
   let failed = 0
   let replied = 0
   let bounced = 0
+  let enriched = 0
   for (const c of companies ?? []) {
+    // Deliverability: pause sending if the recent bounce rate is too high.
+    await enforceBouncePause(svc, c.company_id)
+    // Wave enrichment: keep ~3 days of send capacity enriched-and-ready.
+    const wave = await enrichToBuffer(svc, c.company_id, null)
+    enriched += wave.enriched
+    // Drip: send what's due (runQueue bails if auto-pause just deactivated it).
     const r = await runQueue(svc, c.company_id)
     sent += r.sent
     failed += r.failed
@@ -48,7 +56,7 @@ async function handle(request: Request) {
     replied += scan.replied
     bounced += scan.bounced
   }
-  return NextResponse.json({ companies: companies?.length ?? 0, sent, failed, replied, bounced })
+  return NextResponse.json({ companies: companies?.length ?? 0, sent, failed, replied, bounced, enriched })
 }
 
 // Vercel Cron invokes via GET; Supabase pg_cron (pg_net) posts. Support both.

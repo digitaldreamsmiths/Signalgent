@@ -117,6 +117,20 @@ export interface SendSettings {
   unsubscribe_line: string | null
   provider: 'dry_run' | 'gmail' | 'resend'
   active: boolean
+  /** Why sending is off, when active=false: 'manual' (user) or 'bounce_rate'
+   * (auto-paused). null when active or never paused. */
+  pause_reason: 'manual' | 'bounce_rate' | null
+  // Warmup ramp: per-day cap grows from start_per_day by increment_per_day each
+  // sending weekday, up to daily_send_limit. Anchored at warmup_started_at.
+  warmup_enabled: boolean
+  warmup_start_per_day: number
+  warmup_increment_per_day: number
+  warmup_started_at: string | null
+  // Auto-pause: flip sending off when recent bounce rate is too high.
+  bounce_pause_enabled: boolean
+  bounce_pause_threshold: number
+  bounce_pause_window_days: number
+  bounce_pause_min_sends: number
 }
 
 /** Outcome of the whole conversation. A non-`open` disposition closes the
@@ -180,4 +194,13 @@ export interface OutreachSnapshot {
   reply_rate: number
   /** All-time Anthropic API spend for this company's outreach ($). */
   cost_usd_total: number
+  /** Sending health for the header/banner. */
+  sending: {
+    active: boolean
+    pause_reason: 'manual' | 'bounce_rate' | null
+    /** Today's effective daily cap (warmup-ramped). */
+    effective_daily_cap: number
+    /** Bounce rate over the last 7 days, as a fraction. */
+    bounce_rate_7d: number
+  }
 }

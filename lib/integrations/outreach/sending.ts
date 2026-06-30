@@ -33,9 +33,30 @@ export async function saveSendSettings(
     throw err
   }
   const supabase = await createClient()
+  // Derive warmup anchor + pause reason from an active toggle.
+  const derived: Partial<SendSettings> = {}
+  if (patch.active === true) {
+    derived.pause_reason = null // re-enabling clears any auto-pause
+    const { data: cur } = await supabase.from('outreach_settings').select('warmup_started_at').eq('company_id', companyId).maybeSingle()
+    if (!cur?.warmup_started_at) {
+      // Anchor the warmup ramp at the first-ever send, or now if none yet.
+      const { data: first } = await supabase
+        .from('outreach_sends')
+        .select('sent_at')
+        .eq('company_id', companyId)
+        .eq('status', 'sent')
+        .not('sent_at', 'is', null)
+        .order('sent_at', { ascending: true })
+        .limit(1)
+        .maybeSingle()
+      derived.warmup_started_at = first?.sent_at ?? new Date().toISOString()
+    }
+  } else if (patch.active === false) {
+    derived.pause_reason = 'manual'
+  }
   const { error } = await supabase
     .from('outreach_settings')
-    .upsert({ company_id: companyId, ...patch, updated_at: new Date().toISOString() }, { onConflict: 'company_id' })
+    .upsert({ company_id: companyId, ...patch, ...derived, updated_at: new Date().toISOString() }, { onConflict: 'company_id' })
   if (error) return { ok: false, error: 'Could not save sending settings.' }
   revalidatePath('/outreach')
   return { ok: true, data: undefined }

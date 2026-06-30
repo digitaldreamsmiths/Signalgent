@@ -29,6 +29,15 @@ export const SETTINGS_DEFAULTS: SendSettings = {
   unsubscribe_line: null,
   provider: 'dry_run',
   active: false,
+  pause_reason: null,
+  warmup_enabled: true,
+  warmup_start_per_day: 10,
+  warmup_increment_per_day: 5,
+  warmup_started_at: null,
+  bounce_pause_enabled: true,
+  bounce_pause_threshold: 0.05,
+  bounce_pause_window_days: 7,
+  bounce_pause_min_sends: 20,
 }
 
 export async function loadSettings(supabase: DB, companyId: string): Promise<SendSettings> {
@@ -48,6 +57,15 @@ export async function loadSettings(supabase: DB, companyId: string): Promise<Sen
     unsubscribe_line: data.unsubscribe_line,
     provider: data.provider,
     active: data.active,
+    pause_reason: data.pause_reason,
+    warmup_enabled: data.warmup_enabled,
+    warmup_start_per_day: data.warmup_start_per_day,
+    warmup_increment_per_day: data.warmup_increment_per_day,
+    warmup_started_at: data.warmup_started_at,
+    bounce_pause_enabled: data.bounce_pause_enabled,
+    bounce_pause_threshold: data.bounce_pause_threshold,
+    bounce_pause_window_days: data.bounce_pause_window_days,
+    bounce_pause_min_sends: data.bounce_pause_min_sends,
   }
 }
 
@@ -91,6 +109,46 @@ function nextDayWindowStart(w: Wall, tz: string, wsH: number, wsM: number): Date
   return fromZonedWall(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate(), wsH, wsM, tz)
 }
 
+// ── Warmup ramp ───────────────────────────────────────────────────────────────
+
+/** Whole-day number for a wall date (time ignored). */
+function wallDayNum(w: { y: number; mo: number; d: number }): number {
+  return Math.floor(Date.UTC(w.y, w.mo - 1, w.d) / 86400000)
+}
+
+/** Count Mon–Fri days in [aNum, bNum] inclusive, given the weekday of aNum (0=Sun). */
+function countWeekdaysInclusive(aNum: number, bNum: number, aWeekday: number): number {
+  if (bNum < aNum) return 0
+  const total = bNum - aNum + 1
+  const fullWeeks = Math.floor(total / 7)
+  let weekdays = fullWeeks * 5
+  const rem = total - fullWeeks * 7
+  for (let i = 0; i < rem; i++) {
+    const wd = (aWeekday + i) % 7
+    if (wd !== 0 && wd !== 6) weekdays++
+  }
+  return weekdays
+}
+
+/** Build the per-day effective send cap. With warmup on, the cap ramps from
+ * warmup_start_per_day, +warmup_increment_per_day each sending weekday since the
+ * anchor (warmup_started_at, defaulting to now), up to daily_send_limit. */
+function makeCapForDay(settings: SendSettings, tz: string): (w: Wall) => number {
+  const limit = settings.daily_send_limit
+  if (!settings.warmup_enabled) return () => limit
+  const anchor = wallParts(settings.warmup_started_at ? new Date(settings.warmup_started_at) : new Date(), tz)
+  const anchorNum = wallDayNum(anchor)
+  return (w: Wall) => {
+    const idx = Math.max(0, countWeekdaysInclusive(anchorNum, wallDayNum(w), anchor.weekday) - 1)
+    return Math.min(limit, settings.warmup_start_per_day + idx * settings.warmup_increment_per_day)
+  }
+}
+
+/** The effective daily cap for "today" — used for buffer sizing and the UI. */
+export function getEffectiveDailyCap(settings: SendSettings, now: Date = new Date()): number {
+  return makeCapForDay(settings, settings.timezone)(wallParts(now, settings.timezone))
+}
+
 /**
  * The next available send slot: after the last planned send + min gap, clamped
  * into the Mon–Fri business-hours window, rolling to the next day once the daily
@@ -120,6 +178,7 @@ export async function nextSlot(supabase: DB, companyId: string, settings: SendSe
 
   const afterLast = lastT ? lastT + settings.min_gap_minutes * 60000 : now.getTime()
   let slot = new Date(Math.max(now.getTime(), afterLast))
+  const capForDay = makeCapForDay(settings, tz)
 
   for (let i = 0; i < 500; i++) {
     const w = wallParts(slot, tz)
@@ -129,7 +188,7 @@ export async function nextSlot(supabase: DB, companyId: string, settings: SendSe
     if (slot.getTime() < winStart.getTime()) slot = winStart
     if (slot.getTime() >= winEnd.getTime()) { slot = nextDayWindowStart(w, tz, wsH, wsM); continue }
     const key = `${w.y}-${w.mo}-${w.d}`
-    if ((counts.get(key) ?? 0) >= settings.daily_send_limit) { slot = nextDayWindowStart(w, tz, wsH, wsM); continue }
+    if ((counts.get(key) ?? 0) >= capForDay(w)) { slot = nextDayWindowStart(w, tz, wsH, wsM); continue }
     return slot.toISOString()
   }
   return slot.toISOString()
@@ -173,12 +232,13 @@ export async function computeBatchSlots(
     counts.set(key, (counts.get(key) ?? 0) + 1)
   }
 
+  const capForDay = makeCapForDay(settings, tz)
   const slots: string[] = []
   for (let i = 0; i < count; i++) {
     // Roll forward over any day that's already at capacity.
     for (let guard = 0; guard < 800; guard++) {
       const w = wallParts(cur, tz)
-      if ((counts.get(`${w.y}-${w.mo}-${w.d}`) ?? 0) < settings.daily_send_limit) break
+      if ((counts.get(`${w.y}-${w.mo}-${w.d}`) ?? 0) < capForDay(w)) break
       cur = nextDayWindowStart(w, tz, startH, startM)
     }
     const w = wallParts(cur, tz)

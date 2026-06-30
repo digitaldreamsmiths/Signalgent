@@ -16,8 +16,13 @@ const DEFAULTS: SendSettings = {
   daily_send_limit: 25, send_window_start: '09:00', send_window_end: '17:00',
   timezone: 'America/New_York', min_gap_minutes: 6,
   signature: '', physical_address: '', unsubscribe_line: '',
-  provider: 'dry_run', active: false,
+  provider: 'dry_run', active: false, pause_reason: null,
+  warmup_enabled: true, warmup_start_per_day: 10, warmup_increment_per_day: 5, warmup_started_at: null,
+  bounce_pause_enabled: true, bounce_pause_threshold: 0.05, bounce_pause_window_days: 7, bounce_pause_min_sends: 20,
 }
+
+const sectionStyle: React.CSSProperties = { borderTop: `1px solid ${BORDER}`, paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }
+const sectionLabel: React.CSSProperties = { fontSize: 11, fontWeight: 700, color: TEXT, margin: 0 }
 
 const labelStyle: React.CSSProperties = { fontSize: 10, fontWeight: 600, color: MUTED, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4, display: 'block' }
 const inputStyle: React.CSSProperties = { width: '100%', background: INPUT, border: `1px solid ${BORDER}`, borderRadius: 6, color: TEXT, fontSize: 12, padding: '7px 9px' }
@@ -67,6 +72,11 @@ export function SendingSettingsModal({ companyId, onClose, onSaved }: { companyI
           <div style={{ fontSize: 12, color: MUTED }}>Loading…</div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {!form.active && form.pause_reason === 'bounce_rate' && (
+              <div style={{ fontSize: 11, color: '#e0a060', background: 'var(--app-card-2)', border: `1px solid ${BORDER}`, borderRadius: 6, padding: '8px 10px' }}>
+                Auto-paused — recent bounce rate exceeded {Math.round(form.bounce_pause_threshold * 100)}%. Clean the list, then re-enable sending below to resume.
+              </div>
+            )}
             <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: TEXT }}>
               <input type="checkbox" checked={form.active} onChange={(e) => set('active', e.target.checked)} />
               Sending enabled (drafts can be queued and sent)
@@ -102,6 +112,41 @@ export function SendingSettingsModal({ companyId, onClose, onSaved }: { companyI
 
             <div><label style={labelStyle}>Physical address (CAN-SPAM)</label><textarea value={form.physical_address ?? ''} onChange={(e) => set('physical_address', e.target.value)} rows={2} style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit' }} placeholder="123 Main St, City, ST 00000" /></div>
             <div><label style={labelStyle}>Unsubscribe line</label><input value={form.unsubscribe_line ?? ''} onChange={(e) => set('unsubscribe_line', e.target.value)} style={inputStyle} placeholder="Reply STOP to opt out." /></div>
+
+            {/* Warmup ramp */}
+            <div style={sectionStyle}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: TEXT }}>
+                <input type="checkbox" checked={form.warmup_enabled} onChange={(e) => set('warmup_enabled', e.target.checked)} />
+                <span style={sectionLabel}>Warmup ramp</span>
+              </label>
+              <div style={{ fontSize: 10, color: MUTED, marginTop: -4 }}>
+                Ramps the daily cap up to your limit over the first sending days, protecting a new mailbox's reputation.
+              </div>
+              {form.warmup_enabled && (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                  <div><label style={labelStyle}>Start / day</label><input type="number" value={form.warmup_start_per_day} onChange={(e) => set('warmup_start_per_day', Math.max(1, parseInt(e.target.value) || 1))} style={inputStyle} /></div>
+                  <div><label style={labelStyle}>Increase / day</label><input type="number" value={form.warmup_increment_per_day} onChange={(e) => set('warmup_increment_per_day', Math.max(1, parseInt(e.target.value) || 1))} style={inputStyle} /></div>
+                </div>
+              )}
+            </div>
+
+            {/* Auto-pause on bounces */}
+            <div style={sectionStyle}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: TEXT }}>
+                <input type="checkbox" checked={form.bounce_pause_enabled} onChange={(e) => set('bounce_pause_enabled', e.target.checked)} />
+                <span style={sectionLabel}>Auto-pause on high bounce rate</span>
+              </label>
+              <div style={{ fontSize: 10, color: MUTED, marginTop: -4 }}>
+                Stops sending automatically when too many recent emails bounce, so a bad list can't burn your domain.
+              </div>
+              {form.bounce_pause_enabled && (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
+                  <div><label style={labelStyle}>Threshold %</label><input type="number" value={Math.round(form.bounce_pause_threshold * 100)} onChange={(e) => set('bounce_pause_threshold', Math.max(1, parseInt(e.target.value) || 1) / 100)} style={inputStyle} /></div>
+                  <div><label style={labelStyle}>Window (days)</label><input type="number" value={form.bounce_pause_window_days} onChange={(e) => set('bounce_pause_window_days', Math.max(1, parseInt(e.target.value) || 1))} style={inputStyle} /></div>
+                  <div><label style={labelStyle}>Min sends</label><input type="number" value={form.bounce_pause_min_sends} onChange={(e) => set('bounce_pause_min_sends', Math.max(1, parseInt(e.target.value) || 1))} style={inputStyle} /></div>
+                </div>
+              )}
+            </div>
 
             {error && <div style={{ fontSize: 11, color: '#d98a8a' }}>{error}</div>}
 

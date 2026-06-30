@@ -13,7 +13,7 @@ import {
   markExported,
   rejectDraft,
   resolveManual,
-  runNewProspects,
+  enrichWaveNow,
   setDisposition,
 } from '@/lib/integrations/outreach/actions'
 import { queueDraftSend, cancelSend, processSendQueue, scheduleDraftSends, getScheduledSends, scanRepliesNow } from '@/lib/integrations/outreach/sending'
@@ -666,34 +666,23 @@ export function OutreachWorkspace() {
   // Chunked run: processes the queue 5 at a time, updating the progress panel
   // and the live list after each chunk, until the queue drains. This both shows
   // progress and lets lists larger than the per-call cap finish in one click.
+  // Wave-based: enrich one buffer's worth (~3 days of send capacity) per click so
+  // time-sensitive facts stay fresh. The cron tops up automatically too; click
+  // again (or wait) to enrich the next wave.
   const handleRun = useCallback(async () => {
     if (!companyId) return
     setRunning(true)
     setNotice(null)
-    let processed = 0
-    let drafted = 0
-    let skipped = 0
-    let remaining = 0
-    let cost = 0
-    setProgress({ processed: 0, total: 0, drafted: 0, skipped: 0, cost: 0 })
-    for (let guard = 0; guard < 200; guard++) {
-      const r = await runNewProspects(companyId, 5)
-      if (!r.ok) {
-        setNotice(r.error)
-        break
-      }
-      processed += r.data.processed
-      drafted += r.data.drafted
-      skipped += r.data.skipped
-      cost += r.data.cost_usd
-      remaining = r.data.remaining
-      setProgress({ processed, total: processed + remaining, drafted, skipped, cost })
-      await refresh()
-      if (r.data.processed === 0 || remaining === 0) break
-    }
+    const r = await enrichWaveNow(companyId)
     setRunning(false)
-    setProgress(null)
-    setNotice(`Done. ${drafted} personalized, ${skipped} template. ${remaining} remaining. ${fmtUsd(cost)} this run.`)
+    if (!r.ok) return setNotice(r.error)
+    const { enriched, drafted, skipped, remaining, cost_usd, note } = r.data
+    setNotice(
+      enriched === 0
+        ? `Nothing enriched${note ? ` — ${note}` : ''}.`
+        : `Enriched ${enriched} (${drafted} personalized, ${skipped} template). ${remaining} left for later waves. ${fmtUsd(cost_usd)} this run.`,
+    )
+    refresh()
   }, [companyId, refresh])
 
   const handleMarkExported = useCallback(
@@ -846,8 +835,8 @@ export function OutreachWorkspace() {
         <button onClick={handleProcessQueue} disabled={processing || (c?.queued ?? 0) === 0} style={btnGhost(ACCENT)}>
           {processing ? 'Processing…' : `Process queue${c?.queued ? ` (${c.queued})` : ''}`}
         </button>
-        <button onClick={handleRun} disabled={running || (c?.new ?? 0) === 0} style={btnGhost(ACCENT)}>
-          {running ? 'Running…' : `Run enrichment${c?.new ? ` (${c.new})` : ''}`}
+        <button onClick={handleRun} disabled={running || (c?.new ?? 0) === 0} style={btnGhost(ACCENT)} title="Enrich one wave (~3 days of send capacity). Keeps federal-award facts fresh instead of draining the whole list at once.">
+          {running ? 'Enriching…' : `Enrich wave${c?.new ? ` (${c.new})` : ''}`}
         </button>
       </div>
 
@@ -861,6 +850,11 @@ export function OutreachWorkspace() {
           <Metric label="Replied" value={c.replied} accent="#1D9E75" />
           <Metric label="Reply rate" value={fmtPct(snapshot?.reply_rate ?? 0, c.sent)} />
           <Metric label="API cost" value={fmtUsd(snapshot?.cost_usd_total ?? 0)} />
+        </div>
+      )}
+      {snapshot?.sending?.pause_reason === 'bounce_rate' && !snapshot.sending.active && (
+        <div style={{ fontSize: 12, fontWeight: 600, color: '#e0a060', background: 'var(--app-card-2)', border: `1px solid ${BORDER}`, borderRadius: 8, padding: '8px 12px' }}>
+          Sending auto-paused — bounce rate hit {Math.round((snapshot.sending.bounce_rate_7d ?? 0) * 100)}% over the last 7 days. Clean the list, then re-enable in <button onClick={() => setSendingModalOpen(true)} style={{ ...btnGhost('#e0a060'), padding: '2px 8px' }}>Sending</button>.
         </div>
       )}
       {notice && <div style={{ fontSize: 11, color: 'var(--app-text-2)' }}>{notice}</div>}
