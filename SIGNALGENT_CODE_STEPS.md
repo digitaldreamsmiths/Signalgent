@@ -1719,3 +1719,42 @@ New: `supabase/migrations/20260618000000_outreach_draft_exported.sql`. Modified:
 
 - Exported features need `20260618000000_outreach_draft_exported.sql` applied to Supabase.
 - Manual resolve takes the top USASpending match for the typed name; a multi-candidate picker would be a further refinement.
+
+## Session 23 — Outreach send-pipeline hardening: crash recovery, write verification, cron isolation, health banners
+
+**Goal**: Eliminate the silent-failure modes in the live send pipeline: rows stranded in `sending` forever after a cron crash, unchecked Supabase writes that could double-email a real prospect, one bad company killing the whole cron tick, and pipeline-stopping states (auto-pause, Gmail token failure) that nothing surfaced to the user.
+
+### Locked scope
+
+- IN: stale-`sending` recovery, error-checked send-status writes with retry, per-company cron try/catch, UI banners for paused sending + Gmail connection errors.
+- NOT in: automatic re-queue of interrupted sends (deliberately — see below), Gmail Sent-folder verification of interrupted sends, alerting/email notifications, provider-level idempotency keys.
+
+### Architectural choices
+
+- **Interrupted sends are marked `failed`, never blindly re-queued.** A row stuck in `sending` means the tick died somewhere around `provider.send()` — the email may already be in the recipient's inbox. Re-queuing risks a duplicate cold email to a real prospect (reputation damage); failing with error `interrupted mid-send, verify in Gmail Sent folder before re-queuing` keeps the human in the loop. The failed send surfaces in the draft detail pane with its error, and the "Queue to send" button remains available after manual verification.
+- **Staleness keys on `updated_at`, set explicitly in code — no schema change.** `outreach_sends` has an `updated_at` column but (unlike `outreach_prospects`/`outreach_drafts`) no touch trigger, so the worker now writes `updated_at` on every status transition it owns. Rows stranded before this fix still recover: their `updated_at` is the insert-time default, already older than the 10-minute threshold (`STALE_SENDING_MINUTES`). The sweep (`recoverStaleSending`) runs at the top of `runQueue` *before* the `active` check, so a manual "Process queue" recovers stuck rows even while sending is paused. No migration needed.
+- **When the `sent` mark fails, retry the UPDATE — never the send.** `updateWithRetry` (3 attempts, 500ms/1s backoff) wraps the two lifecycle-critical writes: `sent` (a dropped write here makes a delivered email look retriable → duplicate) and `failed`. If the `sent` mark still fails after retries, the row stays `sending` and the stale sweep later flips it to `failed` with the verify-first note — conservative in the same direction as crash recovery. The claim write (`queued`→`sending`) is checked too: if it can't be recorded, the row is skipped this tick rather than sent with untracked state.
+- **Cron isolates companies.** Each company's `enforceBouncePause` → `enrichToBuffer` → `runQueue` → `scanReplies` chain is wrapped in try/catch; a throw is logged, pushed to an `errors: [{company_id, error}]` array in the response JSON, and the loop continues. Previously one throw 500'd the whole tick and starved every other company.
+- **Health surfaced where the user already looks.** `getOutreachSnapshot` now reports `sending.provider` and (when provider is `gmail`) `sending.gmail: {status, last_error}` from `connected_accounts` — the row `lib/integrations/google/tokens.ts` flips to `error` when token refresh fails. The Outreach workspace renders prominent banners for: Gmail not `connected` (red, with `last_error`, points to Settings → Connections), bounce-rate auto-pause (existing banner, restyled), and manual pause while sends are still queued (the "I paused and forgot, why is nothing going out" case).
+
+### Files modified
+
+| File | Change |
+| --- | --- |
+| `lib/integrations/outreach/send/worker.ts` | `STALE_SENDING_MINUTES`, `recoverStaleSending()`, `updateWithRetry()`; runQueue sweeps stale rows first and returns `{sent, failed, recovered}`; all four status writes (cancel/claim/sent/failed) error-checked; claim sets `updated_at` explicitly |
+| `app/api/outreach/cron/route.ts` | Per-company try/catch; response JSON gains `recovered` and `errors[]` |
+| `lib/integrations/outreach/sending.ts` | `processSendQueue` result type includes `recovered` |
+| `lib/integrations/outreach/types.ts` | `OutreachSnapshot['sending']` gains `provider` + `gmail` health |
+| `lib/integrations/outreach/actions.ts` | Snapshot fetches the gmail `connected_accounts` row when provider is `gmail` |
+| `components/widgets/content/outreach-widgets.tsx` | `Banner` component; Gmail-error / auto-pause / manual-pause-with-queue banners; process-queue notice reports recovered rows |
+
+### Local verification
+
+- `npx tsc --noEmit` clean. `eslint` on touched files: only pre-existing issues (the `set-state-in-effect` error at the `loadScheduled` effect and the unused `Database` import warning predate this session).
+- No migration to apply — the fix rides on the existing `outreach_sends.updated_at` column.
+
+### Residuals heading into Session 24
+
+- **Recovered-send verification is manual.** A follow-up could check Gmail's Sent folder (via the existing `getThread`/search plumbing) to auto-classify an interrupted send as actually-sent vs. safe-to-requeue.
+- **`connected_accounts` writes from the cron path** (`markError` in the shared Google token loader) go through the injected service-role client, but the snapshot read uses the RLS client — fine for the v1 single-workspace user, worth revisiting for multi-tenant.
+- Session numbering: 20–22 (outreach pivot, reply/bounce detection, warmup waves) shipped without changelog entries; this entry assumes they occupy those numbers.
