@@ -15,6 +15,10 @@ type DB = SupabaseClient<Database>
 /** Per-tick cap on how many due emails the worker sends. */
 const BATCH = 10
 
+/** A row still 'sending' after this many minutes was stranded by a crash/timeout
+ * of a previous tick (a single send takes seconds, and ticks run every ~5 min). */
+const STALE_SENDING_MINUTES = 10
+
 export const SETTINGS_DEFAULTS: SendSettings = {
   sender_name: null,
   sender_email: null,
@@ -250,22 +254,71 @@ export async function computeBatchSlots(
   return slots
 }
 
+/** Retry a flaky Supabase write a few times. Used where a dropped write would
+ * corrupt the send lifecycle (e.g. an unrecorded 'sent' → duplicate email). */
+async function updateWithRetry(
+  attempt: () => PromiseLike<{ error: { message: string } | null }>,
+  tries = 3,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  let message = 'unknown error'
+  for (let i = 0; i < tries; i++) {
+    const { error } = await attempt()
+    if (!error) return { ok: true }
+    message = error.message
+    if (i < tries - 1) await new Promise((r) => setTimeout(r, 500 * (i + 1)))
+  }
+  return { ok: false, message }
+}
+
+/**
+ * Recover rows stranded in 'sending' by a crash/timeout of a previous tick.
+ * The email may or may not have left the provider before the crash, so a blind
+ * re-queue risks a duplicate send to a real prospect — mark them failed with a
+ * note telling the user to verify instead. Keys on `updated_at`, which the
+ * worker sets explicitly when it claims a row (outreach_sends has no touch
+ * trigger; rows stranded before that write default to created_at, which is
+ * also stale by then).
+ */
+export async function recoverStaleSending(supabase: DB, companyId: string): Promise<number> {
+  const cutoff = new Date(Date.now() - STALE_SENDING_MINUTES * 60000).toISOString()
+  const { data, error } = await supabase
+    .from('outreach_sends')
+    .update({
+      status: 'failed',
+      error: 'interrupted mid-send, verify in Gmail Sent folder before re-queuing',
+      updated_at: new Date().toISOString(),
+    })
+    .eq('company_id', companyId)
+    .eq('status', 'sending')
+    .lt('updated_at', cutoff)
+    .select('id')
+  if (error) {
+    console.error(`[send-worker] stale-sending recovery failed for company ${companyId}: ${error.message}`)
+    return 0
+  }
+  return data?.length ?? 0
+}
+
 /**
  * Send the due, queued emails for a company (one tick). `scheduled_at` is the
  * source of truth for timing (set by auto-slotting or explicit user scheduling),
  * so the worker simply sends whatever is due — no business-hours gate here.
- * Re-checks suppression, marks sending → sent/failed, advances the sent draft to
- * 'exported'. No-ops when sending is inactive.
+ * Recovers rows a crashed tick left in 'sending', re-checks suppression, marks
+ * sending → sent/failed, advances the sent draft to 'exported'. No-ops when
+ * sending is inactive.
  */
-export async function runQueue(supabase: DB, companyId: string): Promise<{ sent: number; failed: number }> {
+export async function runQueue(supabase: DB, companyId: string): Promise<{ sent: number; failed: number; recovered: number }> {
+  // Sweep stale 'sending' rows even when paused, so nothing hangs invisibly.
+  const recovered = await recoverStaleSending(supabase, companyId)
+
   const settings = await loadSettings(supabase, companyId)
-  if (!settings.active) return { sent: 0, failed: 0 }
+  if (!settings.active) return { sent: 0, failed: 0, recovered }
 
   let provider
   try {
     provider = getProvider(settings.provider as ProviderName, { companyId, supabase })
   } catch {
-    return { sent: 0, failed: 0 } // misconfigured provider — nothing to do this tick
+    return { sent: 0, failed: 0, recovered } // misconfigured provider — nothing to do this tick
   }
 
   const { data: due } = await supabase
@@ -283,10 +336,23 @@ export async function runQueue(supabase: DB, companyId: string): Promise<{ sent:
     // Suppression re-check at send time.
     const { data: p } = await supabase.from('outreach_prospects').select('disposition').eq('id', s.prospect_id).maybeSingle()
     if (p && p.disposition !== 'open') {
-      await supabase.from('outreach_sends').update({ status: 'canceled', error: 'prospect closed before send' }).eq('id', s.id)
+      const { error: cancelErr } = await supabase.from('outreach_sends').update({ status: 'canceled', error: 'prospect closed before send' }).eq('id', s.id)
+      // On failure the row stays 'queued' and is re-checked (and re-canceled) next tick.
+      if (cancelErr) console.error(`[send-worker] could not cancel send ${s.id}: ${cancelErr.message}`)
       continue
     }
-    await supabase.from('outreach_sends').update({ status: 'sending' }).eq('id', s.id)
+    // Claim the row before talking to the provider. If the claim can't be
+    // recorded, skip — sending with unrecorded state risks a duplicate later.
+    // updated_at is set explicitly (no touch trigger) so the stale sweep can
+    // tell how long the row has been in 'sending'.
+    const { error: claimErr } = await supabase
+      .from('outreach_sends')
+      .update({ status: 'sending', updated_at: new Date().toISOString() })
+      .eq('id', s.id)
+    if (claimErr) {
+      console.error(`[send-worker] could not claim send ${s.id}: ${claimErr.message}`)
+      continue
+    }
     // Thread follow-ups under the prospect's most recent sent email.
     const { data: prior } = await supabase
       .from('outreach_sends')
@@ -315,13 +381,33 @@ export async function runQueue(supabase: DB, companyId: string): Promise<{ sent:
       res = { ok: false, error: e instanceof Error ? e.message : 'send failed' }
     }
     if (res.ok) {
-      await supabase.from('outreach_sends').update({ status: 'sent', sent_at: new Date().toISOString(), provider_message_id: res.providerMessageId ?? null, thread_id: res.threadId ?? null, message_id_header: res.messageIdHeader ?? null }).eq('id', s.id)
-      await supabase.from('outreach_drafts').update({ status: 'exported' }).eq('id', s.draft_id)
+      // The email is out — this write MUST land or the row would look retriable
+      // and the prospect could be double-emailed. Retry the update, not the send.
+      const mark = await updateWithRetry(() =>
+        supabase
+          .from('outreach_sends')
+          .update({ status: 'sent', sent_at: new Date().toISOString(), provider_message_id: res.providerMessageId ?? null, thread_id: res.threadId ?? null, message_id_header: res.messageIdHeader ?? null, updated_at: new Date().toISOString() })
+          .eq('id', s.id),
+      )
+      if (!mark.ok) {
+        // Row stays 'sending'; the stale sweep will flip it to 'failed' with a
+        // verify-before-requeue note rather than letting it re-send blindly.
+        console.error(`[send-worker] EMAIL SENT but could not mark send ${s.id} as sent: ${mark.message}`)
+      }
+      const { error: draftErr } = await supabase.from('outreach_drafts').update({ status: 'exported' }).eq('id', s.draft_id)
+      if (draftErr) console.error(`[send-worker] could not advance draft ${s.draft_id} to exported: ${draftErr.message}`)
       sent++
     } else {
-      await supabase.from('outreach_sends').update({ status: 'failed', error: res.error ?? 'unknown error' }).eq('id', s.id)
+      const mark = await updateWithRetry(() =>
+        supabase
+          .from('outreach_sends')
+          .update({ status: 'failed', error: res.error ?? 'unknown error', updated_at: new Date().toISOString() })
+          .eq('id', s.id),
+      )
+      // On failure the row stays 'sending' and the stale sweep picks it up.
+      if (!mark.ok) console.error(`[send-worker] could not mark send ${s.id} as failed: ${mark.message}`)
       failed++
     }
   }
-  return { sent, failed }
+  return { sent, failed, recovered }
 }

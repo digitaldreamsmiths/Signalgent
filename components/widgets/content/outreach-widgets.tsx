@@ -125,6 +125,15 @@ function Pill({ label, color }: { label: string; color: string }) {
   )
 }
 
+/** Prominent full-width alert for pipeline-stopping states (paused, Gmail broken). */
+function Banner({ color, children }: { color: string; children: React.ReactNode }) {
+  return (
+    <div style={{ fontSize: 12, fontWeight: 600, color, background: 'var(--app-card-2)', border: `1px solid ${color}`, borderRadius: 8, padding: '8px 12px' }}>
+      {children}
+    </div>
+  )
+}
+
 /** A compact metric tile for the status bar. Numbers use the mono face. */
 function Metric({ label, value, accent }: { label: string; value: string | number; accent?: string }) {
   return (
@@ -774,7 +783,11 @@ export function OutreachWorkspace() {
     const r = await processSendQueue(companyId)
     setProcessing(false)
     if (!r.ok) return pushToast(r.error, 'error')
-    pushToast(`Sent ${r.data.sent}${r.data.failed ? `, ${r.data.failed} failed` : ''}.`, r.data.failed ? 'error' : 'info')
+    pushToast(
+      `Sent ${r.data.sent}${r.data.failed ? `, ${r.data.failed} failed` : ''}.` +
+        (r.data.recovered ? ` Recovered ${r.data.recovered} send${r.data.recovered === 1 ? '' : 's'} stuck from an interrupted run — marked failed, verify in Gmail Sent before re-queuing.` : ''),
+      r.data.failed || r.data.recovered ? 'error' : 'info',
+    )
     refresh()
   }
 
@@ -858,15 +871,23 @@ export function OutreachWorkspace() {
         }
       `}</style>
 
-      {/* Auto-pause is the one state where the whole pipeline is silently stopped,
-          so it goes first — above everything else. */}
+      {/* Pipeline-stopping states. Each of these silently halts sends/scans, so
+          they go first — above everything else, impossible to miss. */}
+      {snapshot?.sending?.gmail && snapshot.sending.gmail.status !== 'connected' && (
+        <Banner color="#b04545">
+          ⚠ Gmail connection {snapshot.sending.gmail.status === 'not_connected' ? 'missing' : `in ${snapshot.sending.gmail.status} state`} — sending and reply detection are stopped
+          {snapshot.sending.gmail.last_error ? `: ${snapshot.sending.gmail.last_error}` : ''}. Reconnect Gmail in Settings → Connections.
+        </Banner>
+      )}
       {snapshot?.sending?.pause_reason === 'bounce_rate' && !snapshot.sending.active && (
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', fontSize: 12, fontWeight: 600, color: '#e0a060', background: 'var(--app-card-2)', border: '1px solid #e0a060', borderRadius: 8, padding: '10px 12px' }}>
-          <span>
-            ⚠ Sending auto-paused — bounce rate hit {Math.round((snapshot.sending.bounce_rate_7d ?? 0) * 100)}% over the last 7 days. Clean the list, then re-enable in{' '}
-            <button onClick={() => setSendingModalOpen(true)} style={{ ...btnGhost('#e0a060'), padding: '2px 8px' }}>Sending</button>.
-          </span>
-        </div>
+        <Banner color="#e0a060">
+          ⚠ Sending auto-paused — bounce rate hit {Math.round((snapshot.sending.bounce_rate_7d ?? 0) * 100)}% over the last 7 days. Clean the list, then re-enable in <button onClick={() => setSendingModalOpen(true)} style={{ ...btnGhost('#e0a060'), padding: '2px 8px' }}>Sending</button>.
+        </Banner>
+      )}
+      {snapshot?.sending?.pause_reason === 'manual' && !snapshot.sending.active && (c?.queued ?? 0) > 0 && (
+        <Banner color="#e0a060">
+          ⚠ Sending is off — {c!.queued} queued email{c!.queued === 1 ? '' : 's'} will not go out until you re-enable it in <button onClick={() => setSendingModalOpen(true)} style={{ ...btnGhost('#e0a060'), padding: '2px 8px' }}>Sending</button>.
+        </Banner>
       )}
 
       {/* Header: title + intake */}

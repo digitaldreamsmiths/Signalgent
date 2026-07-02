@@ -21,6 +21,7 @@ import { buildTemplateFollowup } from './template'
 import { persistOutcome, recordUsage, runEnrichmentBatch, enrichToBuffer, RUN_BATCH } from './enrich-run'
 import { loadSettings, getEffectiveDailyCap } from './send/worker'
 import { recentBounceStats } from './send/scan'
+import { getAccount } from '../accounts'
 import { draftEmail } from './draft'
 import { undeliverableDomains } from './deliverability'
 import type { LLMUsage } from '../../llm/client'
@@ -246,11 +247,22 @@ export async function getOutreachSnapshot(companyId: string): Promise<OutreachSn
 
   const settings = await loadSettings(supabase, companyId)
   const { rate: bounce_rate_7d } = await recentBounceStats(supabase, companyId, 7)
+  // Gmail health: token refresh failures mark the account 'error', which makes
+  // the worker/scanner silently skip — surface it so the user can reconnect.
+  let gmail: OutreachSnapshot['sending']['gmail'] = null
+  if (settings.provider === 'gmail') {
+    const account = await getAccount(companyId, 'gmail')
+    gmail = account
+      ? { status: account.status, last_error: account.last_error }
+      : { status: 'not_connected', last_error: null }
+  }
   const sending = {
     active: settings.active,
     pause_reason: settings.pause_reason,
     effective_daily_cap: getEffectiveDailyCap(settings),
     bounce_rate_7d,
+    provider: settings.provider,
+    gmail,
   }
 
   return { prospects: views, counts, reply_rate, cost_usd_total, sending }

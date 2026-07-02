@@ -148,7 +148,7 @@ export async function cancelSend(companyId: string, sendId: string): Promise<Act
 }
 
 /** Manually process the due send queue now (same path the cron worker runs). */
-export async function processSendQueue(companyId: string): Promise<ActionResult<{ sent: number; failed: number }>> {
+export async function processSendQueue(companyId: string): Promise<ActionResult<{ sent: number; failed: number; recovered: number }>> {
   try {
     await requireCompanyAccess(companyId)
   } catch (err) {
