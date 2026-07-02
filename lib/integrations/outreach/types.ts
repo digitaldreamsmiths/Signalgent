@@ -202,5 +202,12 @@ export interface OutreachSnapshot {
     effective_daily_cap: number
     /** Bounce rate over the last 7 days, as a fraction. */
     bounce_rate_7d: number
+    provider: 'dry_run' | 'gmail' | 'resend'
+    /** Gmail connection health (null unless provider is 'gmail'). Anything but
+     * 'connected' means sends and reply scans are silently skipped — surface it. */
+    gmail: {
+      status: 'connected' | 'expired' | 'revoked' | 'error' | 'disconnected' | 'not_connected'
+      last_error: string | null
+    } | null
   }
 }

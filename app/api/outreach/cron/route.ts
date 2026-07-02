@@ -41,22 +41,32 @@ async function handle(request: Request) {
   let replied = 0
   let bounced = 0
   let enriched = 0
+  let recovered = 0
+  const errors: { company_id: string; error: string }[] = []
   for (const c of companies ?? []) {
-    // Deliverability: pause sending if the recent bounce rate is too high.
-    await enforceBouncePause(svc, c.company_id)
-    // Wave enrichment: keep ~3 days of send capacity enriched-and-ready.
-    const wave = await enrichToBuffer(svc, c.company_id, null)
-    enriched += wave.enriched
-    // Drip: send what's due (runQueue bails if auto-pause just deactivated it).
-    const r = await runQueue(svc, c.company_id)
-    sent += r.sent
-    failed += r.failed
-    // Close the loop: detect inbound replies/bounces and suppress those prospects.
-    const scan = await scanReplies(svc, c.company_id)
-    replied += scan.replied
-    bounced += scan.bounced
+    // One company blowing up must not kill the tick for the rest.
+    try {
+      // Deliverability: pause sending if the recent bounce rate is too high.
+      await enforceBouncePause(svc, c.company_id)
+      // Wave enrichment: keep ~3 days of send capacity enriched-and-ready.
+      const wave = await enrichToBuffer(svc, c.company_id, null)
+      enriched += wave.enriched
+      // Drip: send what's due (runQueue bails if auto-pause just deactivated it).
+      const r = await runQueue(svc, c.company_id)
+      sent += r.sent
+      failed += r.failed
+      recovered += r.recovered
+      // Close the loop: detect inbound replies/bounces and suppress those prospects.
+      const scan = await scanReplies(svc, c.company_id)
+      replied += scan.replied
+      bounced += scan.bounced
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      console.error(`[outreach-cron] company ${c.company_id} failed: ${message}`)
+      errors.push({ company_id: c.company_id, error: message })
+    }
   }
-  return NextResponse.json({ companies: companies?.length ?? 0, sent, failed, replied, bounced, enriched })
+  return NextResponse.json({ companies: companies?.length ?? 0, sent, failed, recovered, replied, bounced, enriched, errors })
 }
 
 // Vercel Cron invokes via GET; Supabase pg_cron (pg_net) posts. Support both.
