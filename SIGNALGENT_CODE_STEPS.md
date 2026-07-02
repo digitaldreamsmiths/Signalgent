@@ -1758,3 +1758,28 @@ New: `supabase/migrations/20260618000000_outreach_draft_exported.sql`. Modified:
 - **Recovered-send verification is manual.** A follow-up could check Gmail's Sent folder (via the existing `getThread`/search plumbing) to auto-classify an interrupted send as actually-sent vs. safe-to-requeue.
 - **`connected_accounts` writes from the cron path** (`markError` in the shared Google token loader) go through the injected service-role client, but the snapshot read uses the RLS client — fine for the v1 single-workspace user, worth revisiting for multi-tenant.
 - Session numbering: 20–22 (outreach pivot, reply/bounce detection, warmup waves) shipped without changelog entries; this entry assumes they occupy those numbers.
+
+## Session 24 — Outreach workspace UX bundle: auto-refresh, toasts, top health banners, mobile layout, send retry
+
+Small daily-use fixes from real use (desktop + phone). Landed alongside Session 23 (send-pipeline hardening) — the two touched the same widget file; the merge resolution below folds Session 23's health banners and recovered-send reporting into this session's toast/top-banner model.
+
+### Changes
+
+All in `components/widgets/content/outreach-widgets.tsx` unless noted.
+
+- **Auto-refresh.** The snapshot used to load once on mount and go stale while the Vercel cron mutated send/reply state every 5 minutes. A polling effect now refetches every 2.5 minutes while the tab is visible (`document.visibilityState` guard, no fetches from a backgrounded tab) and refetches immediately on `visibilitychange` back to visible — so returning to the tab shows current counts at once. The Scheduled tab's list refreshes on the same tick when active.
+- **Toast stack replaces the ephemeral `notice`.** Action results (ingest, enrich, approve, process queue, scan replies, schedule, delete) now push toasts to a fixed bottom-right stack instead of a single line that the next action silently overwrote. Info toasts auto-dismiss after 4s; error toasts get a red border and persist until dismissed (×). "Process queue" with partial failures — or Session 23's recovered-from-interrupted rows, which need a manual Gmail Sent check — reports as a persistent error toast so it isn't missed.
+- **Health banners moved to the top.** Session 23's three pipeline-stopping banners (Gmail connection broken, bounce-rate auto-pause, manual pause with emails still queued) rendered below the metrics grid where they scrolled out of sight; they're now the first elements in the workspace (same shared `Banner` component, ⚠ prefix) so a stopped pipeline is impossible to miss.
+- **Mobile layout.** The two-pane review grid hard-coded `minmax(0, 300px) minmax(0, 1fr)`, which broke at phone widths. A small `<style>` block (inline styles can't express media queries) makes it stack to one column below 700px, capping the list pane at 38vh so the detail pane stays reachable; the same query gives buttons and text inputs a 40px min-height for touch. Found live: the app shell's fixed-height flex chain squeezed the stacked panes to ~2px on a phone (the wrapped header/metrics/tabs ate the whole viewport), so the mobile query also releases the workspace height (`height: auto !important` to beat the inline style, plus `flex-shrink: 0` so the page wrapper can't squeeze it back) and lets the already-scrollable `<main>` handle vertical scroll. `app/layout.tsx` now also exports a `viewport` object (`width: device-width, initialScale: 1`) — Next 16 emits a default viewport meta tag, but the export makes the mobile intent explicit (per `node_modules/next/dist/docs/.../generate-viewport.md`, the `viewport` export replaced viewport-in-`metadata`).
+- **Retry failed sends.** A failed send row showed the error with no recovery path short of re-approving. A one-click Retry button next to the failure message calls the existing `queueDraftSend` (its duplicate guard only blocks `queued/sending/sent`, so re-queueing after `failed` was already allowed server-side — no backend change).
+
+### Local verification
+
+- `tsc --noEmit` clean.
+- Live in preview against real data (1,000 prospects): toast appears bottom-right within ~300ms of an action and auto-dismisses at ~4s (measured by polling); at 375px the grid stacks to one column (list 308px = 38vh with internal scroll, detail at natural height, no horizontal overflow), buttons/inputs hit 40px; back at desktop the two panes (300px + 1fr), fixed-height workspace, and 30px buttons are unchanged. Viewport meta serves `width=device-width, initial-scale=1`.
+- Not exercised live: error-toast persistence (same code path as info minus the timeout) and the 2.5-min poll tick (code-reviewed only).
+
+### Residuals
+
+- Polling refetches the full snapshot (~same payload as initial load) every 2.5 min; fine at current list sizes, revisit if prospect counts grow into the thousands (delta endpoint or SWR).
+- Retry on a Session-23-recovered send ("interrupted mid-send") is one click away from double-emailing if the user skips the Gmail Sent check the error text asks for; a confirm step on that specific error string would be safer.
