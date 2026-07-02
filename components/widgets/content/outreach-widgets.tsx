@@ -433,6 +433,9 @@ function TouchCard({ draft, companyId, onChanged }: { draft: OutreachDraftView; 
           {draft.send.status === 'queued' && (
             <button disabled={busy} onClick={() => act(() => cancelSend(companyId, draft.send!.id))} style={btnGhost()}>Cancel send</button>
           )}
+          {draft.send.status === 'failed' && (
+            <button disabled={busy} onClick={() => act(() => queueDraftSend(companyId, draft.id))} style={btnGhost(ACCENT)}>Retry</button>
+          )}
         </div>
       )}
 
@@ -579,6 +582,9 @@ function DraftDetail({ prospect, companyId, onChanged }: { prospect: OutreachPro
 
 // ── Workspace ─────────────────────────────────────────────────────────────────
 
+/** Action feedback. Info toasts auto-dismiss; errors stay until dismissed. */
+type Toast = { id: number; text: string; kind: 'info' | 'error' }
+
 export function OutreachWorkspace() {
   const { activeCompany } = useCompany()
   const companyId = activeCompany?.id ?? null
@@ -586,7 +592,8 @@ export function OutreachWorkspace() {
   const [snapshot, setSnapshot] = useState<OutreachSnapshot | null>(null)
   const [loading, setLoading] = useState(true)
   const [raw, setRaw] = useState('')
-  const [notice, setNotice] = useState<string | null>(null)
+  const [toasts, setToasts] = useState<Toast[]>([])
+  const toastSeq = useRef(0)
   const [running, setRunning] = useState(false)
   const [progress, setProgress] = useState<{ processed: number; total: number; drafted: number; skipped: number; cost: number } | null>(null)
   const [filter, setFilter] = useState<Filter>('review')
@@ -612,6 +619,19 @@ export function OutreachWorkspace() {
     setScheduledSends(await getScheduledSends(companyId))
   }, [companyId])
 
+  const dismissToast = useCallback((id: number) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id))
+  }, [])
+
+  const pushToast = useCallback(
+    (text: string, kind: Toast['kind'] = 'info') => {
+      const id = ++toastSeq.current
+      setToasts((prev) => [...prev, { id, text, kind }])
+      if (kind !== 'error') setTimeout(() => dismissToast(id), 4000)
+    },
+    [dismissToast],
+  )
+
   useEffect(() => {
     if (!companyId) return
     let active = true
@@ -626,6 +646,24 @@ export function OutreachWorkspace() {
     }
   }, [companyId])
 
+  // The Vercel cron mutates send/reply state every ~5 minutes; poll while the
+  // tab is visible (and refetch as soon as it becomes visible again) so counts
+  // and statuses stay current without a manual reload.
+  useEffect(() => {
+    if (!companyId) return
+    const tick = () => {
+      if (document.visibilityState !== 'visible') return
+      refresh()
+      if (filter === 'scheduled') loadScheduled()
+    }
+    const interval = setInterval(tick, 150_000)
+    document.addEventListener('visibilitychange', tick)
+    return () => {
+      clearInterval(interval)
+      document.removeEventListener('visibilitychange', tick)
+    }
+  }, [companyId, filter, refresh, loadScheduled])
+
   useEffect(() => {
     if (filter === 'scheduled') loadScheduled()
   }, [filter, loadScheduled])
@@ -636,18 +674,17 @@ export function OutreachWorkspace() {
   const ingest = useCallback(
     async (text: string, onSuccess?: () => void) => {
       if (!companyId || !text.trim()) return
-      setNotice(null)
       const r = await ingestProspects(companyId, text)
-      if (!r.ok) return setNotice(r.error)
+      if (!r.ok) return pushToast(r.error, 'error')
       onSuccess?.()
-      setNotice(
+      pushToast(
         `Added ${r.data.added}. ${r.data.duplicates} duplicate(s), ${r.data.invalid} invalid` +
           (r.data.undeliverable > 0 ? `, ${r.data.undeliverable} undeliverable (no mail server)` : '') +
           '.',
       )
       refresh()
     },
-    [companyId, refresh],
+    [companyId, refresh, pushToast],
   )
 
   const handleIngest = useCallback(() => ingest(raw, () => setRaw('')), [ingest, raw])
@@ -672,41 +709,38 @@ export function OutreachWorkspace() {
   const handleRun = useCallback(async () => {
     if (!companyId) return
     setRunning(true)
-    setNotice(null)
     const r = await enrichWaveNow(companyId)
     setRunning(false)
-    if (!r.ok) return setNotice(r.error)
+    if (!r.ok) return pushToast(r.error, 'error')
     const { enriched, drafted, skipped, remaining, cost_usd, note } = r.data
-    setNotice(
+    pushToast(
       enriched === 0
         ? `Nothing enriched${note ? ` — ${note}` : ''}.`
         : `Enriched ${enriched} (${drafted} personalized, ${skipped} template). ${remaining} left for later waves. ${fmtUsd(cost_usd)} this run.`,
     )
     refresh()
-  }, [companyId, refresh])
+  }, [companyId, refresh, pushToast])
 
   const handleMarkExported = useCallback(
     async (ids: string[]) => {
       if (!companyId || ids.length === 0) return
-      setNotice(null)
       const r = await markExported(companyId, ids)
-      if (!r.ok) return setNotice(r.error)
-      setNotice(`Moved ${r.data.count} draft(s) to Exported.`)
+      if (!r.ok) return pushToast(r.error, 'error')
+      pushToast(`Moved ${r.data.count} draft(s) to Exported.`)
       refresh()
     },
-    [companyId, refresh],
+    [companyId, refresh, pushToast],
   )
 
   const handleApproveAll = useCallback(
     async (ids: string[]) => {
       if (!companyId || ids.length === 0) return
-      setNotice(null)
       const r = await approveDrafts(companyId, ids)
-      if (!r.ok) return setNotice(r.error)
-      setNotice(`Approved ${r.data.count} draft(s).`)
+      if (!r.ok) return pushToast(r.error, 'error')
+      pushToast(`Approved ${r.data.count} draft(s).`)
       refresh()
     },
-    [companyId, refresh],
+    [companyId, refresh, pushToast],
   )
 
   const handleExport = useCallback((rows: OutreachProspectView[], name: string) => {
@@ -737,22 +771,20 @@ export function OutreachWorkspace() {
   const handleProcessQueue = async () => {
     if (!companyId) return
     setProcessing(true)
-    setNotice(null)
     const r = await processSendQueue(companyId)
     setProcessing(false)
-    if (!r.ok) return setNotice(r.error)
-    setNotice(`Sent ${r.data.sent}${r.data.failed ? `, ${r.data.failed} failed` : ''}.`)
+    if (!r.ok) return pushToast(r.error, 'error')
+    pushToast(`Sent ${r.data.sent}${r.data.failed ? `, ${r.data.failed} failed` : ''}.`, r.data.failed ? 'error' : 'info')
     refresh()
   }
 
   const handleScanReplies = async () => {
     if (!companyId) return
     setScanning(true)
-    setNotice(null)
     const r = await scanRepliesNow(companyId)
     setScanning(false)
-    if (!r.ok) return setNotice(r.error)
-    setNotice(
+    if (!r.ok) return pushToast(r.error, 'error')
+    pushToast(
       r.data.replied === 0 && r.data.bounced === 0
         ? `No new replies or bounces${r.data.skipped ? ` (${r.data.skipped})` : ''}.`
         : `Found ${r.data.replied} repl${r.data.replied === 1 ? 'y' : 'ies'}, ${r.data.bounced} bounce${r.data.bounced === 1 ? '' : 's'}.`,
@@ -774,10 +806,9 @@ export function OutreachWorkspace() {
     if (!companyId || selectedDraftIds.size === 0) return
     const prospectIds = current.filter((p) => p.draft && selectedDraftIds.has(p.draft.id)).map((p) => p.id)
     if (prospectIds.length === 0) return
-    setNotice(null)
     const r = await deleteProspects(companyId, prospectIds)
-    if (!r.ok) return setNotice(r.error)
-    setNotice(`Deleted ${r.data.deleted} prospect(s).`)
+    if (!r.ok) return pushToast(r.error, 'error')
+    pushToast(`Deleted ${r.data.deleted} prospect(s).`)
     setSelectedDraftIds(new Set())
     setConfirmBulkDelete(false)
     setSelectedId(null)
@@ -787,11 +818,10 @@ export function OutreachWorkspace() {
   const handleSchedule = async (startIso: string) => {
     if (!companyId || selectedDraftIds.size === 0) return
     setScheduling(true)
-    setNotice(null)
     const r = await scheduleDraftSends(companyId, [...selectedDraftIds], startIso)
     setScheduling(false)
-    if (!r.ok) return setNotice(r.error)
-    setNotice(`Scheduled ${r.data.scheduled}${r.data.skipped ? `, ${r.data.skipped} skipped (closed or already queued)` : ''}.`)
+    if (!r.ok) return pushToast(r.error, 'error')
+    pushToast(`Scheduled ${r.data.scheduled}${r.data.skipped ? `, ${r.data.skipped} skipped (closed or already queued)` : ''}.`)
     setSelectedDraftIds(new Set())
     setScheduleDialogOpen(false)
     refresh()
@@ -809,7 +839,36 @@ export function OutreachWorkspace() {
   )
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', gap: 12, minHeight: 0 }}>
+    <div className="outreach-ws" style={{ height: '100%', display: 'flex', flexDirection: 'column', gap: 12, minHeight: 0 }}>
+      {/* Inline styles can't express media queries, so the responsive bits live
+          here: the two-pane grid stacks below 700px and touch targets grow. */}
+      <style>{`
+        .outreach-split { display: grid; grid-template-columns: minmax(0, 300px) minmax(0, 1fr); }
+        @media (max-width: 700px) {
+          /* The app shell hands the workspace a fixed height, but on a phone the
+             wrapped header/metrics/tabs eat nearly all of it. main scrolls, so
+             release the height (!important beats the inline style; flex-shrink 0
+             stops the page wrapper squeezing it back) and let the page grow: the
+             list caps at 38vh and scrolls, the detail pane runs at natural height. */
+          .outreach-ws { height: auto !important; flex-shrink: 0; }
+          .outreach-split { grid-template-columns: minmax(0, 1fr); }
+          .outreach-split > :first-child { max-height: 38vh; }
+          .outreach-ws button { min-height: 40px; }
+          .outreach-ws input:not([type="checkbox"]):not([type="file"]) { min-height: 40px; }
+        }
+      `}</style>
+
+      {/* Auto-pause is the one state where the whole pipeline is silently stopped,
+          so it goes first — above everything else. */}
+      {snapshot?.sending?.pause_reason === 'bounce_rate' && !snapshot.sending.active && (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', fontSize: 12, fontWeight: 600, color: '#e0a060', background: 'var(--app-card-2)', border: '1px solid #e0a060', borderRadius: 8, padding: '10px 12px' }}>
+          <span>
+            ⚠ Sending auto-paused — bounce rate hit {Math.round((snapshot.sending.bounce_rate_7d ?? 0) * 100)}% over the last 7 days. Clean the list, then re-enable in{' '}
+            <button onClick={() => setSendingModalOpen(true)} style={{ ...btnGhost('#e0a060'), padding: '2px 8px' }}>Sending</button>.
+          </span>
+        </div>
+      )}
+
       {/* Header: title + intake */}
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <h1 style={{ fontSize: 16, fontWeight: 700, color: 'var(--app-text)', margin: 0, marginRight: 4, letterSpacing: 0.2 }}>Outreach</h1>
@@ -852,13 +911,6 @@ export function OutreachWorkspace() {
           <Metric label="API cost" value={fmtUsd(snapshot?.cost_usd_total ?? 0)} />
         </div>
       )}
-      {snapshot?.sending?.pause_reason === 'bounce_rate' && !snapshot.sending.active && (
-        <div style={{ fontSize: 12, fontWeight: 600, color: '#e0a060', background: 'var(--app-card-2)', border: `1px solid ${BORDER}`, borderRadius: 8, padding: '8px 12px' }}>
-          Sending auto-paused — bounce rate hit {Math.round((snapshot.sending.bounce_rate_7d ?? 0) * 100)}% over the last 7 days. Clean the list, then re-enable in <button onClick={() => setSendingModalOpen(true)} style={{ ...btnGhost('#e0a060'), padding: '2px 8px' }}>Sending</button>.
-        </div>
-      )}
-      {notice && <div style={{ fontSize: 11, color: 'var(--app-text-2)' }}>{notice}</div>}
-
       {running && progress && (
         <div style={{ border: `1px solid ${BORDER}`, borderRadius: 8, padding: 10, background: CARD }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--app-text-2)', marginBottom: 6 }}>
@@ -945,7 +997,7 @@ export function OutreachWorkspace() {
           ) : filter === 'contacts' ? (
             <ContactsTable prospects={current} companyId={companyId} onChanged={refresh} />
           ) : (
-          <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: 'minmax(0, 300px) minmax(0, 1fr)', gap: 14 }}>
+          <div className="outreach-split" style={{ flex: 1, minHeight: 0, gap: 14 }}>
             {/* List */}
             <div style={{ border: `1px solid ${BORDER}`, borderRadius: 8, overflowY: 'auto', overflowX: 'hidden', minHeight: 0 }}>
               {current.length === 0 && <div style={{ fontSize: 12, color: MUTED, padding: 14 }}>{EMPTY_MSG[filter]}</div>}
@@ -1010,6 +1062,23 @@ export function OutreachWorkspace() {
           onConfirm={handleSchedule}
           onClose={() => setScheduleDialogOpen(false)}
         />
+      )}
+
+      {/* Toast stack: bottom-right, above everything. Info auto-dismisses in 4s;
+          errors keep their red border and stay until the × is tapped. */}
+      {toasts.length > 0 && (
+        <div style={{ position: 'fixed', bottom: 16, right: 16, zIndex: 100, display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 'min(360px, calc(100vw - 32px))' }}>
+          {toasts.map((t) => (
+            <div key={t.id} style={{ display: 'flex', gap: 10, alignItems: 'flex-start', fontSize: 12, lineHeight: 1.45, color: t.kind === 'error' ? '#d98a8a' : 'var(--app-text-2)', background: CARD, border: `1px solid ${t.kind === 'error' ? '#b04545' : BORDER}`, borderRadius: 8, padding: '10px 12px', boxShadow: '0 6px 20px rgba(0, 0, 0, 0.3)' }}>
+              <span style={{ flex: 1 }}>{t.text}</span>
+              <button
+                onClick={() => dismissToast(t.id)}
+                aria-label="Dismiss"
+                style={{ background: 'transparent', border: 'none', color: MUTED, cursor: 'pointer', fontSize: 15, lineHeight: 1, padding: '0 2px', minHeight: 'auto' }}
+              >×</button>
+            </div>
+          ))}
+        </div>
       )}
     </div>
   )

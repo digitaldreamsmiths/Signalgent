@@ -1719,3 +1719,28 @@ New: `supabase/migrations/20260618000000_outreach_draft_exported.sql`. Modified:
 
 - Exported features need `20260618000000_outreach_draft_exported.sql` applied to Supabase.
 - Manual resolve takes the top USASpending match for the typed name; a multi-candidate picker would be a further refinement.
+
+## Session 23 — Outreach workspace UX bundle: auto-refresh, toasts, top pause banner, mobile layout, send retry
+
+Small daily-use fixes from real use (desktop + phone). Note: Sessions 20–22 (outreach-first pivot, send pipeline, reply/bounce detection, wave enrichment + warmup) shipped without entries in this file; their changes are described in the merged PR descriptions.
+
+### Changes
+
+All in `components/widgets/content/outreach-widgets.tsx` unless noted.
+
+- **Auto-refresh.** The snapshot used to load once on mount and go stale while the Vercel cron mutated send/reply state every 5 minutes. A polling effect now refetches every 2.5 minutes while the tab is visible (`document.visibilityState` guard, no fetches from a backgrounded tab) and refetches immediately on `visibilitychange` back to visible — so returning to the tab shows current counts at once. The Scheduled tab's list refreshes on the same tick when active.
+- **Toast stack replaces the ephemeral `notice`.** Action results (ingest, enrich, approve, process queue, scan replies, schedule, delete) now push toasts to a fixed bottom-right stack instead of a single line that the next action silently overwrote. Info toasts auto-dismiss after 4s; error toasts get a red border and persist until dismissed (×). "Process queue" with partial failures reports as an error toast so it isn't missed.
+- **Pause banner moved to the top.** The bounce-rate auto-pause banner rendered below the metrics grid where it scrolled out of sight; it's now the first element in the workspace with a full amber border and ⚠ so a paused pipeline is impossible to miss.
+- **Mobile layout.** The two-pane review grid hard-coded `minmax(0, 300px) minmax(0, 1fr)`, which broke at phone widths. A small `<style>` block (inline styles can't express media queries) makes it stack to one column below 700px, capping the list pane at 38vh so the detail pane stays reachable; the same query gives buttons and text inputs a 40px min-height for touch. Found live: the app shell's fixed-height flex chain squeezed the stacked panes to ~2px on a phone (the wrapped header/metrics/tabs ate the whole viewport), so the mobile query also releases the workspace height (`height: auto !important` to beat the inline style, plus `flex-shrink: 0` so the page wrapper can't squeeze it back) and lets the already-scrollable `<main>` handle vertical scroll. `app/layout.tsx` now also exports a `viewport` object (`width: device-width, initialScale: 1`) — Next 16 emits a default viewport meta tag, but the export makes the mobile intent explicit (per `node_modules/next/dist/docs/.../generate-viewport.md`, the `viewport` export replaced viewport-in-`metadata`).
+- **Retry failed sends.** A failed send row showed the error with no recovery path short of re-approving. A one-click Retry button next to the failure message calls the existing `queueDraftSend` (its duplicate guard only blocks `queued/sending/sent`, so re-queueing after `failed` was already allowed server-side — no backend change).
+
+### Local verification
+
+- `tsc --noEmit` clean.
+- Live in preview against real data (1,000 prospects): toast appears bottom-right within ~300ms of an action and auto-dismisses at ~4s (measured by polling); at 375px the grid stacks to one column (list 308px = 38vh with internal scroll, detail at natural height, no horizontal overflow), buttons/inputs hit 40px; back at desktop the two panes (300px + 1fr), fixed-height workspace, and 30px buttons are unchanged. Viewport meta serves `width=device-width, initial-scale=1`.
+- Not exercised live: error-toast persistence (same code path as info minus the timeout) and the 2.5-min poll tick (code-reviewed only).
+
+### Residuals
+
+- Polling refetches the full snapshot (~same payload as initial load) every 2.5 min; fine at current list sizes, revisit if prospect counts grow into the thousands (delta endpoint or SWR).
+- The pause banner covers `bounce_rate` only — a manually-deactivated sender still shows nothing; surfacing "sending off" state at the top could follow the same pattern.
