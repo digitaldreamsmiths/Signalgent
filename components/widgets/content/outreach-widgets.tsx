@@ -11,6 +11,7 @@ import {
   getOutreachSnapshot,
   ingestProspects,
   markExported,
+  processProspects,
   rejectDraft,
   resolveManual,
   enrichWaveNow,
@@ -203,16 +204,80 @@ function ProspectRow({ p, selected, onSelect, checked, onToggle }: { p: Outreach
 
 // ── Contacts table ──────────────────────────────────────────────────────────
 
-type ContactSortKey = 'email' | 'name' | 'status' | 'added'
+type ContactSortKey = 'email' | 'name' | 'domain' | 'status' | 'added'
+type StageBucket = 'new' | 'review' | 'ready' | 'emailed' | 'replied' | 'other'
+type ContactFilter = 'all' | StageBucket
 
-/** Status badge color per prospect lifecycle stage. */
-const STATUS_COLOR: Record<OutreachProspectView['status'], string> = {
-  new: MUTED,
-  enriched: '#378ADD',
-  drafted: '#1D9E75',
-  skipped: '#BA7517',
-  error: '#b04545',
+/** Free / consumer webmail domains — these get no website link in the Domain
+ * column (there's no business site behind them) and are still shown as plain text. */
+const FREE_PROVIDERS = new Set([
+  'gmail.com', 'googlemail.com', 'yahoo.com', 'yahoo.co.uk', 'yahoo.ca', 'ymail.com', 'rocketmail.com',
+  'hotmail.com', 'hotmail.co.uk', 'outlook.com', 'live.com', 'msn.com', 'aol.com',
+  'icloud.com', 'me.com', 'mac.com', 'proton.me', 'protonmail.com', 'pm.me',
+  'gmx.com', 'gmx.net', 'mail.com', 'zoho.com', 'yandex.com', 'yandex.ru', 'fastmail.com', 'hey.com',
+  'comcast.net', 'verizon.net', 'att.net', 'sbcglobal.net', 'bellsouth.net', 'cox.net', 'charter.net', 'earthlink.net',
+  'qq.com', '163.com', '126.com',
+])
+
+function isFreeProvider(domain: string | null): boolean {
+  return !!domain && FREE_PROVIDERS.has(domain.toLowerCase())
 }
+
+/** Collapse a prospect's full lifecycle — enrichment status + latest draft +
+ * send + disposition — into a single badge for the Contacts list. More advanced /
+ * terminal states win, so a row reads as the furthest point it has reached. */
+function contactStage(p: OutreachProspectView): { label: string; color: string } {
+  if (p.disposition === 'bounced') return { label: 'Bounced', color: '#b04545' }
+  if (p.disposition === 'unsubscribed') return { label: 'Unsubscribed', color: MUTED }
+  if (p.disposition === 'replied' || p.disposition === 'interested' || p.disposition === 'not_interested') return { label: 'Replied', color: '#378ADD' }
+  if (p.needs_review) return { label: 'Needs review', color: '#e0a060' }
+
+  // Emailed = any touch actually sent or marked exported to the sending tool.
+  if (p.drafts.some((d) => d.status === 'exported' || d.send?.status === 'sent')) return { label: 'Emailed', color: '#378ADD' }
+
+  const send = p.draft?.send
+  if (send?.status === 'sending') return { label: 'Sending', color: ACCENT }
+  if (send?.status === 'queued') return { label: 'Queued', color: ACCENT }
+
+  const ds = p.draft?.status
+  if (ds === 'approved' || ds === 'edited') return { label: 'Ready to email', color: '#1D9E75' }
+  if (ds === 'rejected') return { label: 'Rejected', color: '#BA7517' }
+  if (ds === 'pending') return p.draft!.is_template ? { label: 'Template', color: MUTED } : { label: 'In review', color: '#1D9E75' }
+
+  switch (p.status) {
+    case 'skipped': return { label: 'Skipped', color: '#BA7517' }
+    case 'error': return { label: 'Error', color: '#b04545' }
+    case 'enriched': return { label: 'Enriched', color: '#378ADD' }
+    case 'drafted': return { label: 'Drafted', color: '#1D9E75' }
+    default: return { label: 'New', color: MUTED }
+  }
+}
+
+/** Coarse bucket for the Contacts status filter (the label from contactStage is
+ * finer-grained than the filter needs). */
+function stageBucket(p: OutreachProspectView): StageBucket {
+  if (p.disposition === 'replied' || p.disposition === 'interested' || p.disposition === 'not_interested') return 'replied'
+  if (p.disposition === 'bounced' || p.disposition === 'unsubscribed') return 'other'
+  if (p.needs_review) return 'review'
+  if (p.drafts.some((d) => d.status === 'exported' || d.send?.status === 'sent')) return 'emailed'
+  const send = p.draft?.send
+  if (send?.status === 'queued' || send?.status === 'sending') return 'ready'
+  const ds = p.draft?.status
+  if (ds === 'approved' || ds === 'edited') return 'ready'
+  if (ds === 'pending') return p.draft!.is_template ? 'other' : 'review'
+  if (p.status === 'new') return 'new'
+  return 'other'
+}
+
+const CONTACT_FILTERS: { key: ContactFilter; label: string }[] = [
+  { key: 'all', label: 'All' },
+  { key: 'new', label: 'New' },
+  { key: 'review', label: 'In review' },
+  { key: 'ready', label: 'Ready' },
+  { key: 'emailed', label: 'Emailed' },
+  { key: 'replied', label: 'Replied' },
+  { key: 'other', label: 'Other' },
+]
 
 /** Master list of every ingested email — visible before enrichment, sortable by
  * any column, with per-row and bulk delete. This is the only place raw `new`
@@ -224,25 +289,51 @@ function ContactsTable({ prospects, companyId, onChanged }: { prospects: Outreac
   const [confirmId, setConfirmId] = useState<string | null>(null)
   const [confirmBulk, setConfirmBulk] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [proc, setProc] = useState<{ done: number; total: number; drafted: number; skipped: number } | null>(null)
+  const [procError, setProcError] = useState<string | null>(null)
+  const cancelProc = useRef(false)
+  const [stageF, setStageF] = useState<ContactFilter>('all')
+
+  // Only `new` prospects can be enriched; already-processed rows in the selection
+  // are silently ignored so a "select all → Process" does the right thing.
+  const statusById = new Map(prospects.map((p) => [p.id, p.status]))
+  const selectedNew = [...selected].filter((id) => statusById.get(id) === 'new')
 
   const dir = sortDir === 'asc' ? 1 : -1
   const cmp = (a: OutreachProspectView, b: OutreachProspectView): number => {
     switch (sortKey) {
       case 'email': return a.email.localeCompare(b.email)
       case 'name': return (a.recipient_name ?? '').localeCompare(b.recipient_name ?? '')
-      case 'status': return a.status.localeCompare(b.status)
+      case 'domain': return (a.domain ?? '').localeCompare(b.domain ?? '')
+      case 'status': return contactStage(a).label.localeCompare(contactStage(b).label)
       case 'added': return a.created_at.localeCompare(b.created_at)
     }
   }
   const sorted = [...prospects].sort((a, b) => cmp(a, b) * dir)
+  const visible = stageF === 'all' ? sorted : sorted.filter((p) => stageBucket(p) === stageF)
+
+  // Count per bucket for the filter chips (drop empty ones except All/New).
+  const bucketCounts = prospects.reduce<Record<StageBucket, number>>(
+    (acc, p) => { acc[stageBucket(p)] += 1; return acc },
+    { new: 0, review: 0, ready: 0, emailed: 0, replied: 0, other: 0 },
+  )
+  const countFor = (k: ContactFilter): number => (k === 'all' ? prospects.length : bucketCounts[k])
 
   const toggleSort = (k: ContactSortKey) => {
     if (k === sortKey) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
     else { setSortKey(k); setSortDir(k === 'added' ? 'desc' : 'asc') }
   }
 
-  const allChecked = sorted.length > 0 && selected.size === sorted.length
-  const toggleAll = () => { setConfirmBulk(false); setSelected(allChecked ? new Set() : new Set(sorted.map((p) => p.id))) }
+  const allChecked = visible.length > 0 && visible.every((p) => selected.has(p.id))
+  const toggleAll = () => {
+    setConfirmBulk(false)
+    setSelected((prev) => {
+      const n = new Set(prev)
+      if (allChecked) visible.forEach((p) => n.delete(p.id))
+      else visible.forEach((p) => n.add(p.id))
+      return n
+    })
+  }
   const toggleOne = (id: string) => {
     setConfirmBulk(false)
     setSelected((prev) => {
@@ -264,23 +355,87 @@ function ContactsTable({ prospects, companyId, onChanged }: { prospects: Outreac
     onChanged()
   }
 
+  // Enrich the selected `new` prospects, one RUN_BATCH at a time, until the
+  // selection drains or the user cancels. onChanged() after each batch refreshes
+  // the snapshot so processed contacts flow into "To review" live.
+  const process = async () => {
+    const initial = selectedNew
+    if (initial.length === 0) return
+    cancelProc.current = false
+    setProcError(null)
+    setBusy(true)
+    setProc({ done: 0, total: initial.length, drafted: 0, skipped: 0 })
+    let pending = initial
+    let done = 0, drafted = 0, skipped = 0
+    while (pending.length > 0 && !cancelProc.current) {
+      const r = await processProspects(companyId, pending)
+      if (!r.ok) { setProcError(r.error); break }
+      if (r.data.processed === 0) break
+      const doneSet = new Set(r.data.processedIds)
+      pending = pending.filter((id) => !doneSet.has(id))
+      done += r.data.processed
+      drafted += r.data.drafted
+      skipped += r.data.skipped
+      setProc({ done, total: initial.length, drafted, skipped })
+      setSelected((prev) => { const n = new Set(prev); doneSet.forEach((id) => n.delete(id)); return n })
+      onChanged()
+    }
+    setBusy(false)
+    setProc(null)
+    cancelProc.current = false
+  }
+
   const th: React.CSSProperties = { textAlign: 'left', fontSize: 9, fontWeight: 600, color: MUTED, textTransform: 'uppercase', letterSpacing: 0.6, padding: '8px 12px', cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }
   const td: React.CSSProperties = { fontSize: 12, color: 'var(--app-text)', padding: '8px 12px', borderTop: `1px solid ${BORDER}` }
   const caret = (k: ContactSortKey) => (sortKey === k ? (sortDir === 'asc' ? ' ▲' : ' ▼') : '')
 
   return (
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', border: `1px solid ${BORDER}`, borderRadius: 8, overflow: 'hidden' }}>
-      {selected.size > 0 && (
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', padding: '6px 10px', borderBottom: `1px solid ${BORDER}`, background: 'var(--app-card-2)' }}>
+        {CONTACT_FILTERS.filter((f) => f.key === 'all' || f.key === 'new' || countFor(f.key) > 0).map((f) => {
+          const on = stageF === f.key
+          return (
+            <button
+              key={f.key}
+              onClick={() => setStageF(f.key)}
+              style={{ fontSize: 11, fontWeight: 600, color: on ? '#fff' : 'var(--app-text-2)', background: on ? ACCENT : 'transparent', border: `1px solid ${on ? ACCENT : BORDER}`, borderRadius: 999, padding: '3px 10px', cursor: 'pointer' }}
+            >
+              {f.label} {countFor(f.key)}
+            </button>
+          )
+        })}
+      </div>
+      {(selected.size > 0 || proc) && (
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '8px 12px', borderBottom: `1px solid ${BORDER}`, background: 'var(--app-card-2)' }}>
-          <span style={{ fontSize: 11, color: MUTED }}>{selected.size} selected</span>
-          <button
-            disabled={busy}
-            onClick={() => (confirmBulk ? del([...selected]) : setConfirmBulk(true))}
-            style={confirmBulk ? btn('#b04545') : btnGhost('#b04545')}
-          >
-            {confirmBulk ? `Confirm delete (${selected.size})` : `Delete (${selected.size})`}
-          </button>
-          {confirmBulk && <button disabled={busy} onClick={() => setConfirmBulk(false)} style={btnGhost()}>Cancel</button>}
+          {proc ? (
+            <>
+              <span style={{ fontSize: 11, color: 'var(--app-text-2)' }}>
+                Processing {proc.done}/{proc.total}… <span style={{ color: MUTED }}>{proc.drafted} personalized · {proc.skipped} template</span>
+              </span>
+              <div style={{ flex: 1, maxWidth: 220, height: 6, background: 'var(--app-input)', borderRadius: 3, overflow: 'hidden' }}>
+                <div style={{ height: '100%', width: `${proc.total ? Math.round((proc.done / proc.total) * 100) : 0}%`, background: ACCENT, transition: 'width 0.3s' }} />
+              </div>
+              <button onClick={() => { cancelProc.current = true }} style={btnGhost()}>Cancel</button>
+            </>
+          ) : (
+            <>
+              <span style={{ fontSize: 11, color: MUTED }}>{selected.size} selected</span>
+              {selectedNew.length > 0 && (
+                <button disabled={busy} onClick={process} style={btn(ACCENT)} title="Enrich the selected new contacts now and move them into To review. Bypasses the drip buffer cap.">
+                  Process ({selectedNew.length})
+                </button>
+              )}
+              <button
+                disabled={busy}
+                onClick={() => (confirmBulk ? del([...selected]) : setConfirmBulk(true))}
+                style={confirmBulk ? btn('#b04545') : btnGhost('#b04545')}
+              >
+                {confirmBulk ? `Confirm delete (${selected.size})` : `Delete (${selected.size})`}
+              </button>
+              {confirmBulk && <button disabled={busy} onClick={() => setConfirmBulk(false)} style={btnGhost()}>Cancel</button>}
+              {procError && <span style={{ fontSize: 11, color: '#b04545' }}>{procError}</span>}
+            </>
+          )}
         </div>
       )}
       <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
@@ -292,20 +447,33 @@ function ContactsTable({ prospects, companyId, onChanged }: { prospects: Outreac
               </th>
               <th style={th} onClick={() => toggleSort('email')}>Email{caret('email')}</th>
               <th style={th} onClick={() => toggleSort('name')}>Name{caret('name')}</th>
+              <th style={th} onClick={() => toggleSort('domain')}>Website{caret('domain')}</th>
               <th style={th} onClick={() => toggleSort('status')}>Status{caret('status')}</th>
               <th style={th} onClick={() => toggleSort('added')}>Added{caret('added')}</th>
               <th style={{ ...th, cursor: 'default', textAlign: 'right' }} />
             </tr>
           </thead>
           <tbody>
-            {sorted.map((p) => (
+            {visible.length === 0 && (
+              <tr><td colSpan={7} style={{ ...td, color: MUTED, textAlign: 'center', padding: 20 }}>No contacts in this view.</td></tr>
+            )}
+            {visible.map((p) => {
+              const stage = contactStage(p)
+              return (
               <tr key={p.id} style={{ background: selected.has(p.id) ? CARD : 'transparent' }}>
                 <td style={{ ...td, width: 32 }}>
                   <input type="checkbox" checked={selected.has(p.id)} onChange={() => toggleOne(p.id)} />
                 </td>
                 <td style={{ ...td, fontFamily: 'var(--font-mono)' }}>{p.email}</td>
                 <td style={td}>{p.recipient_name ?? <span style={{ color: MUTED }}>—</span>}</td>
-                <td style={td}><Pill label={p.status} color={STATUS_COLOR[p.status]} /></td>
+                <td style={td}>
+                  {p.domain
+                    ? isFreeProvider(p.domain)
+                      ? <span style={{ color: MUTED }}>{p.domain}</span>
+                      : <a href={`https://${p.domain}`} target="_blank" rel="noopener noreferrer" style={{ color: ACCENT, textDecoration: 'none', fontFamily: 'var(--font-mono)' }}>{p.domain} ↗</a>
+                    : <span style={{ color: MUTED }}>—</span>}
+                </td>
+                <td style={td}><Pill label={stage.label} color={stage.color} /></td>
                 <td style={{ ...td, color: MUTED, whiteSpace: 'nowrap' }}>{fmtWhen(p.created_at)}</td>
                 <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap' }}>
                   {confirmId === p.id ? (
@@ -318,7 +486,8 @@ function ContactsTable({ prospects, companyId, onChanged }: { prospects: Outreac
                   )}
                 </td>
               </tr>
-            ))}
+              )
+            })}
           </tbody>
         </table>
       </div>
