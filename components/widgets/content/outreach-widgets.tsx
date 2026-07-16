@@ -37,7 +37,7 @@ const DISPO_META: Record<Disposition, { label: string; color: string }> = {
   interested: { label: 'interested', color: '#1D9E75' },
   not_interested: { label: 'not interested', color: '#BA7517' },
   bounced: { label: 'bounced', color: '#b04545' },
-  unsubscribed: { label: 'unsubscribed', color: 'var(--app-muted)' },
+  unsubscribed: { label: 'opt-out', color: '#b04545' },
 }
 
 /** Outcome buttons, in funnel order. */
@@ -228,7 +228,7 @@ function isFreeProvider(domain: string | null): boolean {
  * terminal states win, so a row reads as the furthest point it has reached. */
 function contactStage(p: OutreachProspectView): { label: string; color: string } {
   if (p.disposition === 'bounced') return { label: 'Bounced', color: '#b04545' }
-  if (p.disposition === 'unsubscribed') return { label: 'Unsubscribed', color: MUTED }
+  if (p.disposition === 'unsubscribed') return { label: 'Opt-out ✋', color: '#b04545' }
   if (p.disposition === 'replied' || p.disposition === 'interested' || p.disposition === 'not_interested') return { label: 'Replied', color: '#378ADD' }
   if (p.needs_review) return { label: 'Needs review', color: '#e0a060' }
 
@@ -711,6 +711,32 @@ function DraftDetail({ prospect, companyId, onChanged }: { prospect: OutreachPro
         )}
       </div>
 
+      {/* Opt-out callout — a reply asking to stop. Loud and unmissable: sending
+          is already suppressed (disposition = unsubscribed), the human just needs
+          to know. Shows even if the preview text wasn't captured. */}
+      {prospect.disposition === 'unsubscribed' && (
+        <div style={{ border: '1px solid #b04545', borderRadius: 8, padding: 10, background: 'rgba(176,69,69,0.10)' }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: '#b04545' }}>✋ Opt-out request — do not email this address</div>
+          <div style={{ fontSize: 11, color: 'var(--app-text-2)', marginTop: 4 }}>
+            This reply asked to stop. Sending is suppressed for {prospect.email}. Reopen only if this was a false match.
+          </div>
+        </div>
+      )}
+
+      {/* Inbound reply/bounce preview (snippet only — full thread lives in Gmail). */}
+      {(prospect.reply_snippet || prospect.reply_from) && (
+        <div style={{ border: `1px solid ${BORDER}`, borderLeft: `3px solid ${prospect.disposition === 'bounced' || prospect.disposition === 'unsubscribed' ? '#b04545' : '#378ADD'}`, borderRadius: 8, padding: 10, background: 'var(--app-card-2)' }}>
+          <div style={{ fontSize: 10, fontWeight: 600, color: MUTED, textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 6 }}>
+            {prospect.disposition === 'bounced' ? 'Bounce notice' : prospect.disposition === 'unsubscribed' ? 'Opt-out message' : 'Reply received'}
+            {prospect.disposition_at && ` · ${fmtWhen(prospect.disposition_at)}`}
+          </div>
+          {prospect.reply_from && <div style={{ fontSize: 12, color: 'var(--app-text)' }}><span style={{ color: MUTED }}>From:</span> {prospect.reply_from}</div>}
+          {prospect.reply_subject && <div style={{ fontSize: 12, color: 'var(--app-text)', marginTop: 2 }}><span style={{ color: MUTED }}>Subject:</span> {prospect.reply_subject}</div>}
+          {prospect.reply_snippet && <div style={{ fontSize: 12, color: 'var(--app-text-2)', marginTop: 6, lineHeight: 1.5 }}>{prospect.reply_snippet}…</div>}
+          <div style={{ fontSize: 10, color: MUTED, marginTop: 8 }}>Preview only — open the thread in Gmail to read and reply in full.</div>
+        </div>
+      )}
+
       {initial?.is_template && prospect.skip_reason && (
         <div style={{ fontSize: 11, color: MUTED, fontStyle: 'italic' }}>
           Generic template (couldn’t personalize, {prospect.skip_stage}): {prospect.skip_reason}
@@ -966,11 +992,17 @@ export function OutreachWorkspace() {
     const r = await scanRepliesNow(companyId)
     setScanning(false)
     if (!r.ok) return pushToast(r.error, 'error')
-    pushToast(
-      r.data.replied === 0 && r.data.bounced === 0
-        ? `No new replies or bounces${r.data.skipped ? ` (${r.data.skipped})` : ''}.`
-        : `Found ${r.data.replied} repl${r.data.replied === 1 ? 'y' : 'ies'}, ${r.data.bounced} bounce${r.data.bounced === 1 ? '' : 's'}.`,
-    )
+    const { replied, bounced, unsubscribed, skipped } = r.data
+    if (replied === 0 && bounced === 0 && unsubscribed === 0) {
+      pushToast(`No new replies or bounces${skipped ? ` (${skipped})` : ''}.`)
+    } else {
+      const optPart = unsubscribed > 0 ? `, ${unsubscribed} opt-out${unsubscribed === 1 ? '' : 's'}` : ''
+      pushToast(
+        `Found ${replied} repl${replied === 1 ? 'y' : 'ies'}, ${bounced} bounce${bounced === 1 ? '' : 's'}${optPart}.` +
+          (unsubscribed > 0 ? ' Opt-outs were flagged and suppressed from sending.' : ''),
+        unsubscribed > 0 ? 'error' : 'info',
+      )
+    }
     refresh()
   }
 
@@ -1136,7 +1168,7 @@ export function OutreachWorkspace() {
               {tab('approved', 'Ready to email', lists.approved.length)}
               {tab('exported', 'Sent', lists.exported.length)}
               {tab('replied', 'Replied', lists.replied.length)}
-              {tab('bounced', 'Bounced', lists.bounced.length)}
+              {tab('bounced', 'Bounced / opt-out', lists.bounced.length)}
               {tab('scheduled', 'Scheduled', c?.queued ?? 0)}
               {tab('all', 'All', lists.all.length)}
             </div>

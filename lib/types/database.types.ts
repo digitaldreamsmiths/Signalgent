@@ -254,6 +254,9 @@ export interface Database {
           footprint: Json | null
           disposition: 'open' | 'replied' | 'interested' | 'not_interested' | 'bounced' | 'unsubscribed'
           disposition_at: string | null
+          reply_from: string | null
+          reply_subject: string | null
+          reply_snippet: string | null
           enriched_at: string | null
           created_at: string
           updated_at: string
@@ -276,6 +279,9 @@ export interface Database {
           footprint?: Json | null
           disposition?: 'open' | 'replied' | 'interested' | 'not_interested' | 'bounced' | 'unsubscribed'
           disposition_at?: string | null
+          reply_from?: string | null
+          reply_subject?: string | null
+          reply_snippet?: string | null
           enriched_at?: string | null
           created_at?: string
           updated_at?: string
@@ -296,6 +302,9 @@ export interface Database {
           footprint?: Json | null
           disposition?: 'open' | 'replied' | 'interested' | 'not_interested' | 'bounced' | 'unsubscribed'
           disposition_at?: string | null
+          reply_from?: string | null
+          reply_subject?: string | null
+          reply_snippet?: string | null
           enriched_at?: string | null
           updated_at?: string
         }
