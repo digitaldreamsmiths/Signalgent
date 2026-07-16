@@ -204,6 +204,61 @@ export async function runEnrichmentBatch(supabase: DB, companyId: string, limit:
   return { processed: pending.length, drafted, skipped, remaining: count ?? 0, cost_usd }
 }
 
+/** Like runEnrichmentBatch, but restricted to a caller-supplied set of prospect
+ * ids and reporting exactly which ids it processed. Powers the Contacts tab's
+ * "Process selected" action: it enriches precisely what the user picked and
+ * bypasses the wave buffer cap, so a manual run isn't throttled by drip pacing.
+ * The client loops (shrinking `ids` by `processedIds`) so large selections drain
+ * a batch at a time. */
+export async function runEnrichmentBatchForIds(
+  supabase: DB,
+  companyId: string,
+  ids: string[],
+  limit: number,
+  userId: string | null,
+): Promise<EnrichBatchResult & { processedIds: string[] }> {
+  if (ids.length === 0) return { processed: 0, drafted: 0, skipped: 0, remaining: 0, cost_usd: 0, processedIds: [] }
+
+  const { data: pending, error } = await supabase
+    .from('outreach_prospects')
+    .select('id, email')
+    .eq('company_id', companyId)
+    .eq('status', 'new')
+    .in('id', ids)
+    .order('created_at', { ascending: true })
+    .limit(Math.max(1, Math.min(limit, RUN_BATCH)))
+
+  if (error || !pending || pending.length === 0) {
+    await backfillTemplateDrafts(supabase, companyId)
+    return { processed: 0, drafted: 0, skipped: 0, remaining: 0, cost_usd: 0, processedIds: [] }
+  }
+
+  const usage: LLMUsage[] = []
+  let drafted = 0
+  let skipped = 0
+  const processedIds: string[] = []
+  for (const p of pending) {
+    const outcome = await runPipeline(p.email, usage)
+    await persistOutcome(supabase, companyId, p.id, outcome)
+    processedIds.push(p.id)
+    if (outcome.status === 'drafted') drafted += 1
+    else skipped += 1
+  }
+  await recordUsage(supabase, companyId, userId, usage)
+  await backfillTemplateDrafts(supabase, companyId)
+
+  // Remaining = still-`new` prospects among the requested ids.
+  const { count } = await supabase
+    .from('outreach_prospects')
+    .select('id', { count: 'exact', head: true })
+    .eq('company_id', companyId)
+    .eq('status', 'new')
+    .in('id', ids)
+
+  const cost_usd = usage.reduce((s, u) => s + usageCostUsd(u), 0)
+  return { processed: pending.length, drafted, skipped, remaining: count ?? 0, cost_usd, processedIds }
+}
+
 export interface EnrichWaveResult {
   enriched: number
   drafted: number

@@ -18,7 +18,7 @@ import type { Database } from '@/lib/types/database.types'
 import { extractDomain } from '../usaspending/resolve'
 import { runPipelineFromName } from './pipeline'
 import { buildTemplateFollowup } from './template'
-import { persistOutcome, recordUsage, runEnrichmentBatch, enrichToBuffer, RUN_BATCH } from './enrich-run'
+import { persistOutcome, recordUsage, runEnrichmentBatch, runEnrichmentBatchForIds, enrichToBuffer, RUN_BATCH } from './enrich-run'
 import { loadSettings, getEffectiveDailyCap } from './send/worker'
 import { recentBounceStats } from './send/scan'
 import { getAccount } from '../accounts'
@@ -113,6 +113,32 @@ export async function runNewProspects(
 
   const supabase = await createClient()
   const data = await runEnrichmentBatch(supabase, companyId, limit, access.userId)
+  revalidatePath('/outreach')
+  return { ok: true, data }
+}
+
+/** Enrich a caller-selected set of `new` prospects right now, bypassing the wave
+ * buffer cap. Powers the Contacts tab's "Process (N)" bulk action: the client
+ * loops one RUN_BATCH at a time (shrinking `prospectIds` by `processedIds`), so a
+ * large selection drains progressively and the "To review" queue fills as each
+ * batch lands, instead of being throttled by the drip pacing. */
+export async function processProspects(
+  companyId: string,
+  prospectIds: string[],
+  limit: number = RUN_BATCH,
+): Promise<ActionResult<{ processed: number; drafted: number; skipped: number; remaining: number; cost_usd: number; processedIds: string[] }>> {
+  let access: Awaited<ReturnType<typeof requireCompanyAccess>>
+  try {
+    access = await requireCompanyAccess(companyId)
+  } catch (err) {
+    if (err instanceof IntegrationAuthError) return { ok: false, error: AUTH_ERROR }
+    throw err
+  }
+  if (prospectIds.length === 0) {
+    return { ok: true, data: { processed: 0, drafted: 0, skipped: 0, remaining: 0, cost_usd: 0, processedIds: [] } }
+  }
+  const supabase = await createClient()
+  const data = await runEnrichmentBatchForIds(supabase, companyId, prospectIds, limit, access.userId)
   revalidatePath('/outreach')
   return { ok: true, data }
 }
