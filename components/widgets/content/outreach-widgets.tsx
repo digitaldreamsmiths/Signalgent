@@ -1112,7 +1112,7 @@ export function OutreachWorkspace() {
         />
         <button onClick={() => fileInputRef.current?.click()} style={btnGhost()} title="Upload a CSV or TXT file of email addresses">Upload file</button>
         <button onClick={() => setSendingModalOpen(true)} style={btnGhost()}>Sending</button>
-        <button onClick={() => setTemplatesModalOpen(true)} style={btnGhost()} title="Manage the fallback templates rotated for prospects that can't be personalized, and see their performance">Templates</button>
+        <button onClick={() => setTemplatesModalOpen(true)} style={btnGhost()} title="Manage the fallback templates rotated for prospects that can't be personalized, and see their performance">Manage templates</button>
         <button onClick={handleScanReplies} disabled={scanning} style={btnGhost()} title="Check Gmail for replies and bounces, then update outcomes">
           {scanning ? 'Scanning…' : 'Scan replies'}
         </button>
@@ -1176,6 +1176,11 @@ export function OutreachWorkspace() {
               {tab('all', 'All', lists.all.length)}
             </div>
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, paddingBottom: 4, alignItems: 'center' }}>
+              {filter === 'templates' && (
+                <button onClick={() => setTemplatesModalOpen(true)} style={btn(ACCENT)} title="Create, edit, activate, and track your fallback templates">
+                  Manage templates
+                </button>
+              )}
               {(filter === 'review' || filter === 'templates') && current.length > 0 && (
                 <button onClick={() => handleApproveAll(current.map((p) => p.draft!.id))} style={btn('#1D9E75')}>
                   Approve all ({current.length})
