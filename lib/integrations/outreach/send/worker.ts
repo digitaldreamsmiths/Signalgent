@@ -172,26 +172,30 @@ export async function nextSlot(supabase: DB, companyId: string, settings: SendSe
     .not('scheduled_at', 'is', null)
   const planned = (rows ?? []).map((r) => new Date(r.scheduled_at as string))
   const counts = new Map<string, number>()
-  let lastT = 0
+  const dayLatest = new Map<string, number>() // ms of the last send already on each day
   for (const d of planned) {
     const w = wallParts(d, tz)
     const key = `${w.y}-${w.mo}-${w.d}`
     counts.set(key, (counts.get(key) ?? 0) + 1)
-    lastT = Math.max(lastT, d.getTime())
+    dayLatest.set(key, Math.max(dayLatest.get(key) ?? 0, d.getTime()))
   }
 
-  const afterLast = lastT ? lastT + settings.min_gap_minutes * 60000 : now.getTime()
-  let slot = new Date(Math.max(now.getTime(), afterLast))
+  // Fill the EARLIEST open slot from now — NOT after the whole queue. Roll forward
+  // over weekends, past-window times, and days already at their (warmup) cap; on a
+  // usable day, sit min_gap past whatever is already scheduled that day so a fresh
+  // "Queue to send" lands as soon as there's capacity instead of behind the batch.
   const capForDay = makeCapForDay(settings, tz)
-
+  let slot = new Date(now.getTime())
   for (let i = 0; i < 500; i++) {
     const w = wallParts(slot, tz)
     if (w.weekday === 0 || w.weekday === 6) { slot = nextDayWindowStart(w, tz, wsH, wsM); continue }
+    const key = `${w.y}-${w.mo}-${w.d}`
     const winStart = fromZonedWall(w.y, w.mo, w.d, wsH, wsM, tz)
     const winEnd = fromZonedWall(w.y, w.mo, w.d, weH, weM, tz)
-    if (slot.getTime() < winStart.getTime()) slot = winStart
+    const lastThatDay = dayLatest.get(key) ?? 0
+    const earliest = Math.max(slot.getTime(), winStart.getTime(), lastThatDay ? lastThatDay + settings.min_gap_minutes * 60000 : 0)
+    slot = new Date(earliest)
     if (slot.getTime() >= winEnd.getTime()) { slot = nextDayWindowStart(w, tz, wsH, wsM); continue }
-    const key = `${w.y}-${w.mo}-${w.d}`
     if ((counts.get(key) ?? 0) >= capForDay(w)) { slot = nextDayWindowStart(w, tz, wsH, wsM); continue }
     return slot.toISOString()
   }
