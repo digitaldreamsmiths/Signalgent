@@ -13,7 +13,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database, Json } from '@/lib/types/database.types'
 import { runPipeline, type PipelineOutcome } from './pipeline'
-import { buildTemplateDraft } from './template'
+import { buildTemplateDraft, renderTemplate } from './template'
+import type { DraftResult } from './types'
 import type { LLMUsage } from '../../llm/client'
 import { loadSettings, getEffectiveDailyCap } from './send/worker'
 
@@ -53,6 +54,34 @@ export async function recordUsage(supabase: DB, companyId: string, userId: strin
   await supabase.from('api_usage').insert(rows)
 }
 
+/** Choose a fallback draft for a prospect we couldn't personalize: a weighted-
+ * random pick among the company's ACTIVE user templates, or the built-in default
+ * when none are defined. Returns the rendered draft plus the template_id to stamp
+ * (null for the built-in) so per-template performance can be tracked. */
+async function pickTemplateDraft(
+  supabase: DB,
+  companyId: string,
+  recipientName: string | null,
+): Promise<{ draft: DraftResult; template_id: string | null }> {
+  const { data: templates } = await supabase
+    .from('outreach_templates')
+    .select('id, subject, body, weight')
+    .eq('company_id', companyId)
+    .eq('active', true)
+  const active = templates ?? []
+  if (active.length === 0) return { draft: buildTemplateDraft(recipientName), template_id: null }
+
+  // Weighted random across the active set.
+  const total = active.reduce((s, t) => s + Math.max(1, t.weight), 0)
+  let r = Math.random() * total
+  let chosen = active[active.length - 1]
+  for (const t of active) {
+    r -= Math.max(1, t.weight)
+    if (r < 0) { chosen = t; break }
+  }
+  return { draft: renderTemplate(chosen, recipientName), template_id: chosen.id }
+}
+
 /** Persist a pipeline outcome for a prospect (shared by run + manual resolve). */
 export async function persistOutcome(supabase: DB, companyId: string, prospectId: string, outcome: PipelineOutcome): Promise<void> {
   const enriched = 'enriched' in outcome ? outcome.enriched : undefined
@@ -87,6 +116,7 @@ export async function persistOutcome(supabase: DB, companyId: string, prospectId
         clean: outcome.review.clean,
         status: 'pending',
         step: 1,
+        template_id: null, // personalized draft
       },
       { onConflict: 'prospect_id,step' },
     )
@@ -96,8 +126,9 @@ export async function persistOutcome(supabase: DB, companyId: string, prospectId
     prospectUpdate.skip_reason = outcome.reason
     await supabase.from('outreach_prospects').update(prospectUpdate).eq('id', prospectId).eq('company_id', companyId)
     // Can't personalize -> attach a generic, sendable template (empty
-    // facts_for_draft marks it as a template, no fabricated claims).
-    const tmpl = buildTemplateDraft(enriched?.recipient_name ?? null)
+    // facts_for_draft marks it as a template, no fabricated claims). Rotate a
+    // random active user template, stamping template_id for performance tracking.
+    const { draft: tmpl, template_id } = await pickTemplateDraft(supabase, companyId, enriched?.recipient_name ?? null)
     await supabase.from('outreach_drafts').upsert(
       {
         prospect_id: prospectId,
@@ -112,6 +143,7 @@ export async function persistOutcome(supabase: DB, companyId: string, prospectId
         clean: true,
         status: 'pending',
         step: 1,
+        template_id,
       },
       { onConflict: 'prospect_id,step' },
     )
@@ -137,9 +169,11 @@ export async function backfillTemplateDrafts(supabase: DB, companyId: string): P
   const missing = skipped.filter((p) => !haveDraft.has(p.id))
   if (missing.length === 0) return 0
 
-  const rows = missing.map((p) => {
-    const tmpl = buildTemplateDraft(p.recipient_name ?? null)
-    return {
+  // Rotate independently per prospect so the fallback pool is spread across the list.
+  const rows = []
+  for (const p of missing) {
+    const { draft: tmpl, template_id } = await pickTemplateDraft(supabase, companyId, p.recipient_name ?? null)
+    rows.push({
       prospect_id: p.id,
       company_id: companyId,
       subject: tmpl.subject,
@@ -152,8 +186,9 @@ export async function backfillTemplateDrafts(supabase: DB, companyId: string): P
       clean: true,
       status: 'pending' as const,
       step: 1,
-    }
-  })
+      template_id,
+    })
+  }
   const { error } = await supabase.from('outreach_drafts').upsert(rows, { onConflict: 'prospect_id,step' })
   return error ? 0 : rows.length
 }

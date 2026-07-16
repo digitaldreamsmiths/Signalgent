@@ -13,6 +13,16 @@
 import { sanitizeDashes, SENDER } from './draft'
 import type { DraftResult } from './types'
 
+/** Render a user-authored template into a sendable draft. Substitutes the
+ * `{company}` placeholder with the resolved recipient name (or a neutral
+ * fallback), and dash-sanitizes like the personalized path. Makes no factual
+ * claims of its own — that's the author's responsibility. */
+export function renderTemplate(tmpl: { subject: string; body: string }, recipientName?: string | null): DraftResult {
+  const who = recipientName?.trim() || 'your team'
+  const fill = (s: string) => sanitizeDashes(s.replace(/\{company\}/gi, who))
+  return { subject: fill(tmpl.subject), body: fill(tmpl.body), facts_used: [] }
+}
+
 export function buildTemplateDraft(recipientName?: string | null): DraftResult {
   const subject = recipientName
     ? `A lighter proposal load for ${recipientName}`
