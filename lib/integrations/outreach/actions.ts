@@ -212,6 +212,7 @@ export async function getOutreachSnapshot(companyId: string): Promise<OutreachSn
       status: d.status,
       step: d.step,
       is_template: facts.length === 0,
+      template_id: d.template_id,
       send: sendByDraft.get(d.id) ?? null,
     }
     const arr = draftsByProspect.get(d.prospect_id)

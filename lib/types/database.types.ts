@@ -325,6 +325,7 @@ export interface Database {
           clean: boolean
           status: 'pending' | 'approved' | 'edited' | 'rejected' | 'exported'
           step: number
+          template_id: string | null
           reviewer_notes: string | null
           reviewed_at: string | null
           created_at: string
@@ -344,6 +345,7 @@ export interface Database {
           clean?: boolean
           status?: 'pending' | 'approved' | 'edited' | 'rejected' | 'exported'
           step?: number
+          template_id?: string | null
           reviewer_notes?: string | null
           reviewed_at?: string | null
           created_at?: string
@@ -360,8 +362,42 @@ export interface Database {
           clean?: boolean
           status?: 'pending' | 'approved' | 'edited' | 'rejected' | 'exported'
           step?: number
+          template_id?: string | null
           reviewer_notes?: string | null
           reviewed_at?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      outreach_templates: {
+        Row: {
+          id: string
+          company_id: string
+          name: string
+          subject: string
+          body: string
+          weight: number
+          active: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          company_id: string
+          name: string
+          subject: string
+          body: string
+          weight?: number
+          active?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          name?: string
+          subject?: string
+          body?: string
+          weight?: number
+          active?: boolean
           updated_at?: string
         }
         Relationships: []

@@ -79,8 +79,23 @@ export interface OutreachDraftView {
   step: number
   /** True for the generic fallback (no facts) vs. a personalized draft. */
   is_template: boolean
+  /** Which user template produced this fallback draft (null = personalized or the
+   * built-in default). Drives per-template performance tracking. */
+  template_id: string | null
   /** The latest send attempt for this draft, if any. */
   send: OutreachSendView | null
+}
+
+/** A user-authored fallback template, rotated among the active set. */
+export interface OutreachTemplate {
+  id: string
+  name: string
+  subject: string
+  body: string
+  /** Relative odds in the random rotation among active templates (>=1). */
+  weight: number
+  active: boolean
+  created_at: string
 }
 
 export type SendStatus = 'queued' | 'sending' | 'sent' | 'failed' | 'canceled'

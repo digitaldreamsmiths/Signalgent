@@ -21,6 +21,7 @@ import { queueDraftSend, cancelSend, processSendQueue, scheduleDraftSends, getSc
 import type { Disposition, OutreachDraftView, OutreachSnapshot, OutreachProspectView, ScheduledSendView } from '@/lib/integrations/outreach/types'
 import { hygieneWarnings } from '@/lib/integrations/outreach/hygiene'
 import { SendingSettingsModal } from './sending-settings-modal'
+import { TemplatesModal } from './templates-modal'
 import { ScheduledView } from './scheduled-view'
 import { ScheduleDialog } from './schedule-dialog'
 
@@ -803,6 +804,7 @@ export function OutreachWorkspace() {
   const [filter, setFilter] = useState<Filter>('review')
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [sendingModalOpen, setSendingModalOpen] = useState(false)
+  const [templatesModalOpen, setTemplatesModalOpen] = useState(false)
   const [processing, setProcessing] = useState(false)
   const [scanning, setScanning] = useState(false)
   const [selectedDraftIds, setSelectedDraftIds] = useState<Set<string>>(new Set())
@@ -1110,6 +1112,7 @@ export function OutreachWorkspace() {
         />
         <button onClick={() => fileInputRef.current?.click()} style={btnGhost()} title="Upload a CSV or TXT file of email addresses">Upload file</button>
         <button onClick={() => setSendingModalOpen(true)} style={btnGhost()}>Sending</button>
+        <button onClick={() => setTemplatesModalOpen(true)} style={btnGhost()} title="Manage the fallback templates rotated for prospects that can't be personalized, and see their performance">Templates</button>
         <button onClick={handleScanReplies} disabled={scanning} style={btnGhost()} title="Check Gmail for replies and bounces, then update outcomes">
           {scanning ? 'Scanning…' : 'Scan replies'}
         </button>
@@ -1275,6 +1278,10 @@ export function OutreachWorkspace() {
 
       {sendingModalOpen && companyId && (
         <SendingSettingsModal companyId={companyId} onClose={() => setSendingModalOpen(false)} onSaved={refresh} />
+      )}
+
+      {templatesModalOpen && companyId && (
+        <TemplatesModal companyId={companyId} prospects={prospects} onClose={() => setTemplatesModalOpen(false)} onChanged={refresh} />
       )}
 
       {scheduleDialogOpen && (
