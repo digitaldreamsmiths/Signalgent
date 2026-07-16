@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { cancelSends, rescheduleSends } from '@/lib/integrations/outreach/sending'
 import type { ScheduledSendView } from '@/lib/integrations/outreach/types'
 import { ScheduleDialog } from './schedule-dialog'
@@ -31,6 +31,22 @@ export function ScheduledView({ companyId, sends, onChanged }: { companyId: stri
   const today = new Date()
   const [view, setView] = useState<{ y: number; m: number }>({ y: today.getFullYear(), m: today.getMonth() })
   const [selectedDay, setSelectedDay] = useState<string | null>(null)
+
+  // On first populated load, jump the grid to the earliest scheduled send's month
+  // so sends that land in a future month aren't hidden behind the current one.
+  // Guarded so it never fights the user's own month navigation afterward.
+  const jumped = useRef(false)
+  useEffect(() => {
+    if (jumped.current || sends.length === 0) return
+    const earliest = sends
+      .map((s) => (s.scheduled_at ? new Date(s.scheduled_at) : null))
+      .filter((d): d is Date => !!d && !isNaN(d.getTime()))
+      .sort((a, b) => a.getTime() - b.getTime())[0]
+    if (earliest) {
+      setView({ y: earliest.getFullYear(), m: earliest.getMonth() })
+      jumped.current = true
+    }
+  }, [sends])
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [dialogOpen, setDialogOpen] = useState(false)
   const [busy, setBusy] = useState(false)
