@@ -159,6 +159,11 @@ export interface OutreachProspectView {
   draft: OutreachDraftView | null
   disposition: Disposition
   disposition_at: string | null
+  /** Preview of the latest detected inbound message (reply or bounce), captured
+   * by the scanner. null until a reply/bounce lands. Full body stays in Gmail. */
+  reply_from: string | null
+  reply_subject: string | null
+  reply_snippet: string | null
   /** Resolver found a plausible-but-uncertain match (low confidence) — surface
    * for manual disambiguation rather than silent skip. */
   needs_review: boolean

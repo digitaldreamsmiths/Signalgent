@@ -242,6 +242,9 @@ export async function getOutreachSnapshot(companyId: string): Promise<OutreachSn
       draft: (draftsByProspect.get(p.id) ?? []).at(-1) ?? null,
       disposition: p.disposition,
       disposition_at: p.disposition_at,
+      reply_from: p.reply_from,
+      reply_subject: p.reply_subject,
+      reply_snippet: p.reply_snippet,
       // A plausible-but-uncertain resolver result (low confidence) — surfaced
       // for manual disambiguation rather than left as a silent skip.
       needs_review:
