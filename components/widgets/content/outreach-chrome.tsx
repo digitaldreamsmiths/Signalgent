@@ -120,13 +120,16 @@ export function OutreachChrome({ children }: { children: React.ReactNode }) {
     const r = await scanRepliesNow(companyId)
     setScanning(false)
     if (!r.ok) return pushToast(r.error, 'error')
-    const { replied, bounced, unsubscribed, skipped } = r.data
-    if (replied === 0 && bounced === 0 && unsubscribed === 0) {
+    const { replied, bounced, unsubscribed, softBounced = 0, skipped } = r.data
+    if (replied === 0 && bounced === 0 && unsubscribed === 0 && softBounced === 0) {
       pushToast(`No new replies or bounces${skipped ? ` (${skipped})` : ''}.`)
     } else {
       const optPart = unsubscribed > 0 ? `, ${unsubscribed} opt-out${unsubscribed === 1 ? '' : 's'}` : ''
+      // Soft bounces are reported but excluded from the rate — saying so keeps
+      // "3 temporary" from reading as three more strikes against the cap.
+      const softPart = softBounced > 0 ? `, ${softBounced} temporary (not counted)` : ''
       pushToast(
-        `Found ${replied} repl${replied === 1 ? 'y' : 'ies'}, ${bounced} bounce${bounced === 1 ? '' : 's'}${optPart}.` +
+        `Found ${replied} repl${replied === 1 ? 'y' : 'ies'}, ${bounced} bounce${bounced === 1 ? '' : 's'}${optPart}${softPart}.` +
           (unsubscribed > 0 ? ' Opt-outs were flagged and suppressed from sending.' : ''),
         unsubscribed > 0 ? 'error' : 'info',
       )

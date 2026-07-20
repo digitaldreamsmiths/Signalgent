@@ -41,6 +41,10 @@ export interface ScanResult {
   /** Replies whose text asks to stop (opt-out). A subset of inbound replies,
    * auto-routed to the 'unsubscribed' disposition so we never email them again. */
   unsubscribed: number
+  /** Temporary delivery failures / delay notices detected but deliberately not
+   * acted on: the prospect stays `open` and it never counts toward the bounce
+   * rate. Reported for observability only. */
+  softBounced?: number
   /** Set when the pass did no work (and why); useful for the manual button. */
   skipped?: string
 }
@@ -64,9 +68,22 @@ function isOptOut(msg: GmailMessage): boolean {
   return OPT_OUT_RE.test(header(msg, 'Subject')) || OPT_OUT_RE.test(msg.snippet ?? '')
 }
 
+/** RFC 3463 enhanced status code: class 4 = persistent-transient (soft), class
+ * 5 = permanent (hard). When present in the DSN text it's the authoritative
+ * signal, so it wins over keyword matching. */
+const ENH_STATUS_RE = /\b([45])\.\d{1,3}\.\d{1,3}\b/
+/** Common transient SMTP reply codes that a DSN quotes without an enhanced code. */
+const SOFT_SMTP_RE = /\b(421|450|451|452)\b/
+/** Positive signals that a DSN is only a TEMPORARY failure (mailbox full, over
+ * quota, delayed/still-retrying, greylisted, rate-limited, connection trouble).
+ * We only DEMOTE a bounce to soft on a positive signal like these — anything we
+ * can't classify stays a hard bounce, so genuine dead addresses are never
+ * undercounted. Soft bounces are excluded from the bounce rate entirely. */
+const SOFT_BOUNCE_RE = /\b(temporar\w*|delay(ed)?|will retry|try again|over[\s-]?quota|quota exceeded|mailbox full|full mailbox|message too large|size limit|exceeds? the|rate[\s-]?limit\w*|throttl\w*|greylist\w*|deferred|not yet been delivered|still (being )?(delivered|retried)|connection (timed out|refused|reset|error)|timed out|service (temporarily )?unavailable)\b/i
+
 /** A message is a bounce/DSN if it's from a daemon, looks like a failure
  * notice, or carries a delivery-status report MIME type. */
-function isBounce(msg: GmailMessage): boolean {
+function isDSN(msg: GmailMessage): boolean {
   const from = header(msg, 'From')
   const subject = header(msg, 'Subject')
   const contentType = header(msg, 'Content-Type')
@@ -77,13 +94,26 @@ function isBounce(msg: GmailMessage): boolean {
   )
 }
 
+/** Classify a delivery notice by severity from the subject + snippet we already
+ * fetch. Only 'hard' (permanent) bounces count toward the bounce rate; 'soft'
+ * covers temporary failures and mere delay notices, which are ignored. 'none'
+ * means the message isn't a DSN at all. */
+function bounceKind(msg: GmailMessage): 'hard' | 'soft' | 'none' {
+  if (!isDSN(msg)) return 'none'
+  const text = `${header(msg, 'Subject')} ${msg.snippet ?? ''}`
+  const enh = text.match(ENH_STATUS_RE)
+  if (enh) return enh[1] === '4' ? 'soft' : 'hard' // enhanced code is authoritative
+  if (SOFT_SMTP_RE.test(text) || SOFT_BOUNCE_RE.test(text)) return 'soft'
+  return 'hard'
+}
+
 function internalMs(msg: GmailMessage): number {
   const n = Number(msg.internalDate)
   return Number.isFinite(n) ? n : 0
 }
 
 type Verdict =
-  | { kind: 'bounced' | 'replied' | 'unsubscribed'; at: string; from: string; subject: string; snippet: string }
+  | { kind: 'bounced' | 'replied' | 'unsubscribed' | 'soft_bounce'; at: string; from: string; subject: string; snippet: string }
   | null
 
 /** From/Subject/snippet preview of an inbound message. The Gmail metadata fetch
@@ -98,13 +128,17 @@ function preview(msg: GmailMessage): { from: string; subject: string; snippet: s
 }
 
 /** Inspect a thread's messages relative to our mailbox and return the outcome.
- * Precedence: bounce > opt-out > plain reply. The chosen message is the earliest
- * matching inbound one, and its sender/subject/snippet ride along for the in-app
- * preview. An opt-out anywhere in the thread wins over a neutral reply so a "stop
- * emailing me" is never downgraded to a normal reply. */
+ * Precedence: hard bounce > opt-out > plain reply > soft bounce. The chosen
+ * message is the earliest matching inbound one, and its sender/subject/snippet
+ * ride along for the in-app preview. An opt-out anywhere in the thread wins over
+ * a neutral reply so a "stop emailing me" is never downgraded to a normal reply.
+ * A soft bounce ranks last so a genuine human reply always wins over a temporary
+ * delivery notice; it only surfaces when nothing else did, and the caller counts
+ * it without acting (the prospect stays open and out of the bounce rate). */
 function classifyThread(messages: GmailMessage[], ourEmail: string): Verdict {
   const mine = ourEmail.toLowerCase()
   let bounce: { ts: number; msg: GmailMessage } | null = null
+  let soft: { ts: number; msg: GmailMessage } | null = null
   let optout: { ts: number; msg: GmailMessage } | null = null
   let reply: { ts: number; msg: GmailMessage } | null = null
 
@@ -116,8 +150,14 @@ function classifyThread(messages: GmailMessage[], ourEmail: string): Verdict {
     // Inbound: Gmail labels received mail INBOX; daemons/DSNs land there too.
     if (!labels.includes('INBOX')) continue
     const ts = internalMs(m)
-    if (isBounce(m)) {
+    const kind = bounceKind(m)
+    if (kind === 'hard') {
       if (bounce === null || ts < bounce.ts) bounce = { ts, msg: m }
+      continue
+    }
+    if (kind === 'soft') {
+      // Temporary failure or delay notice — not a reply and not a hard bounce.
+      if (soft === null || ts < soft.ts) soft = { ts, msg: m }
       continue
     }
     if (reply === null || ts < reply.ts) reply = { ts, msg: m }
@@ -127,6 +167,7 @@ function classifyThread(messages: GmailMessage[], ourEmail: string): Verdict {
   if (bounce) return { kind: 'bounced', at: new Date(bounce.ts).toISOString(), ...preview(bounce.msg) }
   if (optout) return { kind: 'unsubscribed', at: new Date(optout.ts).toISOString(), ...preview(optout.msg) }
   if (reply) return { kind: 'replied', at: new Date(reply.ts).toISOString(), ...preview(reply.msg) }
+  if (soft) return { kind: 'soft_bounce', at: new Date(soft.ts).toISOString(), ...preview(soft.msg) }
   return null
 }
 
@@ -231,8 +272,15 @@ export async function scanReplies(supabase: DB, companyId: string, opts: { force
   let replied = 0
   let bounced = 0
   let unsubscribed = 0
+  let softBounced = 0
   for (const { ref, verdict } of verdicts) {
     if (!verdict) continue
+    if (verdict.kind === 'soft_bounce') {
+      // Temporary failure / delay only: leave the prospect open (the drip keeps
+      // trying) and don't touch bounced_at, so it never inflates the rate.
+      softBounced++
+      continue
+    }
     if (verdict.kind === 'bounced') {
       await supabase.from('outreach_sends').update({ bounced_at: verdict.at }).eq('id', ref.sendId)
       await supabase.from('outreach_prospects').update({ disposition: 'bounced', disposition_at: verdict.at }).eq('id', ref.prospectId).eq('company_id', companyId)
@@ -254,7 +302,7 @@ export async function scanReplies(supabase: DB, companyId: string, opts: { force
   }
 
   await supabase.from('outreach_settings').update({ last_reply_scan_at: new Date().toISOString() }).eq('company_id', companyId)
-  return { replied, bounced, unsubscribed }
+  return { replied, bounced, unsubscribed, softBounced }
 }
 
 export interface BounceStats {

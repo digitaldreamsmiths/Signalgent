@@ -41,6 +41,7 @@ async function handle(request: Request) {
   let failed = 0
   let replied = 0
   let bounced = 0
+  let softBounced = 0
   let enriched = 0
   let recovered = 0
   let followupsQueued = 0
@@ -63,6 +64,7 @@ async function handle(request: Request) {
       const scan = await scanReplies(svc, c.company_id)
       replied += scan.replied
       bounced += scan.bounced
+      softBounced += scan.softBounced ?? 0
       // Sequences: AFTER the reply scan, so a prospect who answered this tick is
       // already suppressed before the sweep considers nudging them.
       const fu = await runFollowupSweep(svc, c.company_id)
@@ -74,7 +76,7 @@ async function handle(request: Request) {
       errors.push({ company_id: c.company_id, error: message })
     }
   }
-  return NextResponse.json({ companies: companies?.length ?? 0, sent, failed, recovered, replied, bounced, enriched, followupsQueued, followupsReview, errors })
+  return NextResponse.json({ companies: companies?.length ?? 0, sent, failed, recovered, replied, bounced, softBounced, enriched, followupsQueued, followupsReview, errors })
 }
 
 // Vercel Cron invokes via GET; Supabase pg_cron (pg_net) posts. Support both.
