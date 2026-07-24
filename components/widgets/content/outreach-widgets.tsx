@@ -744,7 +744,9 @@ function DraftDetail({ prospect, companyId, onChanged }: { prospect: OutreachPro
         </div>
       )}
 
-      {prospect.needs_review && (
+      {/* Keyed off the raw skip fields (not needs_review, which clears once a
+          draft is approved/sent) so an uncertain match stays fixable later. */}
+      {prospect.skip_stage === 'enrich' && (prospect.skip_reason ?? '').startsWith('low_confidence') && (
         <div style={{ border: `1px solid ${BORDER}`, borderRadius: 8, padding: 10, background: 'var(--app-card-2)' }}>
           <div style={{ fontSize: 11, color: '#e0a060', marginBottom: 6 }}>
             Uncertain match. Type the correct company name (as it appears in federal records) to re-resolve.

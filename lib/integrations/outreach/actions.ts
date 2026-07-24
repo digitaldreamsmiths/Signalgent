@@ -224,6 +224,7 @@ export async function getOutreachSnapshot(companyId: string): Promise<OutreachSn
 
   const views: OutreachProspectView[] = (prospects ?? []).map((p) => {
     const fp = p.footprint as { award_count?: number; sampled_total?: number } | null
+    const prospectDrafts = draftsByProspect.get(p.id) ?? []
     return {
       id: p.id,
       email: p.email,
@@ -239,19 +240,25 @@ export async function getOutreachSnapshot(companyId: string): Promise<OutreachSn
       footprint: fp && typeof fp.award_count === 'number'
         ? { award_count: fp.award_count, sampled_total: fp.sampled_total ?? 0 }
         : null,
-      drafts: draftsByProspect.get(p.id) ?? [],
-      draft: (draftsByProspect.get(p.id) ?? []).at(-1) ?? null,
+      drafts: prospectDrafts,
+      draft: prospectDrafts.at(-1) ?? null,
       disposition: p.disposition,
       disposition_at: p.disposition_at,
       reply_from: p.reply_from,
       reply_subject: p.reply_subject,
       reply_snippet: p.reply_snippet,
       // A plausible-but-uncertain resolver result (low confidence) — surfaced
-      // for manual disambiguation rather than left as a silent skip.
+      // for manual disambiguation rather than left as a silent skip. Only while
+      // it still awaits a decision: approving/editing/sending a draft anyway
+      // (or the prospect closing) is a decision, so the flag clears instead of
+      // nagging forever. The detail pane keys its re-resolve box off the raw
+      // skip fields, so an uncertain match can still be fixed afterwards.
       needs_review:
         p.status === 'skipped' &&
         p.skip_stage === 'enrich' &&
-        (p.skip_reason ?? '').startsWith('low_confidence'),
+        (p.skip_reason ?? '').startsWith('low_confidence') &&
+        p.disposition === 'open' &&
+        prospectDrafts.every((d) => d.status === 'pending'),
     }
   })
 

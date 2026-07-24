@@ -77,9 +77,22 @@ export async function loadSettings(supabase: DB, companyId: string): Promise<Sen
 
 interface Wall { y: number; mo: number; d: number; h: number; mi: number; weekday: number }
 
-function parseHM(hm: string): [number, number] {
-  const [h, m] = hm.split(':').map((n) => parseInt(n, 10))
-  return [h || 0, m || 0]
+/** Parse a wall-clock time — "17:00", "9:00", "8:00 pm", "8pm" — to [hour,
+ * minute]. Returns null when unparseable, so callers can fall back rather than
+ * silently misread "8:00 pm" as 8 AM. */
+export function parseWallTime(raw: string): [number, number] | null {
+  const m = raw.trim().toLowerCase().match(/^(\d{1,2})(?::(\d{2}))?\s*([ap])\.?m?\.?$|^(\d{1,2}):(\d{2})$/)
+  if (!m) return null
+  let h = parseInt(m[1] ?? m[4], 10)
+  const mi = parseInt(m[2] ?? m[5] ?? '0', 10)
+  const meridiem = m[3]
+  if (meridiem) {
+    if (h < 1 || h > 12) return null
+    if (meridiem === 'p' && h < 12) h += 12
+    if (meridiem === 'a' && h === 12) h = 0
+  }
+  if (h > 23 || mi > 59) return null
+  return [h, mi]
 }
 
 /** Calendar Y/M/D + H:M (+ weekday 0=Sun) of an instant as seen in `tz`. */
@@ -160,8 +173,15 @@ export function getEffectiveDailyCap(settings: SendSettings, now: Date = new Dat
  */
 export async function nextSlot(supabase: DB, companyId: string, settings: SendSettings): Promise<string> {
   const tz = settings.timezone
-  const [wsH, wsM] = parseHM(settings.send_window_start)
-  const [weH, weM] = parseHM(settings.send_window_end)
+  let [wsH, wsM] = parseWallTime(settings.send_window_start) ?? [9, 0]
+  let [weH, weM] = parseWallTime(settings.send_window_end) ?? [17, 0]
+  if (weH * 60 + weM <= wsH * 60 + wsM) {
+    // An inverted or empty window admits no slot on any day, so the search
+    // below would run off its guard and schedule ~500 days out. Fall back to
+    // the default window instead.
+    ;[wsH, wsM] = [9, 0]
+    ;[weH, weM] = [17, 0]
+  }
   const now = new Date()
 
   const { data: rows } = await supabase
