@@ -1810,3 +1810,11 @@ Bug from real use: every "Queue to send" scheduled the email for late 2027. Root
 
 - `computeBatchSlots` still ignores the send window and weekends by design (explicit user-chosen start time); if that ever surprises, clamp there too.
 - The enrich wave depth is hardcoded (`WAVE_DAYS = 3` in `enrich-run.ts`); making it a setting needs a migration.
+
+### Addendum (same session) — "Needs review" never cleared once handled
+
+Found live right after the window fix: 11 of 13 low-confidence prospects had approved (and queued) drafts yet still sat in the Needs review tab. The flag only cleared via the manual "Resolve" re-match box — approving/queuing the template draft was invisible to it.
+
+- `lib/integrations/outreach/actions.ts` — `needs_review` now also requires the prospect be `open` **and** every draft still `pending`: acting on a draft (approve/edit/send) or closing the prospect counts as the decision and drops it from Needs review.
+- `components/widgets/content/outreach-widgets.tsx` — the detail-pane "Uncertain match → Resolve" box now keys off the raw skip fields instead of `needs_review`, so a shaky match stays fixable even after its draft was approved or sent.
+- Verified `tsc --noEmit` clean; predicate confirmed against prod data (the 11 approved-draft prospects drop out, the 2 still-pending ones remain).
