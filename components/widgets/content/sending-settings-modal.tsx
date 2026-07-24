@@ -109,6 +109,7 @@ export function SendingSettingsModal({ companyId, onClose, onSaved }: { companyI
               <div><label style={labelStyle}>Window start</label><input value={form.send_window_start} onChange={(e) => set('send_window_start', e.target.value)} style={inputStyle} placeholder="09:00" /></div>
               <div><label style={labelStyle}>Window end</label><input value={form.send_window_end} onChange={(e) => set('send_window_end', e.target.value)} style={inputStyle} placeholder="17:00" /></div>
             </div>
+            <div style={{ fontSize: 10, color: MUTED, marginTop: -6 }}>24-hour HH:MM, or add am/pm (e.g. “8:00 pm”).</div>
 
             <div><label style={labelStyle}>Physical address (CAN-SPAM)</label><textarea value={form.physical_address ?? ''} onChange={(e) => set('physical_address', e.target.value)} rows={2} style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit' }} placeholder="123 Main St, City, ST 00000" /></div>
             <div><label style={labelStyle}>Unsubscribe line</label><input value={form.unsubscribe_line ?? ''} onChange={(e) => set('unsubscribe_line', e.target.value)} style={inputStyle} placeholder="Reply STOP to opt out." /></div>

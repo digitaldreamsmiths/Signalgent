@@ -1783,3 +1783,30 @@ All in `components/widgets/content/outreach-widgets.tsx` unless noted.
 
 - Polling refetches the full snapshot (~same payload as initial load) every 2.5 min; fine at current list sizes, revisit if prospect counts grow into the thousands (delta endpoint or SWR).
 - Retry on a Session-23-recovered send ("interrupted mid-send") is one click away from double-emailing if the user skips the Gmail Sent check the error text asks for; a confirm step on that specific error string would be safer.
+
+## Session 25 — Outreach: send-window time parsing (queue-to-send landed ~500 days out)
+
+Bug from real use: every "Queue to send" scheduled the email for late 2027. Root cause found in prod data: the sending-settings window was stored as `09:00 am` / `8:00 pm` (typed free-text into the modal), and the scheduler's `parseHM` only understood 24h `HH:MM` — it read `8:00 pm` as 8:00 **AM**, inverting the window (start 09:00, end 08:00). `nextSlot`'s day-scan then never found an admissible day and ran off its 500-iteration guard, returning a slot ~500 days out. (Batch scheduling was unaffected — `computeBatchSlots` doesn't consult the window — which is why "queue all" dates looked sane while single queues didn't.)
+
+### Changes
+
+| File | Change |
+| --- | --- |
+| `lib/integrations/outreach/send/worker.ts` | `parseHM` replaced by exported `parseWallTime`: accepts `17:00`, `9:00`, `8:00 pm`, `8pm`, `5:05p`, `5 P.M.`; returns `null` on garbage instead of guessing. `nextSlot` falls back to 09:00/17:00 per side when unparseable, and to the full default window when the parsed window is inverted/empty — so bad settings can never again send the scan off its guard. |
+| `lib/integrations/outreach/sending.ts` | `saveSendSettings` normalizes both window fields to canonical 24h `HH:MM` via `parseWallTime`, rejects unparseable values with a clear error, and rejects `end <= start`. |
+| `components/widgets/content/sending-settings-modal.tsx` | Hint line under the window inputs: 24-hour HH:MM, or add am/pm. |
+
+### Out-of-band data fix (prod, applied this session)
+
+- `outreach_settings.send_window_start/end` normalized `09:00 am`/`8:00 pm` → `09:00`/`20:00`. This alone fixes the deployed scheduler immediately (the old parser reads 24h correctly); the code change prevents recurrence if am/pm times are typed again.
+- The three sends stranded on 2027-12-06 had already been rescheduled in-app to 2026-07-29 before the repair script ran; queue verified healthy afterward (67 queued: 45 on 07-27 at the warmup cap, 19 on 07-28, 3 on 07-29).
+
+### Local verification
+
+- `npx tsc --noEmit` clean.
+- `parseWallTime` exercised via node against 16 cases (24h, am/pm variants, `12 am`/`12:30 pm` edges, junk like `13:00 pm`, `8:75`, `banana` → null).
+
+### Residuals
+
+- `computeBatchSlots` still ignores the send window and weekends by design (explicit user-chosen start time); if that ever surprises, clamp there too.
+- The enrich wave depth is hardcoded (`WAVE_DAYS = 3` in `enrich-run.ts`); making it a setting needs a migration.

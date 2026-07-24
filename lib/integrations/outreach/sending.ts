@@ -6,7 +6,7 @@ import { IntegrationAuthError, requireCompanyAccess } from '@/lib/integrations/a
 import type { ActionResult, ScheduledSendView, SendSettings } from './types'
 import { getAccount } from '@/lib/integrations/accounts'
 import { composeEmail } from './send/compose'
-import { computeBatchSlots, loadSettings, nextSlot, runQueue } from './send/worker'
+import { computeBatchSlots, loadSettings, nextSlot, parseWallTime, runQueue } from './send/worker'
 import { scanReplies } from './send/scan'
 
 const AUTH_ERROR = 'You don’t have access to this workspace.'
@@ -33,6 +33,20 @@ export async function saveSendSettings(
     throw err
   }
   const supabase = await createClient()
+  // Normalize the send window to 24h "HH:MM" — scheduling reads it back with
+  // parseWallTime, but a canonical stored form keeps the UI and any other
+  // reader honest. Reject what can't be parsed instead of storing it.
+  for (const key of ['send_window_start', 'send_window_end'] as const) {
+    const raw = patch[key]
+    if (typeof raw === 'string') {
+      const t = parseWallTime(raw)
+      if (!t) return { ok: false, error: `“${raw}” isn’t a valid time — use HH:MM (24h) or e.g. “8:00 pm”.` }
+      patch[key] = `${String(t[0]).padStart(2, '0')}:${String(t[1]).padStart(2, '0')}`
+    }
+  }
+  if (patch.send_window_start && patch.send_window_end && patch.send_window_end <= patch.send_window_start) {
+    return { ok: false, error: 'The send window must end after it starts.' }
+  }
   // Derive warmup anchor + pause reason from an active toggle.
   const derived: Partial<SendSettings> = {}
   if (patch.active === true) {
