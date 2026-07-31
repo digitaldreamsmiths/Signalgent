@@ -1818,3 +1818,28 @@ Found live right after the window fix: 11 of 13 low-confidence prospects had app
 - `lib/integrations/outreach/actions.ts` — `needs_review` now also requires the prospect be `open` **and** every draft still `pending`: acting on a draft (approve/edit/send) or closing the prospect counts as the decision and drops it from Needs review.
 - `components/widgets/content/outreach-widgets.tsx` — the detail-pane "Uncertain match → Resolve" box now keys off the raw skip fields instead of `needs_review`, so a shaky match stays fixable even after its draft was approved or sent.
 - Verified `tsc --noEmit` clean; predicate confirmed against prod data (the 11 approved-draft prospects drop out, the 2 still-pending ones remain).
+
+## Session 26 — Outreach: snapshot hid 3,900 prospects (and every personalized draft) past PostgREST's silent 1,000-row cap
+
+Found while auditing "is the USAspending check silently failing?" (it isn't — 409 prospects processed, outcomes all recorded, only 2 `api_error`; ~4% of `no_results` skips are AI-segmentation flakiness, the rest are genuine SAM-registrants-without-awards). The real bug was visibility: `getOutreachSnapshot` selects with no limit, Supabase truncates every select at 1,000 rows **without an error**, and the 4,933-prospect list was ingested in one batch so all rows share one `created_at` — the UI showed an arbitrary 1,000 prospects and hid the rest, including all 10 personalized drafts (the only prospects that fully passed the USAspending check), which sat unreviewable in `pending` while 244 generic templates went out.
+
+### Changes
+
+| File | Change |
+| --- | --- |
+| `lib/integrations/outreach/fetch-all.ts` (new) | `fetchAllPages` — pages a PostgREST query in 1,000-row ranges via a query-factory callback (builders are single-use). Callers must order deterministically with a unique tiebreaker; page errors degrade to partial results with a console.error, matching the callers' prior unchecked-select behavior. |
+| `lib/integrations/outreach/actions.ts` | `getOutreachSnapshot` pages all four reads (prospects, drafts, api_usage cost rows, sends), each with `.order(...).order('id')` so the mass-ingest `created_at` ties can't skip/duplicate across page boundaries. |
+| `lib/integrations/outreach/enrich-run.ts` | `backfillTemplateDrafts` pages its skipped-prospects and drafts reads — a capped drafts read would misread existing drafts as missing (duplicate upserts, harmless but wasteful); a capped skipped read would strand the tail. |
+| `lib/integrations/outreach/send/worker.ts` | `nextSlot` / `computeBatchSlots` page their `outreach_sends` reads and bound them to `scheduled_at >= now − 48h` (older rows can't affect slot search). Unfixed, the sends table crossing 1,000 rows (~6 weeks at current pace) would silently under-count scheduled days and overshoot the daily cap. |
+
+### Verification
+
+- `npx tsc --noEmit` clean.
+- Paging pattern replayed against prod via PostgREST: 4,933 rows, 4,933 unique ids (no boundary dupes despite ~4,900 identical `created_at`), all 10 drafted prospects present.
+- Live in preview: To review tab lists all 10 personalized drafts with facts/confidence panes; header counts read PROSPECTS 4933 / TO REVIEW 10; no console errors.
+
+### Residuals
+
+- The snapshot now ships ~4,900 prospect views to the client (~5 paged queries, one per 1,000 rows); fine today, but the Session 24 residual (delta endpoint / server-side filtering) is now more relevant.
+- AI-segmentation failures inside the resolver are recorded as `no_results`, indistinguishable from genuine no-award domains (console.warn only). Distinct `ai_error` skip reason + a periodic re-run of `no_results` skips would recover the ~4% false-skip tail (measured on a 48-email sample; e.g. `tcsservices.net` → TCS SERVICES LLC resolves 5/5 locally but was skipped in prod).
+- Freemail prospects (gmail etc.) can never be USAspending-verified yet still receive template sends by design; revisit whether they belong in the send queue at all.
