@@ -20,6 +20,26 @@ export function senderEmail(settings: SendSettings): string {
   return settings.sender_email?.trim() || ''
 }
 
+/**
+ * The sign-off block to append when the body has none. Personalized drafts carry
+ * the model's own sign-off (the register mandates the site line), so this only
+ * fires for user templates, which have no sign-off of their own.
+ */
+function signatureFor(settings: SendSettings): string {
+  const custom = settings.signature?.trim()
+  if (custom) return custom
+  const name = settings.sender_name?.trim() || SENDER.signatureName
+  return `${SENDER.signOff},\n${name}\n${SENDER.site}`
+}
+
+/** Whether the body already signs off, so we don't stack a second signature. */
+function hasSignature(body: string, settings: SendSettings): boolean {
+  const custom = settings.signature?.trim()
+  if (custom && body.includes(custom)) return true
+  const name = settings.sender_name?.trim() || SENDER.signatureName
+  return body.includes(SENDER.site) || body.includes(name)
+}
+
 export function composeEmail(
   subject: string,
   draftBody: string,
@@ -30,9 +50,15 @@ export function composeEmail(
   if (settings.physical_address?.trim()) footerParts.push(settings.physical_address.trim())
   if (settings.unsubscribe_line?.trim()) footerParts.push(settings.unsubscribe_line.trim())
 
-  // The body keeps the model's sign-off; we only append the optional compliance
-  // footer (separated by a rule) so it reads as a normal email, not a blast.
-  const body = footerParts.length > 0 ? `${draftBody}\n\n--\n${footerParts.join('\n')}` : draftBody
+  // Sign off before the compliance footer. Personalized drafts already carry the
+  // model's sign-off and are left untouched; user templates have none, and
+  // without this they arrived signed by nothing but the mailing address.
+  const signed = hasSignature(draftBody, settings)
+    ? draftBody
+    : `${draftBody.trimEnd()}\n\n${signatureFor(settings)}`
+
+  // Compliance footer (separated by a rule) so it reads as a normal email, not a blast.
+  const body = footerParts.length > 0 ? `${signed}\n\n--\n${footerParts.join('\n')}` : signed
 
   return {
     from: senderEmail(settings),

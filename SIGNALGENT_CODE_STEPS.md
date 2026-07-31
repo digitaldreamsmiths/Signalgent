@@ -1851,3 +1851,39 @@ Real-use check of the 10 personalized drafts: 8 contained "congratulations" (the
 - `lib/integrations/outreach/draft.ts` — the close-warm rule now explicitly bans the hygiene list's high-risk words (congratulations, guarantee, winner, act now, limited time, risk-free, 100%, cheap) and steers to "well done on X" / "good luck with X".
 - Out-of-band data fix (prod): the 8 affected drafts AND their 10 queued `outreach_sends` copies (scheduled Aug 5–7, none sent) had the congratulations sentence rewritten in place; re-scan verified 10/10 drafts and 10/10 queued sends clean. The lone remaining "dash" hit in send bodies is the RFC signature delimiter (`--`) before the CAN-SPAM footer — intentional, not prose.
 - Also confirmed from prod data: the 4,933 prospects arrived as ONE paste on 2026-06-29 (4,930 rows + 3 test rows); "I had 1,000 contacts" was the snapshot cap from the main Session 26 bug, not a real count. All 4,933 emails unique; ingest dedup (in-paste set + `company_id,email` upsert-ignore) working as designed.
+
+## Session 27 — Outreach: template emails sent with a broken greeting, literal `{your team}`, and no signature
+
+Reported from a real received email: every template send opened "Hi your team," and ended with only the mailing address, no sender name. Four defects behind it, three in code and one the model's.
+
+### Root causes
+
+1. **Broken salutation.** `renderTemplate` substituted `{company}` with the inline fallback `your team` everywhere, including the salutation, so every template email to an unresolved prospect opened "Hi your team,". Template drafts go *only* to prospects that failed USASpending resolution, so `recipient_name` is almost always null, making this the norm rather than an edge case.
+2. **Literal braces in sent mail.** The user's templates use Handlebars-style `{{company}}`, but the replace only matched single braces. `/\{company\}/` matches the INNER braces of `{{company}}`, so the substitution left a visible `{your team}` in the body. 51 already-sent emails carried it.
+3. **Signature never appended.** `composeEmail` read `physical_address` and `unsubscribe_line` but never `settings.signature` — the setting was dead config. Personalized drafts carry the model's own sign-off so nobody noticed; user templates have none, so they arrived signed by nothing but a street address. 93 sent emails.
+4. **`[Name]` placeholder in personalized drafts.** Two drafts opened "Hi [Name],". The prompt never specified a greeting, and the model has no contact name to use (only an email address). None had been sent.
+
+### Changes
+
+| File | Change |
+| --- | --- |
+| `lib/integrations/outreach/template.ts` | `renderTemplate` accepts `{{company}}` and `{company}` (double replaced first, or the single pass eats the inner braces). With no resolved name the salutation placeholder is dropped entirely ("Hi,") instead of falling back inline. New exported `prettyCompany` un-shouts USASpending's legal names for body copy ("OLGOONIK SOLUTIONS LLC" → "Olgoonik Solutions"), preserving vowel-less acronyms (KBTS, TCS, SVCS) and leaving mixed-case names alone. |
+| `lib/integrations/outreach/send/compose.ts` | Appends a sign-off before the compliance footer when the body has none: `settings.signature`, else `Best,\n<sender_name>\n<site>`. Guarded by `hasSignature` so personalized drafts don't get a second one. |
+| `lib/integrations/outreach/draft.ts` | Prompt mandates a bare "Hi," greeting and bans square brackets. New exported `stripPlaceholders` (applied in `reviewDraft` alongside `sanitizeDashes`) collapses "Hi [Name]," → "Hi," and strips any other bracketed token — same fix-don't-flag posture as the dash rule, since the model leaks these despite the prompt. |
+
+### Out-of-band data repair (prod, applied this session)
+
+- Re-rendered **111 unsent user-template drafts and their 111 queued sends** through the fixed pipeline (greeting, braces, signature). Built-in-template drafts already had "Hi," and a sign-off and were left alone.
+- Stripped `[Name]` from 2 personalized drafts + their 2 queued sends.
+- Prepended "Hi," to 3 personalized drafts that opened with no salutation at all.
+- Post-repair audit of all 164 queued: 0 placeholders, 0 braces, 0 "Hi your team", 0 missing signature, 0 spam-flag words, 0 prose dashes, 0 missing greeting.
+
+### Not repairable
+
+245 emails already sent: 93 went out with "Hi your team," and no signature, 51 of those with a visible `{your team}`. Nothing sent contained a `[Name]` placeholder.
+
+### Residuals
+
+- `stripPlaceholders` on a MID-SENTENCE placeholder leaves a grammatical hole ("Reach out to about the work"). Both observed cases were salutations; a mid-sentence leak would need a redraft, not a patch.
+- `prettyCompany` title-cases by a vowel heuristic; a vowel-bearing acronym (e.g. "NASA Solutions") would become "Nasa Solutions".
+- The templates still say "free analysis"; `hygiene.ts` deliberately omits the "free" family to avoid false positives, so it is unflagged. Worth a judgment call on whether that phrasing is costing deliverability.

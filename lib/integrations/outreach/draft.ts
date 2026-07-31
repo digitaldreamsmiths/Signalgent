@@ -26,6 +26,7 @@ export const SENDER = {
 const SYSTEM = `You write a single cold outreach email to a government contractor. Register: genuine interest in the company plus a light sell of the idea. You may use ONLY the facts provided in facts_for_draft. Use nothing else about the company.
 
 Rules (follow exactly):
+- Greet with exactly "Hi," on its own line. You do NOT know the recipient's name, so NEVER write a placeholder like "[Name]", "[First Name]", or "[Company]" anywhere. No square brackets at all.
 - Open with ONE specific, earned observation about this company drawn from the facts. No flattery.
 - Name ${SENDER.product} exactly once, framed as a live tool in active use ("the contractors using it", "how other firms use it"). NEVER "building", "launching", "working on", or anything pre-launch. The user base is social proof in passing, never a boast.
 - One sentence on the core idea, one short line on the promise (they keep control, the load drops). Stop there.
@@ -76,12 +77,29 @@ export function sanitizeDashes(text: string): string {
     .replace(/\s+,/g, ',') // no space before a comma
 }
 
-/** Drift check + dash sanitize. Body is cleaned; drift on facts_used is reported. */
+/**
+ * Removes mail-merge placeholders the model invents. We only ever know the
+ * prospect's email address, never a contact name, so a bracketed token is always
+ * an unfilled template artifact — "Hi [Name]," reaching a real capture lead
+ * reads as an automated blast. Like the dash rule, the prompt forbids these and
+ * the model still leaks them, so fix deterministically rather than only flag.
+ */
+export function stripPlaceholders(text: string): string {
+  return text
+    // "Hi [Name]," -> "Hi," (keep the greeting, drop the placeholder)
+    .replace(/\b(hi|hello|hey|dear|greetings)\b[ \t]+\[[^\]\n]{1,40}\][ \t]*([,;:!.]?)/gi, (_m, greeting, punct) => `${greeting}${punct}`)
+    // any other bracketed token, plus the space that preceded it
+    .replace(/[ \t]*\[[^\]\n]{1,40}\]/g, '')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/[ \t]+([,.;:!?])/g, '$1')
+}
+
+/** Drift check + dash/placeholder sanitize. Body is cleaned; drift on facts_used is reported. */
 export function reviewDraft(draft: DraftResult, factsForDraft: string[]): DraftReview {
   const cleaned: DraftResult = {
     ...draft,
-    subject: sanitizeDashes(draft.subject),
-    body: sanitizeDashes(draft.body),
+    subject: stripPlaceholders(sanitizeDashes(draft.subject)),
+    body: stripPlaceholders(sanitizeDashes(draft.body)),
   }
   const known = new Set(factsForDraft.map((f) => f.trim().toLowerCase()))
   const drifted = cleaned.facts_used.filter((f) => !known.has(f.trim().toLowerCase()))

@@ -13,13 +13,49 @@
 import { sanitizeDashes, SENDER } from './draft'
 import type { DraftResult } from './types'
 
+/** Greeting line ending in a company placeholder, e.g. "Hi {company},". With no
+ * resolved name the placeholder must drop out entirely ("Hi,") — the inline
+ * fallback reads as a broken mail-merge in the salutation ("Hi your team,"). */
+const GREETING_PLACEHOLDER = /\b(hi|hello|hey|dear|greetings)\b[ \t]+\{\{?company\}\}?[ \t]*([,;:!.]?)/gi
+
+/** Trailing legal entity suffix, dropped so a greeting reads like a person wrote it. */
+const TRAILING_LEGAL = /[,\s]+(l\.?l\.?c|inc|incorporated|corp|corporation|co|ltd|limited|l\.?l\.?p|p\.?c|p\.?a)\.?$/i
+
+/**
+ * USASpending returns shouted legal names ("OLGOONIK SOLUTIONS LLC"), which read
+ * as a mail merge in body copy. Drop the trailing legal suffix and un-shout,
+ * preserving short vowel-less tokens (KBTS, SVCS) that are acronyms rather than
+ * words. Mixed-case names are already human-written and pass through untouched.
+ */
+export function prettyCompany(raw: string): string {
+  const trimmed = raw.trim().replace(TRAILING_LEGAL, '').trim()
+  if (!trimmed) return raw.trim()
+  if (trimmed !== trimmed.toUpperCase()) return trimmed
+  return trimmed
+    .split(/\s+/)
+    .map((w) => (w.length <= 4 && !/[aeiouy]/i.test(w) ? w : w.charAt(0) + w.slice(1).toLowerCase()))
+    .join(' ')
+}
+
 /** Render a user-authored template into a sendable draft. Substitutes the
  * `{company}` placeholder with the resolved recipient name (or a neutral
  * fallback), and dash-sanitizes like the personalized path. Makes no factual
- * claims of its own — that's the author's responsibility. */
+ * claims of its own — that's the author's responsibility.
+ *
+ * Both `{company}` and `{{company}}` are accepted: authors reasonably assume
+ * Handlebars-style double braces, and single-brace-only replacement corrupts
+ * them (the inner `{company}` of `{{company}}` matches, leaving a literal
+ * `{your team}` in the sent email). */
 export function renderTemplate(tmpl: { subject: string; body: string }, recipientName?: string | null): DraftResult {
-  const who = recipientName?.trim() || 'your team'
-  const fill = (s: string) => sanitizeDashes(s.replace(/\{company\}/gi, who))
+  const name = recipientName?.trim() ? prettyCompany(recipientName) : null
+  const fill = (s: string) => {
+    // Collapse the salutation first, while the placeholder is still intact.
+    let out = name ? s : s.replace(GREETING_PLACEHOLDER, (_m, greeting, punct) => `${greeting}${punct}`)
+    // Double braces BEFORE single, or the single pass eats the inner braces.
+    out = out.replace(/\{\{company\}\}/gi, name ?? 'your team')
+    out = out.replace(/\{company\}/gi, name ?? 'your team')
+    return sanitizeDashes(out)
+  }
   return { subject: fill(tmpl.subject), body: fill(tmpl.body), facts_used: [] }
 }
 
