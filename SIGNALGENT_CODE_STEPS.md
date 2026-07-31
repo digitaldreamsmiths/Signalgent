@@ -1843,3 +1843,11 @@ Found while auditing "is the USAspending check silently failing?" (it isn't — 
 - The snapshot now ships ~4,900 prospect views to the client (~5 paged queries, one per 1,000 rows); fine today, but the Session 24 residual (delta endpoint / server-side filtering) is now more relevant.
 - AI-segmentation failures inside the resolver are recorded as `no_results`, indistinguishable from genuine no-award domains (console.warn only). Distinct `ai_error` skip reason + a periodic re-run of `no_results` skips would recover the ~4% false-skip tail (measured on a 48-email sample; e.g. `tcsservices.net` → TCS SERVICES LLC resolves 5/5 locally but was skipped in prod).
 - Freemail prospects (gmail etc.) can never be USAspending-verified yet still receive template sends by design; revisit whether they belong in the send queue at all.
+
+### Addendum (Session 26) — draft prompt: ban spam-trigger words; queued drafts scrubbed
+
+Real-use check of the 10 personalized drafts: 8 contained "congratulations" (the prompt's "good wishes either way" rule practically invited it — every instance was the closing line), which `hygiene.ts` flags as spam bait. Zero em/en dashes (the Session-spec `sanitizeDashes` pass is doing its job) and no other spam patterns.
+
+- `lib/integrations/outreach/draft.ts` — the close-warm rule now explicitly bans the hygiene list's high-risk words (congratulations, guarantee, winner, act now, limited time, risk-free, 100%, cheap) and steers to "well done on X" / "good luck with X".
+- Out-of-band data fix (prod): the 8 affected drafts AND their 10 queued `outreach_sends` copies (scheduled Aug 5–7, none sent) had the congratulations sentence rewritten in place; re-scan verified 10/10 drafts and 10/10 queued sends clean. The lone remaining "dash" hit in send bodies is the RFC signature delimiter (`--`) before the CAN-SPAM footer — intentional, not prose.
+- Also confirmed from prod data: the 4,933 prospects arrived as ONE paste on 2026-06-29 (4,930 rows + 3 test rows); "I had 1,000 contacts" was the snapshot cap from the main Session 26 bug, not a real count. All 4,933 emails unique; ingest dedup (in-paste set + `company_id,email` upsert-ignore) working as designed.
