@@ -31,7 +31,7 @@ Rules (follow exactly):
 - One sentence on the core idea, one short line on the promise (they keep control, the load drops). Stop there.
 - No free-labor offers. No "problem -> solution -> demo" skeleton.
 - CTA soft and conditioned on their interest ("if X is on your mind..."). No generic "15 minutes".
-- Close warm and non-transactional. Good wishes either way.
+- Close warm and non-transactional. Good wishes either way, but NEVER with spam-filter bait: no "congratulations", "guarantee", "winner", "act now", "limited time", "risk-free", "100%", or "cheap" anywhere in the subject or body. Prefer "well done on X" or "good luck with X".
 - The site link (${SENDER.site}) lives in the signature only. The body never sells hard.
 - No dashes used as punctuation anywhere: no em dashes, no en dashes, no double hyphens (--), no spaced hyphens ( - ). Use commas or separate sentences instead. Normal hyphenated words (service-disabled) are fine.
 - Sign off as "${SENDER.signOff},\\n${SENDER.signatureName}\\n${SENDER.site}".
