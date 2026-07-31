@@ -13,6 +13,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database, Json } from '@/lib/types/database.types'
 import { runPipeline, type PipelineOutcome } from './pipeline'
+import { fetchAllPages } from './fetch-all'
 import { buildTemplateDraft, renderTemplate } from './template'
 import type { DraftResult } from './types'
 import type { LLMUsage } from '../../llm/client'
@@ -156,15 +157,24 @@ export async function persistOutcome(supabase: DB, companyId: string, prospectId
  * is left stranded (counted but invisible in the queue). Returns how many created.
  */
 export async function backfillTemplateDrafts(supabase: DB, companyId: string): Promise<number> {
-  const { data: skipped } = await supabase
-    .from('outreach_prospects')
-    .select('id, recipient_name')
-    .eq('company_id', companyId)
-    .eq('status', 'skipped')
-  if (!skipped || skipped.length === 0) return 0
+  // Paged: both tables grow with the prospect list and outrun the silent
+  // 1,000-row cap; a capped drafts read would misread existing drafts as
+  // missing and a capped skipped read would strand the tail.
+  const skipped = await fetchAllPages((from, to) =>
+    supabase
+      .from('outreach_prospects')
+      .select('id, recipient_name')
+      .eq('company_id', companyId)
+      .eq('status', 'skipped')
+      .order('id')
+      .range(from, to),
+  )
+  if (skipped.length === 0) return 0
 
-  const { data: drafts } = await supabase.from('outreach_drafts').select('prospect_id').eq('company_id', companyId)
-  const haveDraft = new Set((drafts ?? []).map((d) => d.prospect_id))
+  const drafts = await fetchAllPages((from, to) =>
+    supabase.from('outreach_drafts').select('prospect_id').eq('company_id', companyId).order('id').range(from, to),
+  )
+  const haveDraft = new Set(drafts.map((d) => d.prospect_id))
 
   const missing = skipped.filter((p) => !haveDraft.has(p.id))
   if (missing.length === 0) return 0

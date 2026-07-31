@@ -9,6 +9,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/lib/types/database.types'
 import type { SendSettings } from '../types'
 import { getProvider, type ProviderName } from './provider'
+import { fetchAllPages } from '../fetch-all'
 
 type DB = SupabaseClient<Database>
 
@@ -184,13 +185,24 @@ export async function nextSlot(supabase: DB, companyId: string, settings: SendSe
   }
   const now = new Date()
 
-  const { data: rows } = await supabase
-    .from('outreach_sends')
-    .select('scheduled_at')
-    .eq('company_id', companyId)
-    .in('status', ['queued', 'sending', 'sent'])
-    .not('scheduled_at', 'is', null)
-  const planned = (rows ?? []).map((r) => new Date(r.scheduled_at as string))
+  // Only sends scheduled today-or-later (48h margin for timezone skew) can
+  // affect slot search, and the filter keeps this under the silent 1,000-row
+  // cap; paged anyway so a big queued backlog can't overflow it and
+  // under-count a day (which would overshoot the daily cap).
+  const horizon = new Date(now.getTime() - 48 * 3600_000).toISOString()
+  const rows = await fetchAllPages((from, to) =>
+    supabase
+      .from('outreach_sends')
+      .select('scheduled_at')
+      .eq('company_id', companyId)
+      .in('status', ['queued', 'sending', 'sent'])
+      .not('scheduled_at', 'is', null)
+      .gte('scheduled_at', horizon)
+      .order('scheduled_at')
+      .order('id')
+      .range(from, to),
+  )
+  const planned = rows.map((r) => new Date(r.scheduled_at as string))
   const counts = new Map<string, number>()
   const dayLatest = new Map<string, number>() // ms of the last send already on each day
   for (const d of planned) {
@@ -246,14 +258,24 @@ export async function computeBatchSlots(
   const startM = startWall.mi
 
   const exclude = new Set(excludeSendIds)
-  const { data: rows } = await supabase
-    .from('outreach_sends')
-    .select('id, scheduled_at')
-    .eq('company_id', companyId)
-    .in('status', ['queued', 'sending', 'sent'])
-    .not('scheduled_at', 'is', null)
+  // Same bound + paging as nextSlot: `cur` never starts before now, so older
+  // rows can't affect day counts, and paging keeps a large queued backlog from
+  // being truncated at 1,000 rows (which would over-fill days already at cap).
+  const horizon = new Date(now.getTime() - 48 * 3600_000).toISOString()
+  const rows = await fetchAllPages((from, to) =>
+    supabase
+      .from('outreach_sends')
+      .select('id, scheduled_at')
+      .eq('company_id', companyId)
+      .in('status', ['queued', 'sending', 'sent'])
+      .not('scheduled_at', 'is', null)
+      .gte('scheduled_at', horizon)
+      .order('scheduled_at')
+      .order('id')
+      .range(from, to),
+  )
   const counts = new Map<string, number>()
-  for (const r of rows ?? []) {
+  for (const r of rows) {
     if (exclude.has(r.id)) continue // rows being rescheduled shouldn't count against themselves
     const w = wallParts(new Date(r.scheduled_at as string), tz)
     const key = `${w.y}-${w.mo}-${w.d}`

@@ -24,6 +24,7 @@ import { recentBounceStats } from './send/scan'
 import { getAccount } from '../accounts'
 import { draftEmail } from './draft'
 import { undeliverableDomains } from './deliverability'
+import { fetchAllPages } from './fetch-all'
 import type { LLMUsage } from '../../llm/client'
 import type {
   ActionResult,
@@ -177,11 +178,24 @@ export async function getOutreachSnapshot(companyId: string): Promise<OutreachSn
   }
 
   const supabase = await createClient()
-  const [{ data: prospects }, { data: drafts }, { data: usageRows }, { data: sends }] = await Promise.all([
-    supabase.from('outreach_prospects').select('*').eq('company_id', companyId).order('created_at', { ascending: false }),
-    supabase.from('outreach_drafts').select('*').eq('company_id', companyId),
-    supabase.from('api_usage').select('cost_usd').eq('company_id', companyId).like('feature', 'outreach:%'),
-    supabase.from('outreach_sends').select('id, draft_id, status, scheduled_at, sent_at, error').eq('company_id', companyId).order('created_at', { ascending: false }),
+  // Paged: these tables outgrow PostgREST's silent 1,000-row cap (a 4,900-email
+  // ingest made the snapshot show an arbitrary 1,000 prospects and hide every
+  // personalized draft). Secondary .order('id') breaks created_at ties — bulk
+  // ingests give thousands of rows the same timestamp, which would otherwise
+  // make page boundaries skip/duplicate rows.
+  const [prospects, drafts, usageRows, sends] = await Promise.all([
+    fetchAllPages((from, to) =>
+      supabase.from('outreach_prospects').select('*').eq('company_id', companyId)
+        .order('created_at', { ascending: false }).order('id').range(from, to)),
+    fetchAllPages((from, to) =>
+      supabase.from('outreach_drafts').select('*').eq('company_id', companyId)
+        .order('id').range(from, to)),
+    fetchAllPages((from, to) =>
+      supabase.from('api_usage').select('cost_usd').eq('company_id', companyId).like('feature', 'outreach:%')
+        .order('id').range(from, to)),
+    fetchAllPages((from, to) =>
+      supabase.from('outreach_sends').select('id, draft_id, status, scheduled_at, sent_at, error').eq('company_id', companyId)
+        .order('created_at', { ascending: false }).order('id').range(from, to)),
   ])
 
   const cost_usd_total = (usageRows ?? []).reduce((s, r) => s + (r.cost_usd ?? 0), 0)
