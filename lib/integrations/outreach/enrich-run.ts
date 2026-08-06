@@ -14,6 +14,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database, Json } from '@/lib/types/database.types'
 import { runPipeline, type PipelineOutcome } from './pipeline'
 import { fetchAllPages } from './fetch-all'
+import { autoQueueDraftSend } from './send/queue'
 import { buildTemplateDraft, renderTemplate } from './template'
 import type { DraftResult } from './types'
 import type { LLMUsage } from '../../llm/client'
@@ -133,25 +134,33 @@ export async function persistOutcome(supabase: DB, companyId: string, prospectId
     // Can't personalize -> attach a generic, sendable template (empty
     // facts_for_draft marks it as a template, no fabricated claims). Rotate a
     // random active user template, stamping template_id for performance tracking.
+    // Templates are pre-approved copy, so the draft skips review ('approved')
+    // and goes straight for the send queue; autoQueueDraftSend silently leaves
+    // it in Ready to email when sending isn't configured yet.
     const { draft: tmpl, template_id } = await pickTemplateDraft(supabase, companyId, enriched?.recipient_name ?? null, prospectId)
-    await supabase.from('outreach_drafts').upsert(
-      {
-        prospect_id: prospectId,
-        company_id: companyId,
-        subject: tmpl.subject,
-        body: tmpl.body,
-        angle: null,
-        synthesis_confidence: null,
-        facts_for_draft: [],
-        facts_used: [],
-        drifted_facts: [],
-        clean: true,
-        status: 'pending',
-        step: 1,
-        template_id,
-      },
-      { onConflict: 'prospect_id,step' },
-    )
+    const { data: created } = await supabase
+      .from('outreach_drafts')
+      .upsert(
+        {
+          prospect_id: prospectId,
+          company_id: companyId,
+          subject: tmpl.subject,
+          body: tmpl.body,
+          angle: null,
+          synthesis_confidence: null,
+          facts_for_draft: [],
+          facts_used: [],
+          drifted_facts: [],
+          clean: true,
+          status: 'approved',
+          step: 1,
+          template_id,
+        },
+        { onConflict: 'prospect_id,step' },
+      )
+      .select('id')
+      .maybeSingle()
+    if (created) await autoQueueDraftSend(supabase, companyId, created.id)
   }
 }
 
@@ -198,13 +207,18 @@ export async function backfillTemplateDrafts(supabase: DB, companyId: string): P
       facts_used: [],
       drifted_facts: [],
       clean: true,
-      status: 'pending' as const,
+      status: 'approved' as const, // templates are pre-approved copy — skip review
       step: 1,
       template_id,
     })
   }
-  const { error } = await supabase.from('outreach_drafts').upsert(rows, { onConflict: 'prospect_id,step' })
-  return error ? 0 : rows.length
+  const { data: created, error } = await supabase
+    .from('outreach_drafts')
+    .upsert(rows, { onConflict: 'prospect_id,step' })
+    .select('id')
+  if (error) return 0
+  for (const d of created ?? []) await autoQueueDraftSend(supabase, companyId, d.id)
+  return rows.length
 }
 
 export interface EnrichBatchResult {

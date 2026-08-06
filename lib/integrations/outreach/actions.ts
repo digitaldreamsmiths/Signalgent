@@ -20,6 +20,7 @@ import { runPipelineFromName } from './pipeline'
 import { buildTemplateFollowup } from './template'
 import { persistOutcome, recordUsage, runEnrichmentBatch, runEnrichmentBatchForIds, enrichToBuffer, RUN_BATCH } from './enrich-run'
 import { loadSettings, getEffectiveDailyCap } from './send/worker'
+import { autoQueueDraftSend } from './send/queue'
 import { openStats, recentBounceStats } from './send/scan'
 import { getAccount } from '../accounts'
 import { draftEmail } from './draft'
@@ -464,14 +465,21 @@ export async function generateFollowup(companyId: string, prospectId: string): P
     }
   }
 
-  const { error } = await supabase.from('outreach_drafts').insert({
-    prospect_id: prospectId,
-    company_id: companyId,
-    step: nextStep,
-    status: 'pending',
-    ...row,
-  })
+  // Template follow-ups reuse pre-approved copy, so they skip review and head
+  // straight for the send queue; personalized ones still wait for approval.
+  const { data: created, error } = await supabase
+    .from('outreach_drafts')
+    .insert({
+      prospect_id: prospectId,
+      company_id: companyId,
+      step: nextStep,
+      status: personalized ? 'pending' : 'approved',
+      ...row,
+    })
+    .select('id')
+    .maybeSingle()
   if (error) return { ok: false, error: 'Could not save the follow-up.' }
+  if (!personalized && created) await autoQueueDraftSend(supabase, companyId, created.id)
 
   if (usage.length > 0) await recordUsage(supabase, companyId, access.userId, usage)
   revalidatePath('/outreach')

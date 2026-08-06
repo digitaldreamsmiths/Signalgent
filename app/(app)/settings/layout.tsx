@@ -14,6 +14,12 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
     <div style={{ maxWidth: 860, margin: '0 auto' }}>
       {/* Page header */}
       <div style={{ marginBottom: 24 }}>
+        <Link
+          href="/outreach"
+          style={{ display: 'inline-block', fontSize: 12, color: '#888', textDecoration: 'none', marginBottom: 10 }}
+        >
+          ← Back to Outreach
+        </Link>
         <h1 style={{ fontSize: 20, fontWeight: 500, color: '#e0e0e0', margin: 0 }}>Settings</h1>
         <p style={{ fontSize: 12, color: '#555', marginTop: 4 }}>
           Manage your integrations, workspace, and preferences

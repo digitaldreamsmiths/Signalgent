@@ -373,6 +373,9 @@ export async function runQueue(supabase: DB, companyId: string): Promise<{ sent:
   // and would return zero rows, silently halting ALL sending — so fall back to
   // the pre-tracking column set rather than letting a pending migration stop
   // the drip. Same defensive shape as savePreview in scan.ts.
+  // Fetched wider than BATCH so personalized emails can jump a template
+  // backlog: when more than a tick's worth is due, the reorder below sends
+  // personalized first and leaves the template tail for the next tick.
   const dueQuery = (cols: string) =>
     supabase
       .from('outreach_sends')
@@ -381,7 +384,7 @@ export async function runQueue(supabase: DB, companyId: string): Promise<{ sent:
       .eq('status', 'queued')
       .lte('scheduled_at', new Date().toISOString())
       .order('scheduled_at', { ascending: true })
-      .limit(BATCH)
+      .limit(BATCH * 3)
 
   const BASE_COLS = 'id, draft_id, prospect_id, recipient_email, subject, body'
   type DueRow = {
@@ -397,6 +400,24 @@ export async function runQueue(supabase: DB, companyId: string): Promise<{ sent:
   } else {
     due = (withTokens.data ?? null) as unknown as DueRow[] | null
   }
+
+  // Personalized emails outrank templates. Sends carry no template marker
+  // column, so classify by the draft's facts_for_draft (empty = template) and
+  // stable-sort personalized to the front before capping at BATCH. On a lookup
+  // failure just keep scheduled_at order.
+  if (due && due.length > 1) {
+    const { data: kinds } = await supabase
+      .from('outreach_drafts')
+      .select('id, facts_for_draft')
+      .in('id', due.map((s) => s.draft_id))
+    if (kinds) {
+      const personalized = new Set(
+        kinds.filter((d) => Array.isArray(d.facts_for_draft) && d.facts_for_draft.length > 0).map((d) => d.id),
+      )
+      due = [...due.filter((s) => personalized.has(s.draft_id)), ...due.filter((s) => !personalized.has(s.draft_id))]
+    }
+  }
+  due = (due ?? []).slice(0, BATCH)
 
   let sent = 0
   let failed = 0

@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useTheme } from 'next-themes'
 import { LogOut, User, Settings, Sun, Moon } from 'lucide-react'
@@ -36,9 +37,12 @@ export function Topbar() {
     >
       {/* Left: Wordmark + Company Switcher */}
       <div className="flex items-center gap-4">
-        <span style={{ fontSize: 13, fontWeight: 500, letterSpacing: '-0.02em', color: 'var(--app-muted)' }}>
+        <Link
+          href="/outreach"
+          style={{ fontSize: 13, fontWeight: 500, letterSpacing: '-0.02em', color: 'var(--app-muted)', textDecoration: 'none' }}
+        >
           Signalgent
-        </span>
+        </Link>
         <CompanySwitcher />
       </div>
 
