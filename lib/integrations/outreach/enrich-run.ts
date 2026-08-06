@@ -63,6 +63,7 @@ async function pickTemplateDraft(
   supabase: DB,
   companyId: string,
   recipientName: string | null,
+  prospectId: string,
 ): Promise<{ draft: DraftResult; template_id: string | null }> {
   const { data: templates } = await supabase
     .from('outreach_templates')
@@ -70,7 +71,10 @@ async function pickTemplateDraft(
     .eq('company_id', companyId)
     .eq('active', true)
   const active = templates ?? []
-  if (active.length === 0) return { draft: buildTemplateDraft(recipientName), template_id: null }
+  // No user templates: rotate the five built-in variants instead of sending one
+  // email to everybody. Keyed off the prospect id rather than randomly, so a
+  // later follow-up derives the same variant without a column to remember it.
+  if (active.length === 0) return { draft: buildTemplateDraft(recipientName, prospectId), template_id: null }
 
   // Weighted random across the active set.
   const total = active.reduce((s, t) => s + Math.max(1, t.weight), 0)
@@ -129,7 +133,7 @@ export async function persistOutcome(supabase: DB, companyId: string, prospectId
     // Can't personalize -> attach a generic, sendable template (empty
     // facts_for_draft marks it as a template, no fabricated claims). Rotate a
     // random active user template, stamping template_id for performance tracking.
-    const { draft: tmpl, template_id } = await pickTemplateDraft(supabase, companyId, enriched?.recipient_name ?? null)
+    const { draft: tmpl, template_id } = await pickTemplateDraft(supabase, companyId, enriched?.recipient_name ?? null, prospectId)
     await supabase.from('outreach_drafts').upsert(
       {
         prospect_id: prospectId,
@@ -182,7 +186,7 @@ export async function backfillTemplateDrafts(supabase: DB, companyId: string): P
   // Rotate independently per prospect so the fallback pool is spread across the list.
   const rows = []
   for (const p of missing) {
-    const { draft: tmpl, template_id } = await pickTemplateDraft(supabase, companyId, p.recipient_name ?? null)
+    const { draft: tmpl, template_id } = await pickTemplateDraft(supabase, companyId, p.recipient_name ?? null, p.id)
     rows.push({
       prospect_id: p.id,
       company_id: companyId,

@@ -6,6 +6,7 @@
  */
 
 import { SENDER } from '../draft'
+import { unsubscribeUrl } from './tracking'
 import type { SendSettings } from '../types'
 
 export interface ComposedEmail {
@@ -44,11 +45,24 @@ export function composeEmail(
   subject: string,
   draftBody: string,
   settings: SendSettings,
+  /** Per-send unsubscribe token, so the footer carries a real one-click link
+   * instead of only a "reply to opt out" sentence. Omit for a preview. */
+  unsubToken?: string | null,
 ): ComposedEmail {
   const fromName = settings.sender_name?.trim() || SENDER.signatureName
   const footerParts: string[] = []
   if (settings.physical_address?.trim()) footerParts.push(settings.physical_address.trim())
-  if (settings.unsubscribe_line?.trim()) footerParts.push(settings.unsubscribe_line.trim())
+  // A working link beats a sentence: it is what the recipient reaches for
+  // instead of hitting "report spam", and it matches the List-Unsubscribe
+  // header the send path sets. The configured line stays as the human-readable
+  // lead-in when the user wrote one.
+  const unsubUrl = unsubToken ? unsubscribeUrl(unsubToken) : null
+  if (unsubUrl) {
+    const lead = settings.unsubscribe_line?.trim() || 'Not the right person, or not interested?'
+    footerParts.push(`${lead.replace(/[.\s]*$/, '')}. Unsubscribe: ${unsubUrl}`)
+  } else if (settings.unsubscribe_line?.trim()) {
+    footerParts.push(settings.unsubscribe_line.trim())
+  }
 
   // Sign off before the compliance footer. Personalized drafts already carry the
   // model's sign-off and are left untouched; user templates have none, and

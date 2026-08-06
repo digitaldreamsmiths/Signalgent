@@ -174,7 +174,14 @@ amounts (footprint/size) + `business_types` (socioeconomic) + location.
 - Score confidence; low-confidence → skip, never fake personalization.
 - Caveat honestly (e.g. low-bid IFBs have no proposal to write → weak fit).
 
-### Stage 3 (draft) register — final, tested
+### Stage 3 (draft) register
+
+> **Superseded.** The register below was the original, and it was wrong. A
+> 344-send run on it returned zero replies. The live rules are the `SYSTEM`
+> prompt in `lib/integrations/outreach/draft.ts`; treat that file as the source
+> of truth, not this block. Kept here because the reasons it failed are the
+> reasons the current rules exist.
+
 ```
 Register: genuine interest in the company + light sell of the idea.
 - Open with ONE specific, earned observation about this company. No flattery.
@@ -191,6 +198,20 @@ Register: genuine interest in the company + light sell of the idea.
 - Site link lives in the signature. The body never sells hard.
 - No em dashes.
 ```
+
+What it got wrong, and what replaced it:
+
+| Original rule | Why it cost replies | Now |
+|---|---|---|
+| "Close warm. Good wishes either way." | A closing good wish is a permission slip to ignore the email. | The body ENDS on one closed question. Nothing follows it. `stripReleaseValves` deletes the pleasantry if the model writes one anyway. |
+| "CTA soft and conditioned on their interest" | Asks the reader to self-diagnose, then opt into something vague. Not answerable. | The CTA *is* the question, answerable in one line by someone who has never heard of you. |
+| "one short line on the promise (the load drops)" | Abstract benefit language. Nothing to picture. | Must name a concrete artifact: compliance matrix, shred, Section L, past performance write-up. "proposal load", "busywork", "heavy lifting" are banned. |
+| (subject unspecified) | 344 emails went out with inconsistent, unattributable subjects, mostly benefit claims that read as marketing. | 2 to 5 words, lowercase, a topic or question, never a benefit claim, never the company name. |
+| (no length limit) | Bodies ran past 150 words. | 90 words for an opener, 60 for a nudge, enforced with one re-ask. |
+
+The same rules are machine-checked by `replyRiskWarnings` in
+`lib/integrations/outreach/hygiene.ts`, which runs against user-authored
+templates in the editor and against every draft in the review queue.
 - Echo `facts_used` on the draft so anything that drifted from
   `facts_for_draft` can be auto-rejected. One hallucinated award kills the email
   with a capture lead who knows their own history.

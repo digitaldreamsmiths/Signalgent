@@ -20,7 +20,7 @@ import { runPipelineFromName } from './pipeline'
 import { buildTemplateFollowup } from './template'
 import { persistOutcome, recordUsage, runEnrichmentBatch, runEnrichmentBatchForIds, enrichToBuffer, RUN_BATCH } from './enrich-run'
 import { loadSettings, getEffectiveDailyCap } from './send/worker'
-import { recentBounceStats } from './send/scan'
+import { openStats, recentBounceStats } from './send/scan'
 import { getAccount } from '../accounts'
 import { draftEmail } from './draft'
 import { undeliverableDomains } from './deliverability'
@@ -298,6 +298,7 @@ export async function getOutreachSnapshot(companyId: string): Promise<OutreachSn
 
   const settings = await loadSettings(supabase, companyId)
   const { rate: bounce_rate_7d } = await recentBounceStats(supabase, companyId, 7)
+  const opens = await openStats(supabase, companyId)
   // Gmail health: token refresh failures mark the account 'error', which makes
   // the worker/scanner silently skip — surface it so the user can reconnect.
   let gmail: OutreachSnapshot['sending']['gmail'] = null
@@ -316,7 +317,7 @@ export async function getOutreachSnapshot(companyId: string): Promise<OutreachSn
     gmail,
   }
 
-  return { prospects: views, counts, reply_rate, cost_usd_total, sending }
+  return { prospects: views, counts, reply_rate, opens, cost_usd_total, sending }
 }
 
 // ── Outcomes ──────────────────────────────────────────────────────────────────
@@ -448,7 +449,9 @@ export async function generateFollowup(companyId: string, prospectId: string): P
       clean: review.clean,
     }
   } else {
-    const tmpl = buildTemplateFollowup(p.recipient_name ?? null)
+    // Same seed as the opener, so the nudge continues that variant's question
+    // rather than opening an unrelated one.
+    const tmpl = buildTemplateFollowup(p.recipient_name ?? null, prospectId)
     row = {
       subject: tmpl.subject,
       body: tmpl.body,

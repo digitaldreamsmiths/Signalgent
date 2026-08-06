@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { listTemplates, createTemplate, updateTemplate, deleteTemplate } from '@/lib/integrations/outreach/template-actions'
+import { TEMPLATE_LIBRARY } from '@/lib/integrations/outreach/template-library'
+import { replyRiskWarnings } from '@/lib/integrations/outreach/hygiene'
 import type { OutreachTemplate, OutreachProspectView } from '@/lib/integrations/outreach/types'
 
 const BORDER = 'var(--app-border)'
@@ -80,6 +82,22 @@ export function TemplatesModal({
     setForm((f) => (f ? { ...f, [key]: value } : f))
   }
 
+  // Live reply-risk lint on whatever is in the editor. Advisory only — it never
+  // blocks a save, it just makes the rules that the built-in copy follows
+  // visible while you write instead of after 344 sends.
+  const risks = useMemo(
+    () => (form && (form.subject.trim() || form.body.trim()) ? replyRiskWarnings(form.subject, form.body, { isTemplate: true }) : []),
+    [form],
+  )
+
+  /** Load one of the built-in variants into the editor as a starting point. */
+  function startFrom(key: string) {
+    const v = TEMPLATE_LIBRARY.find((t) => t.key === key)
+    if (!v) return
+    setError(null)
+    setForm((f) => ({ ...(f ?? EMPTY_FORM), id: f?.id ?? null, name: f?.name?.trim() || v.name, subject: v.subject, body: v.body }))
+  }
+
   async function handleSave() {
     if (!form) return
     setBusy(true)
@@ -147,6 +165,9 @@ export function TemplatesModal({
         </div>
         <div style={{ fontSize: 11, color: MUTED, lineHeight: 1.5, marginBottom: 14 }}>
           Used for prospects that can’t be personalized from federal data. Each fallback email picks a random <b style={{ color: TEXT2 }}>active</b> template (weighted). Use <code style={{ color: ACCENT }}>{'{company}'}</code> to insert the recipient’s name. Personalized emails are unaffected.
+          <div style={{ marginTop: 6 }}>
+            What gets replies: under 90 words, one concrete thing they can picture, and a closing <b style={{ color: TEXT2 }}>question</b> with nothing after it. The editor flags the rest.
+          </div>
         </div>
 
         {error && <div style={{ fontSize: 11, color: '#d98a8a', marginBottom: 10 }}>{error}</div>}
@@ -155,7 +176,7 @@ export function TemplatesModal({
         {templates === null ? (
           <div style={{ fontSize: 12, color: MUTED, padding: 8 }}>Loading…</div>
         ) : templates.length === 0 ? (
-          <div style={{ fontSize: 12, color: MUTED, padding: '8px 0' }}>No templates yet — the built-in default is used until you add one.</div>
+          <div style={{ fontSize: 12, color: MUTED, padding: '8px 0' }}>No templates yet — the five built-in variants rotate until you add one.</div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
             {templates.map((t) => {
@@ -192,7 +213,7 @@ export function TemplatesModal({
         )}
 
         {templates !== null && active.length === 0 && templates.length > 0 && (
-          <div style={{ fontSize: 11, color: '#e0a060', marginBottom: 10 }}>No active templates — the built-in default is used until you activate one.</div>
+          <div style={{ fontSize: 11, color: '#e0a060', marginBottom: 10 }}>No active templates — the five built-in variants rotate until you activate one.</div>
         )}
 
         {/* Editor */}
@@ -202,6 +223,20 @@ export function TemplatesModal({
               <span style={{ fontSize: 11, fontWeight: 700, color: TEXT }}>{form.id ? 'Edit template' : 'New template'}</span>
               <button onClick={() => fileRef.current?.click()} style={btnGhost()}>Upload file…</button>
               <input ref={fileRef} type="file" accept=".txt,.md,text/plain,text/markdown" style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) handleUpload(f); e.currentTarget.value = '' }} />
+            </div>
+
+            {/* Starters: the five built-in variants, each asking a different
+                question. Faster than a blank textarea and they already pass the
+                lint below. */}
+            <div>
+              <label style={labelStyle}>Start from</label>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {TEMPLATE_LIBRARY.map((v) => (
+                  <button key={v.key} onClick={() => startFrom(v.key)} style={{ ...btnGhost(), fontWeight: 500, fontSize: 11, padding: '4px 9px' }}>
+                    {v.name}
+                  </button>
+                ))}
+              </div>
             </div>
             <div style={{ display: 'flex', gap: 10 }}>
               <div style={{ flex: 1 }}>
@@ -215,12 +250,23 @@ export function TemplatesModal({
             </div>
             <div>
               <label style={labelStyle}>Subject</label>
-              <input value={form.subject} onChange={(e) => set('subject', e.target.value)} placeholder="A lighter proposal load for {company}" style={inputStyle} />
+              <input value={form.subject} onChange={(e) => set('subject', e.target.value)} placeholder="recompete question" style={inputStyle} />
             </div>
             <div>
               <label style={labelStyle}>Body</label>
-              <textarea value={form.body} onChange={(e) => set('body', e.target.value)} rows={8} placeholder={'Hi,\n\nI work with government contractors…\n\nBest,\nEudon'} style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.5 }} />
+              <textarea value={form.body} onChange={(e) => set('body', e.target.value)} rows={8} placeholder={'Hi,\n\nDo you have a recompete coming up at {company}?\n\n…\n\nWorth a look before the next one drops, or is your process already tight?'} style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.5 }} />
             </div>
+
+            {risks.length > 0 && (
+              <div style={{ border: `1px solid ${BORDER}`, borderLeft: '2px solid #e0a060', borderRadius: 6, padding: '8px 10px' }}>
+                <div style={{ fontSize: 10, fontWeight: 600, color: '#e0a060', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 5 }}>Reply risk</div>
+                <ul style={{ margin: 0, paddingLeft: 15, fontSize: 11, color: TEXT2, lineHeight: 1.6 }}>
+                  {risks.map((w) => <li key={w}>{w}</li>)}
+                </ul>
+                <div style={{ fontSize: 10, color: MUTED, marginTop: 5 }}>Advisory only. You can save anyway.</div>
+              </div>
+            )}
+
             <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: TEXT2, cursor: 'pointer' }}>
               <input type="checkbox" checked={form.active} onChange={(e) => set('active', e.target.checked)} /> Active (include in rotation)
             </label>

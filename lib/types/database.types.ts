@@ -506,6 +506,12 @@ export interface Database {
           thread_id: string | null
           message_id_header: string | null
           error: string | null
+          open_token: string | null
+          unsub_token: string | null
+          opened_at: string | null
+          last_opened_at: string | null
+          open_count: number
+          unsubscribed_at: string | null
           created_at: string
           updated_at: string
         }
@@ -527,10 +533,20 @@ export interface Database {
           thread_id?: string | null
           message_id_header?: string | null
           error?: string | null
+          open_token?: string | null
+          unsub_token?: string | null
+          opened_at?: string | null
+          last_opened_at?: string | null
+          open_count?: number
+          unsubscribed_at?: string | null
           created_at?: string
           updated_at?: string
         }
         Update: {
+          // subject/body are updatable so a queued send can be rewritten in
+          // place when its draft copy is regenerated (scripts/requeue-queued-sends.ts).
+          subject?: string
+          body?: string
           status?: 'queued' | 'sending' | 'sent' | 'failed' | 'canceled'
           scheduled_at?: string | null
           sent_at?: string | null
@@ -540,6 +556,12 @@ export interface Database {
           thread_id?: string | null
           message_id_header?: string | null
           error?: string | null
+          open_token?: string | null
+          unsub_token?: string | null
+          opened_at?: string | null
+          last_opened_at?: string | null
+          open_count?: number
+          unsubscribed_at?: string | null
           updated_at?: string
         }
         Relationships: []

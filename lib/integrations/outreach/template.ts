@@ -1,22 +1,37 @@
 /**
- * Generic fallback template for prospects that can't be personalized (no
- * USASpending match, low-confidence identity, or too thin to synthesize an
- * angle). Instead of dropping them, we attach a sendable generic email.
+ * Fallback templates for prospects that can't be personalized (no USASpending
+ * match, low-confidence identity, or too thin to synthesize an angle). Instead
+ * of dropping them, we attach a sendable generic email.
  *
- * Crucially this is NOT fake personalization: the template makes ZERO
+ * Crucially this is NOT fake personalization: the templates make ZERO
  * company-specific factual claims (empty facts_for_draft is also how the queue
- * tells a template apart from a personalized draft). It only optionally
- * addresses the company by its resolved name when we have one. Same register as
- * the personalized draft, dash-sanitized.
+ * tells a template apart from a personalized draft). They only optionally
+ * address the company by its resolved name when we have one.
+ *
+ * This module is the rendering half: placeholder substitution, the deterministic
+ * variant pick, and the sign-off. The copy itself lives in ./template-library,
+ * which is client-safe so the template editor can offer the same five variants
+ * as starters.
  */
 
-import { sanitizeDashes, SENDER } from './draft'
+import { sanitizeDashes } from './draft'
+import { SENDER } from './sender'
+import { TEMPLATE_LIBRARY, type TemplateVariant } from './template-library'
 import type { DraftResult } from './types'
+
+export { TEMPLATE_LIBRARY, type TemplateVariant }
 
 /** Greeting line ending in a company placeholder, e.g. "Hi {company},". With no
  * resolved name the placeholder must drop out entirely ("Hi,") — the inline
  * fallback reads as a broken mail-merge in the salutation ("Hi your team,"). */
 const GREETING_PLACEHOLDER = /\b(hi|hello|hey|dear|greetings)\b[ \t]+\{\{?company\}\}?[ \t]*([,;:!.]?)/gi
+
+/** A placeholder governed by a preposition ("at {company}", "for {company}").
+ * Substituting the generic fallback here produces "handled in house at your
+ * team" — the prepositional phrase has to drop out whole instead. Only the bare,
+ * subject-position placeholder ("Where does {company} keep...") falls back to a
+ * generic noun. */
+const PREPOSITION_PLACEHOLDER = /[ \t]+\b(at|for|with|to|from|inside|across|within)\b[ \t]+\{\{?company\}\}?/gi
 
 /** Trailing legal entity suffix, dropped so a greeting reads like a person wrote it. */
 const TRAILING_LEGAL = /[,\s]+(l\.?l\.?c|inc|incorporated|corp|corporation|co|ltd|limited|l\.?l\.?p|p\.?c|p\.?a)\.?$/i
@@ -38,9 +53,14 @@ export function prettyCompany(raw: string): string {
 }
 
 /** Render a user-authored template into a sendable draft. Substitutes the
- * `{company}` placeholder with the resolved recipient name (or a neutral
- * fallback), and dash-sanitizes like the personalized path. Makes no factual
- * claims of its own — that's the author's responsibility.
+ * `{company}` placeholder with the resolved recipient name, and dash-sanitizes
+ * like the personalized path. Makes no factual claims of its own — that's the
+ * author's responsibility.
+ *
+ * With no resolved name the placeholder is removed rather than filled wherever
+ * a generic noun would read wrong: in the salutation ("Hi your team,") and after
+ * a preposition ("at your team"). Only a bare subject-position placeholder gets
+ * the generic fallback.
  *
  * Both `{company}` and `{{company}}` are accepted: authors reasonably assume
  * Handlebars-style double braces, and single-brace-only replacement corrupts
@@ -49,8 +69,13 @@ export function prettyCompany(raw: string): string {
 export function renderTemplate(tmpl: { subject: string; body: string }, recipientName?: string | null): DraftResult {
   const name = recipientName?.trim() ? prettyCompany(recipientName) : null
   const fill = (s: string) => {
-    // Collapse the salutation first, while the placeholder is still intact.
-    let out = name ? s : s.replace(GREETING_PLACEHOLDER, (_m, greeting, punct) => `${greeting}${punct}`)
+    let out = s
+    if (!name) {
+      // Collapse the salutation and prepositional phrases first, while the
+      // placeholders are still intact and matchable.
+      out = out.replace(GREETING_PLACEHOLDER, (_m, greeting, punct) => `${greeting}${punct}`)
+      out = out.replace(PREPOSITION_PLACEHOLDER, '')
+    }
     // Double braces BEFORE single, or the single pass eats the inner braces.
     out = out.replace(/\{\{company\}\}/gi, name ?? 'your team')
     out = out.replace(/\{company\}/gi, name ?? 'your team')
@@ -59,56 +84,47 @@ export function renderTemplate(tmpl: { subject: string; body: string }, recipien
   return { subject: fill(tmpl.subject), body: fill(tmpl.body), facts_used: [] }
 }
 
-export function buildTemplateDraft(recipientName?: string | null): DraftResult {
-  const subject = recipientName
-    ? `A lighter proposal load for ${recipientName}`
-    : 'A lighter proposal load for your team'
-
-  const body = sanitizeDashes(
-    [
-      'Hi,',
-      '',
-      `I work with government contractors who are tightening how they pursue federal work, and wanted to put ${SENDER.product} on your radar. It is a tool the contractors using it lean on to carry the heavy part of proposal and capture work, the solicitation shredding, the compliant first drafts, the past performance wrangling, while their team keeps full control of strategy and voice.`,
-      '',
-      'The idea is simple. The busywork drops and the decisions stay yours.',
-      '',
-      'If easing the proposal load is something on your mind heading into your next pursuit, I am happy to share how other firms are using it.',
-      '',
-      'Either way, wishing you a strong run on your upcoming bids.',
-      '',
-      `${SENDER.signOff},`,
-      SENDER.signatureName,
-      SENDER.site,
-    ].join('\n'),
-  )
-
-  return { subject, body, facts_used: [] }
+/** Default sign-off for the built-in path. User templates get the company's
+ * configured signature appended by `composeEmail` instead; built-ins keep
+ * carrying one so the review queue preview reads as a finished email. */
+function defaultSignature(): string {
+  return `\n\n${SENDER.signOff},\n${SENDER.signatureName}\n${SENDER.product}\n${SENDER.site}`
 }
 
 /**
- * Generic follow-up nudge for a prospect we couldn't personalize. Same register
- * as the initial template, shorter, no fabricated claims, no guilt-tripping.
+ * FNV-1a. Used only to pick a rotation variant deterministically from a stable
+ * key (the prospect id), so the opener and any later follow-up land on the SAME
+ * variant without a schema column to remember the choice — built-in drafts store
+ * template_id null by definition.
  */
-export function buildTemplateFollowup(recipientName?: string | null): DraftResult {
-  const subject = recipientName
-    ? `Following up: a lighter proposal load for ${recipientName}`
-    : 'Following up: a lighter proposal load for your team'
+function hashKey(key: string): number {
+  let h = 0x811c9dc5
+  for (let i = 0; i < key.length; i++) {
+    h ^= key.charCodeAt(i)
+    h = Math.imul(h, 0x01000193) >>> 0
+  }
+  return h >>> 0
+}
 
-  const body = sanitizeDashes(
-    [
-      'Hi,',
-      '',
-      `I reached out a little while ago about ${SENDER.product} and wanted to put it back on your radar once more.`,
-      '',
-      'Short version: the contractors using it lean on it to carry the heavy part of proposal and capture work while keeping full control of strategy and voice. The busywork drops, the decisions stay yours.',
-      '',
-      'If easing the proposal load is on your mind for an upcoming pursuit, I am glad to share how other firms are using it. No worries either way.',
-      '',
-      `${SENDER.signOff},`,
-      SENDER.signatureName,
-      SENDER.site,
-    ].join('\n'),
-  )
+/** The built-in variant this prospect is assigned to. Stable across calls. */
+export function variantFor(seed?: string | null): TemplateVariant {
+  if (!seed) return TEMPLATE_LIBRARY[0]
+  return TEMPLATE_LIBRARY[hashKey(seed) % TEMPLATE_LIBRARY.length]
+}
 
-  return { subject, body, facts_used: [] }
+/** Built-in fallback opener, used when a company has authored no active templates. */
+export function buildTemplateDraft(recipientName?: string | null, seed?: string | null): DraftResult {
+  const v = variantFor(seed)
+  const rendered = renderTemplate({ subject: v.subject, body: v.body }, recipientName)
+  return { ...rendered, body: sanitizeDashes(rendered.body.trimEnd() + defaultSignature()) }
+}
+
+/**
+ * Built-in follow-up nudge. Pass the same seed used for the opener so the nudge
+ * continues that variant's question instead of opening a new thread of thought.
+ */
+export function buildTemplateFollowup(recipientName?: string | null, seed?: string | null): DraftResult {
+  const v = variantFor(seed)
+  const rendered = renderTemplate({ subject: v.followupSubject, body: v.followupBody }, recipientName)
+  return { ...rendered, body: sanitizeDashes(rendered.body.trimEnd() + defaultSignature()) }
 }

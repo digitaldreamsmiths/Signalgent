@@ -19,7 +19,7 @@ import {
 } from '@/lib/integrations/outreach/actions'
 import { queueDraftSend, cancelSend, processSendQueue, scheduleDraftSends, getScheduledSends, scanRepliesNow } from '@/lib/integrations/outreach/sending'
 import type { Disposition, OutreachDraftView, OutreachSnapshot, OutreachProspectView, ScheduledSendView } from '@/lib/integrations/outreach/types'
-import { hygieneWarnings } from '@/lib/integrations/outreach/hygiene'
+import { hygieneWarnings, replyRiskWarnings } from '@/lib/integrations/outreach/hygiene'
 import { SendingSettingsModal } from './sending-settings-modal'
 import { TemplatesModal } from './templates-modal'
 import { ScheduledView } from './scheduled-view'
@@ -137,11 +137,12 @@ function Banner({ color, children }: { color: string; children: React.ReactNode 
 }
 
 /** A compact metric tile for the status bar. Numbers use the mono face. */
-function Metric({ label, value, accent }: { label: string; value: string | number; accent?: string }) {
+function Metric({ label, value, accent, hint }: { label: string; value: string | number; accent?: string; hint?: string }) {
   return (
-    <div style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: 8, padding: '8px 12px' }}>
+    <div style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: 8, padding: '8px 12px' }} title={hint}>
       <div style={{ fontSize: 9, fontWeight: 600, color: MUTED, textTransform: 'uppercase', letterSpacing: 0.6 }}>{label}</div>
       <div style={{ fontSize: 20, fontWeight: 600, color: accent ?? 'var(--app-text)', fontFamily: 'var(--font-mono)', marginTop: 3, lineHeight: 1 }}>{value}</div>
+      {hint && <div style={{ fontSize: 9, color: MUTED, marginTop: 3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{hint}</div>}
     </div>
   )
 }
@@ -551,6 +552,7 @@ function TouchCard({ draft, companyId, onChanged }: { draft: OutreachDraftView; 
     draft.status === 'approved' ? '#1D9E75' : draft.status === 'rejected' ? '#b04545' : draft.status === 'edited' ? '#BA7517' : draft.status === 'exported' ? '#378ADD' : ACCENT
 
   const warnings = hygieneWarnings(draft.subject, draft.body)
+  const risks = replyRiskWarnings(draft.subject, draft.body)
 
   return (
     <div style={{ border: `1px solid ${BORDER}`, borderRadius: 8, padding: 12, background: CARD, display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -560,6 +562,7 @@ function TouchCard({ draft, companyId, onChanged }: { draft: OutreachDraftView; 
           {draft.is_template ? <Pill label="template" color={MUTED} /> : <Pill label="personalized" color="#1D9E75" />}
           {!draft.clean && <Pill label="drift" color="#b04545" />}
           {warnings.length > 0 && <Pill label="hygiene" color="#e0a060" />}
+          {risks.length > 0 && <Pill label="reply risk" color="#e0a060" />}
           {draft.synthesis_confidence != null && <span style={{ fontSize: 10, color: MUTED }}>fit {draft.synthesis_confidence.toFixed(2)}</span>}
           <Pill label={draft.status} color={statusColor} />
         </div>
@@ -571,6 +574,10 @@ function TouchCard({ draft, companyId, onChanged }: { draft: OutreachDraftView; 
 
       {warnings.length > 0 && (
         <div style={{ fontSize: 11, color: '#e0a060' }}>Deliverability: {warnings.join(' · ')}</div>
+      )}
+
+      {risks.length > 0 && (
+        <div style={{ fontSize: 11, color: '#e0a060' }}>Reply risk: {risks.join(' · ')}</div>
       )}
 
       {editing ? (
@@ -1135,6 +1142,13 @@ export function OutreachWorkspace() {
           <Metric label="Queued" value={c.queued} accent={c.queued > 0 ? ACCENT : undefined} />
           <Metric label="Replied" value={c.replied} accent="#1D9E75" />
           <Metric label="Reply rate" value={fmtPct(snapshot?.reply_rate ?? 0, c.sent)} />
+          {/* Denominator is tracked sends, not all sends: emails sent before
+              open tracking existed carry no pixel and would drag this to zero. */}
+          <Metric
+            label="Open rate"
+            value={fmtPct(snapshot?.opens.rate ?? 0, snapshot?.opens.tracked ?? 0)}
+            hint={snapshot?.opens.tracked ? `${snapshot.opens.opened} of ${snapshot.opens.tracked} tracked` : 'no tracked sends yet'}
+          />
           <Metric label="API cost" value={fmtUsd(snapshot?.cost_usd_total ?? 0)} />
         </div>
       )}

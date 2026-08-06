@@ -1,5 +1,6 @@
 'use server'
 
+import { randomUUID } from 'node:crypto'
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { IntegrationAuthError, requireCompanyAccess } from '@/lib/integrations/auth'
@@ -10,6 +11,28 @@ import { computeBatchSlots, loadSettings, nextSlot, parseWallTime, runQueue } fr
 import { scanReplies } from './send/scan'
 
 const AUTH_ERROR = 'You don’t have access to this workspace.'
+
+/**
+ * Insert send rows, retrying without the open/unsubscribe tokens if the first
+ * attempt fails. The tracking columns arrive via a migration applied
+ * out-of-band, so there is a window where this code is deployed and the columns
+ * are not; without the fallback, queuing a send would just error out until
+ * someone ran the migration. A Postgres insert that errors inserts nothing, so
+ * the retry can't duplicate rows.
+ *
+ * Returns null on success, or the error from the fallback attempt.
+ */
+async function insertSends(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  withTracking: Record<string, unknown>[],
+  withoutTracking: Record<string, unknown>[],
+): Promise<{ message: string } | null> {
+  const first = await supabase.from('outreach_sends').insert(withTracking as never)
+  if (!first.error) return null
+  console.warn(`[outreach:send] insert with tracking failed (${first.error.message}); retrying without`)
+  const second = await supabase.from('outreach_sends').insert(withoutTracking as never)
+  return second.error ?? null
+}
 
 export async function getSendSettings(companyId: string): Promise<SendSettings | null> {
   try {
@@ -123,10 +146,14 @@ export async function queueDraftSend(companyId: string, draftId: string): Promis
     .limit(1)
   if (existing && existing.length > 0) return { ok: false, error: 'This draft is already queued or sent.' }
 
-  const composed = composeEmail(draft.subject, draft.body, settings)
+  // Tokens are minted here, not by a column default: the unsubscribe link has
+  // to be inside the body, and the body is composed before the row exists.
+  const open_token = randomUUID()
+  const unsub_token = randomUUID()
+  const composed = composeEmail(draft.subject, draft.body, settings, unsub_token)
   const scheduled_at = await nextSlot(supabase, companyId, settings)
 
-  const { error } = await supabase.from('outreach_sends').insert({
+  const base = {
     company_id: companyId,
     prospect_id: draft.prospect_id,
     draft_id: draftId,
@@ -134,9 +161,10 @@ export async function queueDraftSend(companyId: string, draftId: string): Promis
     recipient_email: prospect.email,
     subject: composed.subject,
     body: composed.body,
-    status: 'queued',
+    status: 'queued' as const,
     scheduled_at,
-  })
+  }
+  const error = await insertSends(supabase, [{ ...base, open_token, unsub_token }], [base])
   if (error) return { ok: false, error: 'Could not queue the send.' }
   revalidatePath('/outreach')
   return { ok: true, data: undefined }
@@ -254,7 +282,11 @@ export async function scheduleDraftSends(
   const slots = await computeBatchSlots(supabase, companyId, settings, startAtIso, eligible.length)
   const rows = eligible.map((d, i) => {
     const p = pById.get(d.prospect_id)!
-    const composed = composeEmail(d.subject, d.body, settings)
+    // Per-send tokens (see queueDraftSend): the unsubscribe link lives in the
+    // body, so it must exist before the row is inserted.
+    const open_token = randomUUID()
+    const unsub_token = randomUUID()
+    const composed = composeEmail(d.subject, d.body, settings, unsub_token)
     return {
       company_id: companyId,
       prospect_id: d.prospect_id,
@@ -265,9 +297,16 @@ export async function scheduleDraftSends(
       body: composed.body,
       status: 'queued' as const,
       scheduled_at: slots[i],
+      open_token,
+      unsub_token,
     }
   })
-  const { error } = await supabase.from('outreach_sends').insert(rows)
+  const error = await insertSends(
+    supabase,
+    rows,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    rows.map(({ open_token, unsub_token, ...rest }) => rest),
+  )
   if (error) return { ok: false, error: 'Could not schedule the sends.' }
   revalidatePath('/outreach')
   return { ok: true, data: { scheduled: rows.length, skipped } }
