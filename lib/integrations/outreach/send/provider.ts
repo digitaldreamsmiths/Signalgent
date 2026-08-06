@@ -35,6 +35,11 @@ export interface SendMessage {
   threadId?: string | null
   inReplyTo?: string | null
   references?: string | null
+  /** HTML alternative carrying the open-tracking pixel. Omit for plaintext-only. */
+  htmlBody?: string | null
+  /** RFC 2369 / RFC 8058 unsubscribe headers. */
+  listUnsubscribe?: string | null
+  listUnsubscribePost?: string | null
 }
 
 export interface SendResult {
@@ -72,6 +77,7 @@ function gmailProvider(ctx: SendContext): EmailProvider {
           {
             to: msg.to, subject: msg.subject, body: msg.body, fromName: msg.fromName, replyTo: msg.replyTo,
             threadId: msg.threadId, inReplyTo: msg.inReplyTo, references: msg.references,
+            htmlBody: msg.htmlBody, listUnsubscribe: msg.listUnsubscribe, listUnsubscribePost: msg.listUnsubscribePost,
           },
           ctx.supabase,
         )

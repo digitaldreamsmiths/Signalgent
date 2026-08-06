@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "requeue": "tsc scripts/requeue-unsent-copy.ts --outDir .scripts-build --module nodenext --moduleResolution nodenext --target es2022 --skipLibCheck --esModuleInterop --resolveJsonModule && node --env-file=.env.local .scripts-build/scripts/requeue-unsent-copy.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.90.0",

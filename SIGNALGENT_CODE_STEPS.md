@@ -1887,3 +1887,92 @@ Reported from a real received email: every template send opened "Hi your team," 
 - `stripPlaceholders` on a MID-SENTENCE placeholder leaves a grammatical hole ("Reach out to about the work"). Both observed cases were salutations; a mid-sentence leak would need a redraft, not a patch.
 - `prettyCompany` title-cases by a vowel heuristic; a vowel-bearing acronym (e.g. "NASA Solutions") would become "Nasa Solutions".
 - The templates still say "free analysis"; `hygiene.ts` deliberately omits the "free" family to avoid false positives, so it is unflagged. Worth a judgment call on whether that phrasing is costing deliverability.
+
+---
+
+## Session 28 — Outreach: 344 sends, 0 replies. Register rewrite, five new templates, open tracking, List-Unsubscribe
+
+344 emails sent, 0 replies, 11 bounced/opt-out. Two separate problems: copy nobody could answer, and no instrumentation to tell that apart from copy nobody ever saw.
+
+### Root causes (copy)
+
+1. **No question anywhere.** The locked Stage 3 register closed on a good wish ("Either way, wishing you a strong run on your upcoming bids"). That is a permission slip to ignore the email. The CTA before it ("if easing the proposal load is on your mind, I am happy to share how other firms are using it") asked the reader to self-diagnose, then opt into something vague. Nothing in the email was answerable.
+2. **All five user templates made the SAME ask.** Every one ended "reply with the solicitation number and I'll run a free analysis." The rotation varied only the opening paragraph, so 163 template sends were one email wearing five hats — the variable that determines a reply was held constant. All five also opened `Hi {company},`, greeting the company by its legal name, and all five said "free".
+3. **Abstract benefit language.** "A lighter proposal load", "the busywork drops", "heavy lifting". Nothing to picture.
+4. **Subject line unconstrained.** The prompt never specified one, so 344 personalized emails went out with inconsistent, unattributable subjects, most of them benefit claims that read as marketing ("A lighter proposal load for Acme").
+5. **Length.** Bodies ran 90–150+ words against a three-paragraph problem→solution→CTA skeleton the register had explicitly banned.
+
+### Root causes (instrumentation)
+
+6. **No open tracking at all.** Nothing wrote an `opened_at`; there was no pixel. "0 replies" was undiagnosable — a spam-placement failure and a copy failure look identical and have opposite fixes.
+7. **`List-Unsubscribe` header absent.** `composeEmail` put an unsubscribe *line* in the CAN-SPAM footer, but never the RFC 2369/8058 headers, which are what Gmail and Outlook actually read. A footer without the header reads more like bulk mail, not less.
+
+### Changes — copy
+
+| File | Change |
+| --- | --- |
+| `lib/integrations/outreach/draft.ts` | Register rewritten. Body must END on one closed question with nothing after it; 90-word ceiling (60 for nudges); must name a concrete artifact (compliance matrix, shred, Section L) with vague benefit language banned by name; subject constrained (2–5 words, lowercase, topic-or-question, never a benefit claim, never the company name). New `stripReleaseValves` deletes closing pleasantries unconditionally (same fix-don't-flag posture as `sanitizeDashes`), plus `bodyWordCount` / `endsOnQuestion`. Shape failures deletion can't fix trigger exactly one re-ask with the specific complaint. Follow-ups reuse the prior subject so they thread. |
+| `lib/integrations/outreach/sender.ts` (NEW) | `SENDER` moved out of draft.ts so client components can read it without pulling the Anthropic SDK into the browser bundle. Adds `userCount` / `pipeline` social proof (~20 contractors, >$4M in active pursuits) in one place, so a stale number can't survive in one variant. |
+| `lib/integrations/outreach/template-library.ts` (NEW) | Five built-in variants, each asking a DIFFERENT question — process, capacity, past performance, recompete timing, routing — so the rotation tests which *ask* lands. Each pairs with its own follow-up. Openers 73–88 words, follow-ups 19–50. Client-safe. |
+| `lib/integrations/outreach/template.ts` | Now the rendering half only. `renderTemplate` drops a preposition-governed placeholder whole rather than substituting ("handled in house at {company}" → "handled in house", not "at your team"). Built-ins rotate deterministically by prospect id (FNV-1a), so an opener and its follow-up land on the same variant with no schema column. |
+| `lib/integrations/outreach/hygiene.ts` | New `replyRiskWarnings`: no closing question, release-valve phrases, >90 words, vague language, nothing concrete (skipped under 55 words — a nudge shouldn't restate the pitch), long subject, company name in subject, missing `{company}`. Dependency-free so client components can import it. |
+| `components/widgets/content/templates-modal.tsx` | Five one-click starters + a live reply-risk panel as you type. Advisory, never blocking. |
+| `components/widgets/content/outreach-widgets.tsx` | Reply-risk pill and line on every draft in the review queue, alongside the existing deliverability warnings. |
+| `docs/specs/signalgent-outreach-stage1.md` | The "final, tested" Stage 3 register marked superseded, with a table of what each original rule cost and what replaced it. draft.ts is now the source of truth. |
+| `docs/outreach-template-refresh.sql` (NEW) | Portable SQL (Supabase editor or psql) to deactivate the old five and insert the new five for one company. Takes a `REPLACE_WITH_COMPANY_ID` placeholder rather than a baked-in uuid, so no tenant id lives in the repo. Deactivates rather than deletes, so historical per-template stats survive. Generated from `TEMPLATE_LIBRARY`. |
+
+### Changes — instrumentation
+
+| File | Change |
+| --- | --- |
+| `supabase/migrations/20260806000000_outreach_open_tracking.sql` (NEW) | `open_token`, `unsub_token`, `opened_at`, `last_opened_at`, `open_count`, `unsubscribed_at` on `outreach_sends`. Two independent tokens: the open token travels in a pixel URL every scanner fetches, so the unsubscribe token must not be derivable from it. All nullable — the ~400 existing rows predate tracking. |
+| `lib/integrations/outreach/send/tracking.ts` (NEW) | URL construction off `NEXT_PUBLIC_APP_URL` (null disables tracking rather than emitting a broken URL), `textToHtml` (escaped, linkified, styleless, pixel last), and `listUnsubscribeHeaders`. One-click is only advertised when there is an HTTPS POST target. |
+| `lib/integrations/gmail/mime.ts` | `buildMessageMime` gains `htmlBody` → multipart/alternative (plaintext first, as the spec requires) and the `List-Unsubscribe` / `List-Unsubscribe-Post` headers. Also fixes a latent bug: parts declared `7bit` while carrying UTF-8. Non-ASCII parts are now base64-encoded; pure-ASCII parts are byte-identical to before. |
+| `app/api/outreach/open/[token]/route.ts` (NEW) | 1×1 GIF, `no-store`. Returns the same pixel whether or not the token matched, so it leaks nothing. Recording is best-effort and never breaks the image. |
+| `app/api/outreach/unsubscribe/[token]/route.ts` (NEW) | **GET does not mutate** — it renders a confirmation page with a POST button. Corporate link scanners crawl every URL in an inbound email, so a mutating GET would suppress prospects who never clicked. POST is the mutation and doubles as the RFC 8058 one-click target, returning a bare 200 to one-click clients. |
+| `lib/integrations/outreach/send/track-store.ts` (NEW) | Service-role token lookups. Opens within 15s of send are ignored (scanner/MPP prefetch, which would otherwise report ~100% opens). Unsubscribe also cancels the prospect's queued sends. Idempotent. |
+| `lib/integrations/outreach/send/compose.ts` | Footer carries a real unsubscribe URL matching the header, with the configured `unsubscribe_line` as its lead-in. |
+| `lib/integrations/outreach/sending.ts`, `send/worker.ts` | Tokens minted at queue time (the body embeds the unsubscribe link before the row exists). Both paths degrade if the migration hasn't been applied yet: the insert retries without tokens, and the worker falls back to the pre-tracking column set rather than selecting a missing column, returning zero rows, and silently halting ALL sending. |
+| `lib/integrations/outreach/send/scan.ts` | `openStats` — open rate over TRACKABLE sends only. Pre-tracking sends are excluded from the denominator; counting them would report a near-zero rate forever. |
+| `components/widgets/content/outreach-widgets.tsx` | OPEN RATE metric with a `n of m tracked` hint. |
+
+### Verification
+
+- Every variant rendered with and without a resolved company name, checked for stray braces, awkward fallbacks, dash punctuation, closing question, word ceiling, and self-consistency against `replyRiskWarnings`. Rotation spread across all five over 40 ids; opener/follow-up pairing confirmed stable.
+- MIME asserted structurally: multipart ordering, boundary integrity, CRLF, header format, pixel presence, HTML escaping, and that the plaintext-only path is unchanged.
+- Endpoints exercised live: pixel returns a valid 42-byte GIF with `no-store`; unsubscribe GET renders the confirmation without mutating; one-click POST returns a bare 200.
+- Templates modal verified in-browser: five starters load, live lint fires on the old copy (4 warnings) and is silent on a starter.
+
+### Existing-copy repair — `scripts/requeue-unsent-copy.ts` (NEW, `npm run requeue`)
+
+Swapping `outreach_templates` only changes what FUTURE fallback drafts render from. Every draft that already existed still carried the old copy. Measured on prod: **149 unsent drafts**, all template-derived (61 queued, 88 approved-or-pending but not yet queued) — so fixing only the queue would have left 88 landmines to go out later with the old ask.
+
+The script re-renders template drafts from the active rotation and re-drafts personalized ones through Stage 3 using the synthesis already stored on the draft (no re-enrichment, no USASpending calls). Where a draft also has a QUEUED send, that row is updated in place with new subject/body plus tracking tokens, preserving `scheduled_at` so the drip calendar and daily caps are untouched. Dry run by default; refuses to write while sending is active; every write guarded on `status='queued'`; a failed redraft leaves that prospect untouched rather than dropping it.
+
+Also corrected `outreach_sends` Update type — `subject`/`body` were absent because nothing had ever updated a composed send in place.
+
+### Sent-volume correction
+
+Of the 343 emails sent, **333 were template-derived and only 10 personalized**. The template rotation was doing essentially all the work, which makes the template swap the high-leverage change and the Stage 3 register rewrite the smaller one.
+
+### Handoff (not applied)
+
+1. Apply `supabase/migrations/20260806000000_outreach_open_tracking.sql` (remote-only, out-of-band). Until then tracking is inert and sending continues unchanged. — **DONE 2026-08-06**
+2. Set `NEXT_PUBLIC_APP_URL` in the deployed environment — tracking is disabled without it. **Currently set to the Vercel-assigned URL; see residuals.**
+3. Run `docs/outreach-template-refresh.sql` (substitute `REPLACE_WITH_COMPANY_ID`). — **DONE 2026-08-06**
+4. Pause sending, then `npm run requeue -- --apply`, then re-enable. — **DONE 2026-08-06** (see below)
+
+### Out-of-band data repair (prod, applied this session)
+
+- Paused sending (`active=false`, `pause_reason='manual'`), rewrote **149 unsent drafts** through the new rotation (0 failures, 0 LLM cost — all 149 were template-derived), then restored sending to its exact prior settings (daily cap 45, warmup anchor 2026-06-29, window 09:00–20:00, Gmail).
+- The 61 queued sends were rewritten in place: new subject/body, fresh open + unsubscribe tokens, `scheduled_at` preserved. Post-repair audit of all 61: 0 carrying old copy, 61 ending on a question, 61 with both tokens, 61 unique tokens, subject spread across all five variants (recompete 20, bid/no bid 13, past performance 11, who writes 9, quick one 8).
+- **Incident + fix.** The first `--apply` ran from `.env.local`, where `NEXT_PUBLIC_APP_URL=http://localhost:3001`, so all 61 queued bodies were written with a dead localhost unsubscribe link. Caught in post-apply verification before sending was re-enabled, so nothing went out with it. Repaired by rewriting only the URL prefix in place (token and copy untouched, verified per row that the link still ended in that row's own `unsub_token` and that body length changed by exactly the prefix delta). The script now **refuses to `--apply` when `NEXT_PUBLIC_APP_URL` is a localhost/loopback URL** — the unsubscribe link is baked into the stored body, so whatever the process sees becomes a permanent link in a real email.
+
+### Residuals
+
+- Open tracking is inherently noisy: Apple Mail Privacy Protection prefetches images (false positives past the 15s guard) and Gmail proxies and caches them (repeat opens under-count). A single open is weak evidence; the aggregate across hundreds of sends is the signal.
+- `open_count` is read-then-written, so simultaneous opens can lose a count. `opened_at` is set once and is the field decisions should rest on.
+- Still no contact name anywhere in the pipeline — every email opens a bare "Hi,". That is a data problem (email → domain → company, no person), and it is likely the largest remaining drag on reply rate.
+- The new templates omit the strongest differentiator in the old set: the "$10–15K per bid consultant vs $99/month" price anchor. Worth folding into a sixth variant or swapping into one of the five.
+- No link-click tracking, only opens. Clicks are a stronger intent signal but need URL rewriting, which costs deliverability.
+- `NEXT_PUBLIC_APP_URL` points at the Vercel-assigned domain, so every tracking pixel and unsubscribe link in a cold email resolves to `*.vercel.app`. That domain is heavily abused and widely filtered, and a link whose domain doesn't match the sending domain is itself a spam signal. Point it at a domain aligned with the sender (e.g. a subdomain of sourcegent.io) before volume ramps. Also confirm it is the stable production alias, not a per-deployment URL — deployment URLs rotate, and these links live in already-delivered mail forever.

@@ -279,6 +279,41 @@ export async function recentBounceStats(supabase: DB, companyId: string, windowD
   return { sent, bounced, rate: sent > 0 ? bounced / sent : 0 }
 }
 
+export interface OpenStats {
+  /** Sent emails that actually carry a tracking pixel. */
+  tracked: number
+  /** Of those, how many registered at least one open. */
+  opened: number
+  rate: number
+}
+
+/**
+ * Open rate over TRACKABLE sends only.
+ *
+ * The denominator deliberately excludes sends made before open tracking
+ * existed (null open_token). Counting those would report a near-zero open rate
+ * forever and hide the signal this metric exists to provide. A dash in the UI
+ * until tracked sends accumulate is the honest answer.
+ */
+export async function openStats(supabase: DB, companyId: string): Promise<OpenStats> {
+  const { count: tracked } = await supabase
+    .from('outreach_sends')
+    .select('id', { count: 'exact', head: true })
+    .eq('company_id', companyId)
+    .eq('status', 'sent')
+    .not('open_token', 'is', null)
+  const { count: opened } = await supabase
+    .from('outreach_sends')
+    .select('id', { count: 'exact', head: true })
+    .eq('company_id', companyId)
+    .eq('status', 'sent')
+    .not('open_token', 'is', null)
+    .not('opened_at', 'is', null)
+  const t = tracked ?? 0
+  const o = opened ?? 0
+  return { tracked: t, opened: o, rate: t > 0 ? o / t : 0 }
+}
+
 /** Auto-pause: when the recent bounce rate exceeds the configured threshold (with
  * a minimum sample), flip sending off and record why. Called on the cron before
  * runQueue. Returns whether it paused this tick. */

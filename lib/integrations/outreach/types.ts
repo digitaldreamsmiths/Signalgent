@@ -212,6 +212,9 @@ export interface OutreachSnapshot {
   }
   /** replied / sent, as a fraction (0 when nothing sent). */
   reply_rate: number
+  /** Opens over TRACKABLE sends only. Sends made before open tracking existed
+   * are excluded from the denominator, so `tracked` can be far below `sent`. */
+  opens: { tracked: number; opened: number; rate: number }
   /** All-time Anthropic API spend for this company's outreach ($). */
   cost_usd_total: number
   /** Sending health for the header/banner. */

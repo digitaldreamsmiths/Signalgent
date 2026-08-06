@@ -161,6 +161,11 @@ export interface SendOutreachArgs {
   threadId?: string | null
   inReplyTo?: string | null
   references?: string | null
+  /** HTML alternative carrying the open-tracking pixel. Omit for plaintext-only. */
+  htmlBody?: string | null
+  /** RFC 2369 / RFC 8058 unsubscribe headers. */
+  listUnsubscribe?: string | null
+  listUnsubscribePost?: string | null
 }
 
 export interface SendOutreachResult {
@@ -194,8 +199,11 @@ export async function sendOutreachEmail(
     subject: args.subject,
     replyTo: args.replyTo?.trim() || null,
     body: args.body,
+    htmlBody: args.htmlBody ?? null,
     inReplyTo: args.inReplyTo ?? null,
     references: args.references ?? null,
+    listUnsubscribe: args.listUnsubscribe ?? null,
+    listUnsubscribePost: args.listUnsubscribePost ?? null,
   })
   const result = await sendMessage({
     accessToken: creds.accessToken,

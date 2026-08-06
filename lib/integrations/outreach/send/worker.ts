@@ -9,6 +9,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/lib/types/database.types'
 import type { SendSettings } from '../types'
 import { getProvider, type ProviderName } from './provider'
+import { listUnsubscribeHeaders, openPixelUrl, textToHtml, unsubscribeUrl } from './tracking'
 import { fetchAllPages } from '../fetch-all'
 
 type DB = SupabaseClient<Database>
@@ -367,14 +368,35 @@ export async function runQueue(supabase: DB, companyId: string): Promise<{ sent:
     return { sent: 0, failed: 0, recovered } // misconfigured provider — nothing to do this tick
   }
 
-  const { data: due } = await supabase
-    .from('outreach_sends')
-    .select('id, draft_id, prospect_id, recipient_email, subject, body')
-    .eq('company_id', companyId)
-    .eq('status', 'queued')
-    .lte('scheduled_at', new Date().toISOString())
-    .order('scheduled_at', { ascending: true })
-    .limit(BATCH)
+  // Tracking columns are selected separately from the fields the send actually
+  // needs. Until the open-tracking migration is applied, selecting them errors
+  // and would return zero rows, silently halting ALL sending — so fall back to
+  // the pre-tracking column set rather than letting a pending migration stop
+  // the drip. Same defensive shape as savePreview in scan.ts.
+  const dueQuery = (cols: string) =>
+    supabase
+      .from('outreach_sends')
+      .select(cols)
+      .eq('company_id', companyId)
+      .eq('status', 'queued')
+      .lte('scheduled_at', new Date().toISOString())
+      .order('scheduled_at', { ascending: true })
+      .limit(BATCH)
+
+  const BASE_COLS = 'id, draft_id, prospect_id, recipient_email, subject, body'
+  type DueRow = {
+    id: string; draft_id: string; prospect_id: string; recipient_email: string
+    subject: string; body: string; open_token?: string | null; unsub_token?: string | null
+  }
+  let due: DueRow[] | null = null
+  const withTokens = await dueQuery(`${BASE_COLS}, open_token, unsub_token`)
+  if (withTokens.error) {
+    console.warn(`[send-worker] tracking columns unavailable (${withTokens.error.message}); sending without tracking`)
+    const plain = await dueQuery(BASE_COLS)
+    due = (plain.data ?? null) as DueRow[] | null
+  } else {
+    due = (withTokens.data ?? null) as unknown as DueRow[] | null
+  }
 
   let sent = 0
   let failed = 0
@@ -410,6 +432,16 @@ export async function runQueue(supabase: DB, companyId: string): Promise<{ sent:
       .order('sent_at', { ascending: false })
       .limit(1)
       .maybeSingle()
+    // Tracking is derived at send time, never persisted: outreach_sends.body
+    // stays the plaintext the user reviewed. Rows queued before tracking
+    // existed have null tokens and simply send as plaintext, unchanged.
+    const pixel = s.open_token ? openPixelUrl(s.open_token) : null
+    const unsub = s.unsub_token ? unsubscribeUrl(s.unsub_token) : null
+    const listUnsub = listUnsubscribeHeaders({
+      url: unsub,
+      mailto: settings.reply_to?.trim() || settings.sender_email?.trim() || null,
+    })
+
     let res
     try {
       res = await provider.send({
@@ -419,6 +451,9 @@ export async function runQueue(supabase: DB, companyId: string): Promise<{ sent:
         replyTo: settings.reply_to,
         subject: s.subject,
         body: s.body,
+        htmlBody: pixel ? textToHtml(s.body, pixel) : null,
+        listUnsubscribe: listUnsub?.listUnsubscribe ?? null,
+        listUnsubscribePost: listUnsub?.listUnsubscribePost ?? null,
         threadId: prior?.thread_id ?? null,
         inReplyTo: prior?.message_id_header ?? null,
         references: prior?.message_id_header ?? null,
