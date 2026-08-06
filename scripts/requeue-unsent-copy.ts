@@ -33,8 +33,12 @@
  *     still queued) rather than being dropped.
  *
  * RUN
- *   npm run requeue           # dry run, prints the plan and sample copy
- *   npm run requeue -- --apply
+ *   The company is required (no default) and the app URL must be the production
+ *   one, because the unsubscribe link is baked into the stored send body.
+ *
+ *     npm run requeue -- --company <uuid>            # dry run: plan + sample copy
+ *     NEXT_PUBLIC_APP_URL=https://your-app.example \
+ *       npm run requeue -- --company <uuid> --apply
  */
 
 import { createClient } from '@supabase/supabase-js'
@@ -47,7 +51,6 @@ import type { SendSettings, SynthesisResult } from '../lib/integrations/outreach
 import type { LLMUsage } from '../lib/llm/client'
 import { randomUUID } from 'node:crypto'
 
-const COMPANY_ID = process.env.REQUEUE_COMPANY_ID ?? 'f8d5013c-b274-4b56-b6f7-7017e2cdecd6'
 const APPLY = process.argv.includes('--apply')
 const FORCE = process.argv.includes('--force')
 
@@ -55,6 +58,29 @@ function die(msg: string): never {
   console.error(`\n✗ ${msg}\n`)
   process.exit(1)
 }
+
+/** Which company to repair. Required, with no default: this writes to prod, and
+ * a baked-in id is both a footgun (wrong tenant on a shared codebase) and
+ * tenant data living in the repo. Accepts `--company <uuid>` or the
+ * REQUEUE_COMPANY_ID env var. */
+function resolveCompanyId(): string {
+  const flagAt = process.argv.indexOf('--company')
+  const raw = (flagAt >= 0 ? process.argv[flagAt + 1] : process.env.REQUEUE_COMPANY_ID)?.trim()
+  if (!raw) {
+    die(
+      'No company specified. Pass one explicitly:\n' +
+        '    npm run requeue -- --company <uuid>\n' +
+        '  or set REQUEUE_COMPANY_ID. Find it in the app URL or with:\n' +
+        "    select id, name from public.companies;",
+    )
+  }
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(raw)) {
+    die(`"${raw}" is not a uuid. Pass the company's id, not its name.`)
+  }
+  return raw
+}
+
+const COMPANY_ID = resolveCompanyId()
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL
 const key = process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -65,13 +91,16 @@ if (!process.env.ANTHROPIC_API_KEY) die('ANTHROPIC_API_KEY missing — personali
 // process sees becomes a permanent link in a real email. Run from .env.local
 // and every recipient gets a dead localhost link. Refuse rather than bake it in.
 const appUrl = process.env.NEXT_PUBLIC_APP_URL?.trim()
-if (!appUrl) die('NEXT_PUBLIC_APP_URL is unset — queued sends would get no unsubscribe link.')
-if (/localhost|127\.0\.0\.1|\[::1\]/i.test(appUrl)) {
-  die(
-    `NEXT_PUBLIC_APP_URL is "${appUrl}" — a dev URL that would be baked into real emails as a dead\n` +
-      '  unsubscribe link. Re-run with the production value, e.g.\n' +
-      '    NEXT_PUBLIC_APP_URL=https://signalgent.vercel.app npm run requeue -- --apply',
-  )
+if (APPLY && !appUrl) die('NEXT_PUBLIC_APP_URL is unset — queued sends would get no unsubscribe link.')
+if (appUrl && /localhost|127\.0\.0\.1|\[::1\]/i.test(appUrl)) {
+  // Only fatal for the write path. A dry run stores nothing, so a dev URL is
+  // harmless there and blocking it would just hide the plan.
+  const msg =
+    `NEXT_PUBLIC_APP_URL is "${appUrl}" — a dev URL. It gets baked into the stored send body as a\n` +
+    '  dead unsubscribe link. Re-run with the production value:\n' +
+    '    NEXT_PUBLIC_APP_URL=https://your-app.example npm run requeue -- --company <uuid> --apply'
+  if (APPLY) die(msg)
+  console.warn(`⚠  ${msg}\n`)
 }
 
 const supabase = createClient<Database>(url, key, { auth: { persistSession: false, autoRefreshToken: false } })
