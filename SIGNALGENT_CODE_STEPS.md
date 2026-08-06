@@ -1951,6 +1951,12 @@ The script re-renders template drafts from the active rotation and re-drafts per
 
 Also corrected `outreach_sends` Update type — `subject`/`body` were absent because nothing had ever updated a composed send in place.
 
+### Bug found in live verification: opens recorded on unsent rows
+
+`recordOpen` only skipped opens within 15s of `sent_at`; when `sent_at` was null (queued, not yet sent) the guard fell through and the open was recorded. Invisible at the time, because `openStats` filters to `status='sent'` — then a permanent false positive the moment the row shipped. Caught by hitting a real queued row's pixel during end-to-end verification, which produced an `opened_at` **243 seconds before** its `sent_at`.
+
+Fixed by rejecting outright when `sent_at` is null, which also gives the invariant `opened_at >= sent_at`. One polluted prod row was reset; the audit predicate (`opened_at < sent_at OR sent_at IS NULL`) generalizes if it ever needs re-running.
+
 ### Sent-volume correction
 
 Of the 343 emails sent, **333 were template-derived and only 10 personalized**. The template rotation was doing essentially all the work, which makes the template swap the high-leverage change and the Stage 3 register rewrite the smaller one.
@@ -1970,6 +1976,7 @@ Of the 343 emails sent, **333 were template-derived and only 10 personalized**. 
 
 ### Residuals
 
+- Link/tracking domain moved to `go.sourcegent.io` (GoDaddy CNAME → Vercel), so recipients see one domain in the signature and the links. The 44 queued sends had `signalgent.vercel.app` frozen into their stored bodies and were swapped in place. **`signalgent.vercel.app` must stay attached to the Vercel project**: 18 already-delivered emails point their unsubscribe links there permanently.
 - Open tracking is inherently noisy: Apple Mail Privacy Protection prefetches images (false positives past the 15s guard) and Gmail proxies and caches them (repeat opens under-count). A single open is weak evidence; the aggregate across hundreds of sends is the signal.
 - `open_count` is read-then-written, so simultaneous opens can lose a count. `opened_at` is set once and is the field decisions should rest on.
 - Still no contact name anywhere in the pipeline — every email opens a bare "Hi,". That is a data problem (email → domain → company, no person), and it is likely the largest remaining drag on reply rate.

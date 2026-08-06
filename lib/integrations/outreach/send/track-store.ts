@@ -52,10 +52,13 @@ export async function recordOpen(token: string): Promise<void> {
   if (!send) return
 
   const now = new Date()
-  if (send.sent_at) {
-    const sinceSend = (now.getTime() - new Date(send.sent_at).getTime()) / 1000
-    if (sinceSend < OPEN_IGNORE_SECONDS) return
-  }
+  // An open on an email that has not left yet is impossible: the pixel URL only
+  // exists inside a delivered message. Recording it would be invisible at the
+  // time (the row is filtered out of open stats while queued) and then surface
+  // as a permanent false positive the moment the row is sent. Reject outright.
+  if (!send.sent_at) return
+  const sinceSend = (now.getTime() - new Date(send.sent_at).getTime()) / 1000
+  if (sinceSend < OPEN_IGNORE_SECONDS) return
 
   await supabase
     .from('outreach_sends')
