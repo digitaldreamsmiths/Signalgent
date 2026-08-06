@@ -1919,7 +1919,7 @@ Reported from a real received email: every template send opened "Hi your team," 
 | `components/widgets/content/templates-modal.tsx` | Five one-click starters + a live reply-risk panel as you type. Advisory, never blocking. |
 | `components/widgets/content/outreach-widgets.tsx` | Reply-risk pill and line on every draft in the review queue, alongside the existing deliverability warnings. |
 | `docs/specs/signalgent-outreach-stage1.md` | The "final, tested" Stage 3 register marked superseded, with a table of what each original rule cost and what replaced it. draft.ts is now the source of truth. |
-| `docs/outreach-template-refresh.sql` (NEW) | Portable SQL (Supabase editor or psql) to deactivate the old five and insert the new five for one company; SourceGent's company uuid pre-filled. Deactivates rather than deletes, so historical per-template stats survive. Generated from `TEMPLATE_LIBRARY`. |
+| `docs/outreach-template-refresh.sql` (NEW) | Portable SQL (Supabase editor or psql) to deactivate the old five and insert the new five for one company. Takes a `REPLACE_WITH_COMPANY_ID` placeholder rather than a baked-in uuid, so no tenant id lives in the repo. Deactivates rather than deletes, so historical per-template stats survive. Generated from `TEMPLATE_LIBRARY`. |
 
 ### Changes — instrumentation
 
@@ -1959,7 +1959,7 @@ Of the 343 emails sent, **333 were template-derived and only 10 personalized**. 
 
 1. Apply `supabase/migrations/20260806000000_outreach_open_tracking.sql` (remote-only, out-of-band). Until then tracking is inert and sending continues unchanged. — **DONE 2026-08-06**
 2. Set `NEXT_PUBLIC_APP_URL` in the deployed environment — tracking is disabled without it. **Currently set to the Vercel-assigned URL; see residuals.**
-3. Run `docs/outreach-template-refresh.sql` (SourceGent's company uuid is pre-filled). — **DONE 2026-08-06**
+3. Run `docs/outreach-template-refresh.sql` (substitute `REPLACE_WITH_COMPANY_ID`). — **DONE 2026-08-06**
 4. Pause sending, then `npm run requeue -- --apply`, then re-enable. — **DONE 2026-08-06** (see below)
 
 ### Out-of-band data repair (prod, applied this session)
