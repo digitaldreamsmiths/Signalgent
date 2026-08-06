@@ -8,31 +8,10 @@ import type { ActionResult, ScheduledSendView, SendSettings } from './types'
 import { getAccount } from '@/lib/integrations/accounts'
 import { composeEmail } from './send/compose'
 import { computeBatchSlots, loadSettings, nextSlot, parseWallTime, runQueue } from './send/worker'
+import { insertSendRows } from './send/queue'
 import { scanReplies } from './send/scan'
 
 const AUTH_ERROR = 'You don’t have access to this workspace.'
-
-/**
- * Insert send rows, retrying without the open/unsubscribe tokens if the first
- * attempt fails. The tracking columns arrive via a migration applied
- * out-of-band, so there is a window where this code is deployed and the columns
- * are not; without the fallback, queuing a send would just error out until
- * someone ran the migration. A Postgres insert that errors inserts nothing, so
- * the retry can't duplicate rows.
- *
- * Returns null on success, or the error from the fallback attempt.
- */
-async function insertSends(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  withTracking: Record<string, unknown>[],
-  withoutTracking: Record<string, unknown>[],
-): Promise<{ message: string } | null> {
-  const first = await supabase.from('outreach_sends').insert(withTracking as never)
-  if (!first.error) return null
-  console.warn(`[outreach:send] insert with tracking failed (${first.error.message}); retrying without`)
-  const second = await supabase.from('outreach_sends').insert(withoutTracking as never)
-  return second.error ?? null
-}
 
 export async function getSendSettings(companyId: string): Promise<SendSettings | null> {
   try {
@@ -164,7 +143,7 @@ export async function queueDraftSend(companyId: string, draftId: string): Promis
     status: 'queued' as const,
     scheduled_at,
   }
-  const error = await insertSends(supabase, [{ ...base, open_token, unsub_token }], [base])
+  const error = await insertSendRows(supabase, [{ ...base, open_token, unsub_token }], [base])
   if (error) return { ok: false, error: 'Could not queue the send.' }
   revalidatePath('/outreach')
   return { ok: true, data: undefined }
@@ -253,7 +232,7 @@ export async function scheduleDraftSends(
 
   const { data: drafts } = await supabase
     .from('outreach_drafts')
-    .select('id, subject, body, prospect_id')
+    .select('id, subject, body, prospect_id, facts_for_draft')
     .eq('company_id', companyId)
     .in('id', draftIds)
   const { data: existing } = await supabase
@@ -271,11 +250,17 @@ export async function scheduleDraftSends(
     .in('id', prospectIds.length ? prospectIds : ['00000000-0000-0000-0000-000000000000'])
   const pById = new Map((prospects ?? []).map((p) => [p.id, p]))
 
-  const eligible = (drafts ?? []).filter((d) => {
+  const unsorted = (drafts ?? []).filter((d) => {
     if (alreadyQueued.has(d.id)) return false
     const p = pById.get(d.prospect_id)
     return !!p && p.disposition === 'open' && !!p.email
   })
+  // Personalized drafts (non-empty facts_for_draft) outrank templates: slots are
+  // handed out by array index, so ordering here is what puts custom emails on
+  // the earliest send times.
+  const isPersonalized = (d: { facts_for_draft: unknown }) =>
+    Array.isArray(d.facts_for_draft) && d.facts_for_draft.length > 0
+  const eligible = [...unsorted.filter(isPersonalized), ...unsorted.filter((d) => !isPersonalized(d))]
   const skipped = draftIds.length - eligible.length
   if (eligible.length === 0) return { ok: true, data: { scheduled: 0, skipped } }
 
@@ -301,7 +286,7 @@ export async function scheduleDraftSends(
       unsub_token,
     }
   })
-  const error = await insertSends(
+  const error = await insertSendRows(
     supabase,
     rows,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars

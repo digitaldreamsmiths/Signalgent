@@ -32,6 +32,11 @@ const MUTED = 'var(--app-muted)'
 
 type Filter = 'contacts' | 'review' | 'templates' | 'needs_review' | 'approved' | 'exported' | 'replied' | 'bounced' | 'scheduled' | 'all'
 
+/** Sort keys for the draft lists (Ready to email / Sent / All). 'type' is the
+ * default and keeps the grouped Personalized/Templates sections; the rest
+ * flatten the list. */
+type ListSortKey = 'type' | 'name' | 'email' | 'status'
+
 const DISPO_META: Record<Disposition, { label: string; color: string }> = {
   open: { label: 'open', color: 'var(--app-muted)' },
   replied: { label: 'replied', color: '#378ADD' },
@@ -151,9 +156,9 @@ function Metric({ label, value, accent, hint }: { label: string; value: string |
 const EMPTY_MSG: Record<Filter, string> = {
   contacts: 'No contacts yet — paste or upload emails above.',
   review: 'Nothing waiting for review.',
-  templates: 'No template drafts.',
+  templates: 'No template drafts waiting — templates are auto-approved and go straight to “Ready to email”.',
   needs_review: 'Nothing needs a manual match.',
-  approved: 'Nothing ready to email yet — approve drafts from “To review”.',
+  approved: 'Nothing ready to email yet — approve drafts from “To review” (templates land here automatically).',
   exported: 'Nothing sent yet.',
   replied: 'No replies recorded yet.',
   bounced: 'No bounces or unsubscribes.',
@@ -168,6 +173,12 @@ function displayName(p: OutreachProspectView): string {
 }
 const byName = (a: OutreachProspectView, b: OutreachProspectView) =>
   displayName(a).localeCompare(displayName(b))
+
+/** Row state for the Status sort — the send status once queued, else the draft
+ * status, so queued rows group together ahead of the un-scheduled ones. */
+function rowStage(p: OutreachProspectView): string {
+  return p.draft?.send?.status ?? p.draft?.status ?? ''
+}
 
 /** Sticky section divider inside the scrolling list. */
 function SectionHeader({ label, count }: { label: string; count: number }) {
@@ -821,7 +832,14 @@ export function OutreachWorkspace() {
   const [scheduling, setScheduling] = useState(false)
   const [scheduledSends, setScheduledSends] = useState<ScheduledSendView[]>([])
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(false)
+  const [listSortKey, setListSortKey] = useState<ListSortKey>('type')
+  const [listSortDir, setListSortDir] = useState<'asc' | 'desc'>('asc')
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const toggleListSort = (k: ListSortKey) => {
+    if (k === listSortKey) setListSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+    else { setListSortKey(k); setListSortDir('asc') }
+  }
 
   const refresh = useCallback(async () => {
     if (!companyId) return
@@ -1248,10 +1266,10 @@ export function OutreachWorkspace() {
             <div style={{ border: `1px solid ${BORDER}`, borderRadius: 8, overflowY: 'auto', overflowX: 'hidden', minHeight: 0 }}>
               {current.length === 0 && <div style={{ fontSize: 12, color: MUTED, padding: 14 }}>{EMPTY_MSG[filter]}</div>}
               {current.length > 0 && (filter === 'approved' || filter === 'exported' || filter === 'all') ? (
-                // Split into Personalized then Templates, each sorted by name.
+                // Sortable list. Default ('type' asc) keeps the classic grouped
+                // view — Personalized then Templates, each by name; the other
+                // keys flatten the list and sort it.
                 (() => {
-                  const personalized = current.filter((p) => p.draft && !p.draft.is_template).sort(byName)
-                  const templates = current.filter((p) => p.draft && p.draft.is_template).sort(byName)
                   const selectable = filter === 'approved'
                   const rowOf = (p: OutreachProspectView) => (
                     <ProspectRow
@@ -1263,12 +1281,57 @@ export function OutreachWorkspace() {
                       onToggle={selectable && p.draft ? () => toggleDraft(p.draft!.id) : undefined}
                     />
                   )
+                  const sortBtn = (k: ListSortKey, label: string) => (
+                    <button
+                      key={k}
+                      onClick={() => toggleListSort(k)}
+                      style={{ fontSize: 9, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.6, color: listSortKey === k ? ACCENT : MUTED, background: 'transparent', border: 'none', padding: '2px 5px', cursor: 'pointer', minHeight: 'auto' }}
+                    >
+                      {label}{listSortKey === k ? (listSortDir === 'asc' ? ' ▲' : ' ▼') : ''}
+                    </button>
+                  )
+                  const sortBar = (
+                    <div style={{ display: 'flex', gap: 2, alignItems: 'center', padding: '3px 8px', borderBottom: `1px solid ${BORDER}` }}>
+                      <span style={{ fontSize: 9, fontWeight: 600, color: MUTED, textTransform: 'uppercase', letterSpacing: 0.6, marginRight: 2 }}>Sort</span>
+                      {sortBtn('type', 'Type')}
+                      {sortBtn('name', 'Name')}
+                      {sortBtn('email', 'Email')}
+                      {sortBtn('status', 'Status')}
+                    </div>
+                  )
+                  if (listSortKey === 'type') {
+                    const personalized = current.filter((p) => p.draft && !p.draft.is_template).sort(byName)
+                    const templates = current.filter((p) => p.draft && p.draft.is_template).sort(byName)
+                    const sections: [string, OutreachProspectView[]][] = listSortDir === 'asc'
+                      ? [['Personalized', personalized], ['Templates', templates]]
+                      : [['Templates', templates], ['Personalized', personalized]]
+                    return (
+                      <>
+                        {sortBar}
+                        {sections.map(([label, rows]) => (
+                          rows.length > 0 && (
+                            <div key={label}>
+                              <SectionHeader label={label} count={rows.length} />
+                              {rows.map(rowOf)}
+                            </div>
+                          )
+                        ))}
+                      </>
+                    )
+                  }
+                  const dir = listSortDir === 'asc' ? 1 : -1
+                  const cmp = (a: OutreachProspectView, b: OutreachProspectView): number => {
+                    switch (listSortKey) {
+                      case 'name': return byName(a, b)
+                      case 'email': return a.email.localeCompare(b.email)
+                      case 'status': return rowStage(a).localeCompare(rowStage(b)) || byName(a, b)
+                      default: return 0
+                    }
+                  }
                   return (
                     <>
-                      {personalized.length > 0 && <SectionHeader label="Personalized" count={personalized.length} />}
-                      {personalized.map(rowOf)}
-                      {templates.length > 0 && <SectionHeader label="Templates" count={templates.length} />}
-                      {templates.map(rowOf)}
+                      {sortBar}
+                      {[...current].sort((a, b) => cmp(a, b) * dir).map(rowOf)}
                     </>
                   )
                 })()

@@ -1983,3 +1983,34 @@ Of the 343 emails sent, **333 were template-derived and only 10 personalized**. 
 - The new templates omit the strongest differentiator in the old set: the "$10–15K per bid consultant vs $99/month" price anchor. Worth folding into a sixth variant or swapping into one of the five.
 - No link-click tracking, only opens. Clicks are a stronger intent signal but need URL rewriting, which costs deliverability.
 - `NEXT_PUBLIC_APP_URL` points at the Vercel-assigned domain, so every tracking pixel and unsubscribe link in a cold email resolves to `*.vercel.app`. That domain is heavily abused and widely filtered, and a link whose domain doesn't match the sending domain is itself a spam signal. Point it at a domain aligned with the sender (e.g. a subdomain of sourcegent.io) before volume ramps. Also confirm it is the stable production alias, not a per-deployment URL — deployment URLs rotate, and these links live in already-delivered mail forever.
+
+---
+
+## Session 29 — Outreach: templates skip review and auto-queue, personalized-first sending, sortable Ready to email, settings back-nav
+
+Three user-reported friction points: Settings had no way back to the app; template drafts sat in a review queue even though their copy is pre-approved by definition; and the Ready to email list had a single fixed order. Plus a policy decision: personalized (custom-written) emails should always outrank templates in the send order.
+
+### Changes
+
+| File | Change |
+| --- | --- |
+| `lib/integrations/outreach/send/queue.ts` (NEW) | Draft→send-queue core as a plain module (same server-action/cron split as `worker.ts`). `insertSendRows` moved here from `sending.ts` (tracking-column fallback intact). New `autoQueueDraftSend`: best-effort queue of a draft at the next drip slot — sending off, no sender, Gmail disconnected, prospect closed, or an existing active send are all silent skips that leave the draft `approved` in Ready to email for manual scheduling. Wrapped in try/catch so an auto-queue failure can never break enrichment. |
+| `lib/integrations/outreach/enrich-run.ts` | Template drafts (fallback branch of `persistOutcome`, `backfillTemplateDrafts`) are inserted `approved` instead of `pending` — templates are pre-approved copy, so they skip "To review" entirely — and each is handed to `autoQueueDraftSend` immediately after upsert. |
+| `lib/integrations/outreach/actions.ts` | Template follow-ups (`generateFollowup`, non-personalized branch) likewise insert as `approved` and auto-queue. Personalized follow-ups still insert `pending`. |
+| `lib/integrations/outreach/sending.ts` | `scheduleDraftSends` now orders the batch personalized-first (non-empty `facts_for_draft`) before assigning `computeBatchSlots` slots — slots are handed out by array index, so this is what puts custom emails on the earliest send times. Select gains `facts_for_draft`. Both send-row inserts now go through the shared `insertSendRows`. |
+| `lib/integrations/outreach/send/worker.ts` | `runQueue` fetches due sends at `BATCH * 3`, classifies them by the draft's `facts_for_draft` (sends carry no template marker column), stable-sorts personalized to the front, and caps at `BATCH`. When more than a tick's worth is due, personalized emails jump the template backlog; the template tail waits for the next tick. On a classification lookup failure it keeps plain `scheduled_at` order. |
+| `components/widgets/content/outreach-widgets.tsx` | Sort bar (Type / Name / Email / Status, click to reverse) on the Ready to email, Sent, and All tabs. Default (`type` asc) renders the exact grouped Personalized→Templates sections as before, so nothing moves until you sort; other keys flatten the list. Status sorts by `send.status ?? draft.status` so queued rows group together. Empty-state copy for the Templates and Ready to email tabs now explains that templates auto-approve. |
+| `app/(app)/settings/layout.tsx` | "← Back to Outreach" link above the Settings title. |
+| `components/layout/topbar.tsx` | The Signalgent wordmark is now a `Link` to `/outreach`, so every page has a way home. |
+
+### Verification
+
+- `tsc --noEmit` clean; eslint reports the same pre-existing issues as `main`, nothing new.
+- In-browser against the live app: back link navigates Settings → `/outreach`; wordmark carries `href="/outreach"`; Ready to email default view unchanged (grouped, 126 rows), Status sort flattens and groups approved-vs-queued correctly; no console errors.
+- Send-priority and auto-queue paths verified by inspection only — exercising them against prod would queue real email.
+
+### Behavior notes / residuals
+
+- The 9 template drafts already sitting `pending` in the Templates tab predate this change and need one manual "Approve all"; nothing new will land in that tab, leaving it vestigial — candidate for removal in a later pass.
+- Auto-queue places templates at the earliest open slot at creation time. A personalized draft approved later gets a later `scheduled_at`; its priority is enforced at the worker (it sends first among due emails) and within any batch it is scheduled in — the daily cap / drip pacing itself is unchanged.
+- Templates now consume send capacity without a human in the loop: the cron's enrichment wave drafts them, approves them, and queues them. The Sending toggle is the kill switch — turning it off both stops the worker and makes `autoQueueDraftSend` a no-op.
