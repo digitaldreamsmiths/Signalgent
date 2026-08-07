@@ -17,15 +17,13 @@ import { IntegrationAuthError, requireCompanyAccess } from '@/lib/integrations/a
 import type { Database } from '@/lib/types/database.types'
 import { extractDomain } from '../usaspending/resolve'
 import { runPipelineFromName } from './pipeline'
-import { buildTemplateFollowup } from './template'
 import { persistOutcome, recordUsage, runEnrichmentBatch, runEnrichmentBatchForIds, enrichToBuffer, RUN_BATCH } from './enrich-run'
 import { loadSettings, getEffectiveDailyCap } from './send/worker'
-import { autoQueueDraftSend } from './send/queue'
+import { generateFollowupTouch } from './followups'
 import { loadOfferProfile } from './offer-profile'
-import { applyGreeting, fetchStoredContactNames, resolveContactName } from './contact-name'
+import { fetchStoredContactNames, resolveContactName } from './contact-name'
 import { openStats, recentBounceStats } from './send/scan'
 import { getAccount } from '../accounts'
-import { draftEmail } from './draft'
 import { undeliverableDomains } from './deliverability'
 import { fetchAllPages } from './fetch-all'
 import type { LLMUsage } from '../../llm/client'
@@ -36,7 +34,6 @@ import type {
   OutreachProspectView,
   OutreachSendView,
   OutreachSnapshot,
-  SynthesisResult,
 } from './types'
 
 const AUTH_ERROR = 'You don’t have access to this workspace.'
@@ -419,101 +416,10 @@ export async function generateFollowup(companyId: string, prospectId: string): P
   }
 
   const supabase = await createClient()
-  const { data: p } = await supabase
-    .from('outreach_prospects')
-    .select('id, recipient_name, email, disposition')
-    .eq('id', prospectId)
-    .eq('company_id', companyId)
-    .single()
-  if (!p) return { ok: false, error: 'Prospect not found.' }
-  if (p.disposition !== 'open') {
-    return { ok: false, error: 'This prospect is closed (replied, bounced, or unsubscribed). Reopen it to add a follow-up.' }
-  }
-
-  const { data: existing } = await supabase
-    .from('outreach_drafts')
-    .select('subject, angle, synthesis_confidence, facts_for_draft, step')
-    .eq('prospect_id', prospectId)
-    .eq('company_id', companyId)
-    .order('step', { ascending: true })
-  if (!existing || existing.length === 0) {
-    return { ok: false, error: 'No initial draft to follow up on yet.' }
-  }
-
-  const nextStep = Math.max(...existing.map((d) => d.step)) + 1
-  const priorSubject = existing[existing.length - 1].subject
-  // Reuse the verified facts/angle from the personalized touch when there is one.
-  const personalized = existing.find((d) => asStringArray(d.facts_for_draft).length > 0)
-
-  const profile = await loadOfferProfile(supabase, companyId)
-  const storedNames = await fetchStoredContactNames(supabase, companyId, [prospectId])
-  const contactName = resolveContactName(storedNames.get(prospectId), p.email)
-  const usage: LLMUsage[] = []
-  let row: {
-    subject: string
-    body: string
-    angle: string | null
-    synthesis_confidence: number | null
-    facts_for_draft: string[]
-    facts_used: string[]
-    drifted_facts: string[]
-    clean: boolean
-  }
-
-  if (personalized) {
-    const facts = asStringArray(personalized.facts_for_draft)
-    const synthesis: SynthesisResult = {
-      skip: false,
-      skip_reason: null,
-      confidence: personalized.synthesis_confidence ?? 1,
-      angle: personalized.angle,
-      facts_for_draft: facts,
-    }
-    const review = await draftEmail(synthesis, usage, { step: nextStep, priorSubject }, profile)
-    if (!review) return { ok: false, error: 'Could not draft a follow-up. Try again.' }
-    row = {
-      subject: review.draft.subject,
-      body: applyGreeting(review.draft.body, contactName),
-      angle: personalized.angle,
-      synthesis_confidence: personalized.synthesis_confidence,
-      facts_for_draft: facts,
-      facts_used: review.draft.facts_used,
-      drifted_facts: review.drifted_facts,
-      clean: review.clean,
-    }
-  } else {
-    // Same seed as the opener, so the nudge continues that variant's question
-    // rather than opening an unrelated one.
-    const tmpl = buildTemplateFollowup(p.recipient_name ?? null, prospectId, profile)
-    row = {
-      subject: tmpl.subject,
-      body: applyGreeting(tmpl.body, contactName),
-      angle: null,
-      synthesis_confidence: null,
-      facts_for_draft: [],
-      facts_used: [],
-      drifted_facts: [],
-      clean: true,
-    }
-  }
-
-  // Template follow-ups reuse pre-approved copy, so they skip review and head
-  // straight for the send queue; personalized ones still wait for approval.
-  const { data: created, error } = await supabase
-    .from('outreach_drafts')
-    .insert({
-      prospect_id: prospectId,
-      company_id: companyId,
-      step: nextStep,
-      status: personalized ? 'pending' : 'approved',
-      ...row,
-    })
-    .select('id')
-    .maybeSingle()
-  if (error) return { ok: false, error: 'Could not save the follow-up.' }
-  if (!personalized && created) await autoQueueDraftSend(supabase, companyId, created.id)
-
-  if (usage.length > 0) await recordUsage(supabase, companyId, access.userId, usage)
+  // auto: false — a hand-triggered personalized follow-up always goes to
+  // review; only the cron sweep auto-approves clean ones.
+  const r = await generateFollowupTouch(supabase, companyId, prospectId, { userId: access.userId, auto: false })
+  if (!r.ok) return { ok: false, error: r.reason ?? 'Could not generate the follow-up.' }
   revalidatePath('/outreach')
   return { ok: true, data: undefined }
 }

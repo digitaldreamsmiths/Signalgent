@@ -44,6 +44,9 @@ export const SETTINGS_DEFAULTS: SendSettings = {
   bounce_pause_threshold: 0.05,
   bounce_pause_window_days: 7,
   bounce_pause_min_sends: 20,
+  followup_enabled: false,
+  followup_wait_days: 4,
+  followup_max_touches: 3,
 }
 
 export async function loadSettings(supabase: DB, companyId: string): Promise<SendSettings> {
@@ -72,6 +75,11 @@ export async function loadSettings(supabase: DB, companyId: string): Promise<Sen
     bounce_pause_threshold: data.bounce_pause_threshold,
     bounce_pause_window_days: data.bounce_pause_window_days,
     bounce_pause_min_sends: data.bounce_pause_min_sends,
+    // ?? defaults: these columns arrive via an out-of-band migration, so a row
+    // read before it is applied simply lacks them.
+    followup_enabled: data.followup_enabled ?? SETTINGS_DEFAULTS.followup_enabled,
+    followup_wait_days: data.followup_wait_days ?? SETTINGS_DEFAULTS.followup_wait_days,
+    followup_max_touches: data.followup_max_touches ?? SETTINGS_DEFAULTS.followup_max_touches,
   }
 }
 

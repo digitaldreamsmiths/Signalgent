@@ -4,6 +4,7 @@ import type { Database } from '@/lib/types/database.types'
 import { runQueue } from '@/lib/integrations/outreach/send/worker'
 import { scanReplies, enforceBouncePause } from '@/lib/integrations/outreach/send/scan'
 import { enrichToBuffer } from '@/lib/integrations/outreach/enrich-run'
+import { runFollowupSweep } from '@/lib/integrations/outreach/followups'
 
 /**
  * Drip worker tick. Processes the due send queue for every company with sending
@@ -42,6 +43,8 @@ async function handle(request: Request) {
   let bounced = 0
   let enriched = 0
   let recovered = 0
+  let followupsQueued = 0
+  let followupsReview = 0
   const errors: { company_id: string; error: string }[] = []
   for (const c of companies ?? []) {
     // One company blowing up must not kill the tick for the rest.
@@ -60,13 +63,18 @@ async function handle(request: Request) {
       const scan = await scanReplies(svc, c.company_id)
       replied += scan.replied
       bounced += scan.bounced
+      // Sequences: AFTER the reply scan, so a prospect who answered this tick is
+      // already suppressed before the sweep considers nudging them.
+      const fu = await runFollowupSweep(svc, c.company_id)
+      followupsQueued += fu.queued
+      followupsReview += fu.review
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       console.error(`[outreach-cron] company ${c.company_id} failed: ${message}`)
       errors.push({ company_id: c.company_id, error: message })
     }
   }
-  return NextResponse.json({ companies: companies?.length ?? 0, sent, failed, recovered, replied, bounced, enriched, errors })
+  return NextResponse.json({ companies: companies?.length ?? 0, sent, failed, recovered, replied, bounced, enriched, followupsQueued, followupsReview, errors })
 }
 
 // Vercel Cron invokes via GET; Supabase pg_cron (pg_net) posts. Support both.

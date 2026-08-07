@@ -474,6 +474,9 @@ export interface Database {
           bounce_pause_window_days: number
           bounce_pause_min_sends: number
           pause_reason: 'manual' | 'bounce_rate' | null
+          followup_enabled: boolean
+          followup_wait_days: number
+          followup_max_touches: number
           created_at: string
           updated_at: string
         }
@@ -502,6 +505,9 @@ export interface Database {
           bounce_pause_window_days?: number
           bounce_pause_min_sends?: number
           pause_reason?: 'manual' | 'bounce_rate' | null
+          followup_enabled?: boolean
+          followup_wait_days?: number
+          followup_max_touches?: number
           created_at?: string
           updated_at?: string
         }
@@ -529,6 +535,9 @@ export interface Database {
           bounce_pause_window_days?: number
           bounce_pause_min_sends?: number
           pause_reason?: 'manual' | 'bounce_rate' | null
+          followup_enabled?: boolean
+          followup_wait_days?: number
+          followup_max_touches?: number
           updated_at?: string
         }
         Relationships: []

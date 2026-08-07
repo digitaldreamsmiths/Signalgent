@@ -74,7 +74,23 @@ export async function saveSendSettings(
   const { error } = await supabase
     .from('outreach_settings')
     .upsert({ company_id: companyId, ...patch, ...derived, updated_at: new Date().toISOString() }, { onConflict: 'company_id' })
-  if (error) return { ok: false, error: 'Could not save sending settings.' }
+  if (error) {
+    // The follow-up columns arrive via an out-of-band migration. Until it is
+    // applied, saving the full form would fail outright — and this save is also
+    // the sending kill switch, which must never be blocked. Retry without them.
+    if (/followup_/.test(error.message)) {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { followup_enabled, followup_wait_days, followup_max_touches, ...rest } = patch
+      const retry = await supabase
+        .from('outreach_settings')
+        .upsert({ company_id: companyId, ...rest, ...derived, updated_at: new Date().toISOString() }, { onConflict: 'company_id' })
+      if (!retry.error) {
+        revalidatePath('/outreach')
+        return { ok: true, data: undefined }
+      }
+    }
+    return { ok: false, error: 'Could not save sending settings.' }
+  }
   revalidatePath('/outreach')
   return { ok: true, data: undefined }
 }
