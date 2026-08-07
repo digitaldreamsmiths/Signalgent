@@ -1,16 +1,7 @@
-'use client'
+import { redirect } from 'next/navigation'
 
-import { useEffect } from 'react'
-import { useMode } from '@/contexts/mode-context'
-import { OutreachWorkspace } from '@/components/widgets/content/outreach-widgets'
-
-export default function OutreachPage() {
-  const { setMode } = useMode()
-  useEffect(() => { setMode('outreach') }, [setMode])
-
-  return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-      <OutreachWorkspace />
-    </div>
-  )
+/** /outreach has no view of its own — send it to the default section so old
+ * links, the topbar wordmark, and the command palette all keep working. */
+export default function OutreachIndexPage() {
+  redirect('/outreach/pipeline')
 }
