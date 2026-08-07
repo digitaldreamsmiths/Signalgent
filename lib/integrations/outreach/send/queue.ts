@@ -9,6 +9,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/lib/types/database.types'
 import { getAccount } from '@/lib/integrations/accounts'
 import { composeEmail } from './compose'
+import { loadOfferProfile } from '../offer-profile'
 import { loadSettings, nextSlot } from './worker'
 
 type DB = SupabaseClient<Database>
@@ -78,7 +79,8 @@ export async function autoQueueDraftSend(supabase: DB, companyId: string, draftI
     // to be inside the body, and the body is composed before the row exists.
     const open_token = randomUUID()
     const unsub_token = randomUUID()
-    const composed = composeEmail(draft.subject, draft.body, settings, unsub_token)
+    const profile = await loadOfferProfile(supabase, companyId)
+    const composed = composeEmail(draft.subject, draft.body, settings, unsub_token, profile)
     const scheduled_at = await nextSlot(supabase, companyId, settings)
 
     const base = {

@@ -15,8 +15,8 @@
  */
 
 import { sanitizeDashes } from './draft'
-import { SENDER } from './sender'
-import { TEMPLATE_LIBRARY, type TemplateVariant } from './template-library'
+import { DEFAULT_OFFER_PROFILE, type OfferProfile } from './offer-profile'
+import { TEMPLATE_LIBRARY, templateLibraryFor, type TemplateVariant } from './template-library'
 import type { DraftResult } from './types'
 
 export { TEMPLATE_LIBRARY, type TemplateVariant }
@@ -87,8 +87,8 @@ export function renderTemplate(tmpl: { subject: string; body: string }, recipien
 /** Default sign-off for the built-in path. User templates get the company's
  * configured signature appended by `composeEmail` instead; built-ins keep
  * carrying one so the review queue preview reads as a finished email. */
-function defaultSignature(): string {
-  return `\n\n${SENDER.signOff},\n${SENDER.signatureName}\n${SENDER.product}\n${SENDER.site}`
+function defaultSignature(p: OfferProfile): string {
+  return `\n\n${p.sign_off},\n${p.signature_name}\n${p.product}\n${p.site}`
 }
 
 /**
@@ -106,25 +106,35 @@ function hashKey(key: string): number {
   return h >>> 0
 }
 
-/** The built-in variant this prospect is assigned to. Stable across calls. */
-export function variantFor(seed?: string | null): TemplateVariant {
-  if (!seed) return TEMPLATE_LIBRARY[0]
-  return TEMPLATE_LIBRARY[hashKey(seed) % TEMPLATE_LIBRARY.length]
+/** The built-in variant this prospect is assigned to. Stable across calls
+ * because the library length is fixed and the hash keys off the prospect id. */
+export function variantFor(seed?: string | null, profile: OfferProfile = DEFAULT_OFFER_PROFILE): TemplateVariant {
+  const library = templateLibraryFor(profile)
+  if (!seed) return library[0]
+  return library[hashKey(seed) % library.length]
 }
 
 /** Built-in fallback opener, used when a company has authored no active templates. */
-export function buildTemplateDraft(recipientName?: string | null, seed?: string | null): DraftResult {
-  const v = variantFor(seed)
+export function buildTemplateDraft(
+  recipientName?: string | null,
+  seed?: string | null,
+  profile: OfferProfile = DEFAULT_OFFER_PROFILE,
+): DraftResult {
+  const v = variantFor(seed, profile)
   const rendered = renderTemplate({ subject: v.subject, body: v.body }, recipientName)
-  return { ...rendered, body: sanitizeDashes(rendered.body.trimEnd() + defaultSignature()) }
+  return { ...rendered, body: sanitizeDashes(rendered.body.trimEnd() + defaultSignature(profile)) }
 }
 
 /**
  * Built-in follow-up nudge. Pass the same seed used for the opener so the nudge
  * continues that variant's question instead of opening a new thread of thought.
  */
-export function buildTemplateFollowup(recipientName?: string | null, seed?: string | null): DraftResult {
-  const v = variantFor(seed)
+export function buildTemplateFollowup(
+  recipientName?: string | null,
+  seed?: string | null,
+  profile: OfferProfile = DEFAULT_OFFER_PROFILE,
+): DraftResult {
+  const v = variantFor(seed, profile)
   const rendered = renderTemplate({ subject: v.followupSubject, body: v.followupBody }, recipientName)
-  return { ...rendered, body: sanitizeDashes(rendered.body.trimEnd() + defaultSignature()) }
+  return { ...rendered, body: sanitizeDashes(rendered.body.trimEnd() + defaultSignature(profile)) }
 }

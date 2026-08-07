@@ -5,7 +5,7 @@
  * address + unsubscribe line), which is required for compliant cold email.
  */
 
-import { SENDER } from '../draft'
+import { DEFAULT_OFFER_PROFILE, type OfferProfile } from '../offer-profile'
 import { unsubscribeUrl } from './tracking'
 import type { SendSettings } from '../types'
 
@@ -26,19 +26,19 @@ export function senderEmail(settings: SendSettings): string {
  * the model's own sign-off (the register mandates the site line), so this only
  * fires for user templates, which have no sign-off of their own.
  */
-function signatureFor(settings: SendSettings): string {
+function signatureFor(settings: SendSettings, profile: OfferProfile): string {
   const custom = settings.signature?.trim()
   if (custom) return custom
-  const name = settings.sender_name?.trim() || SENDER.signatureName
-  return `${SENDER.signOff},\n${name}\n${SENDER.site}`
+  const name = settings.sender_name?.trim() || profile.signature_name
+  return `${profile.sign_off},\n${name}\n${profile.site}`
 }
 
 /** Whether the body already signs off, so we don't stack a second signature. */
-function hasSignature(body: string, settings: SendSettings): boolean {
+function hasSignature(body: string, settings: SendSettings, profile: OfferProfile): boolean {
   const custom = settings.signature?.trim()
   if (custom && body.includes(custom)) return true
-  const name = settings.sender_name?.trim() || SENDER.signatureName
-  return body.includes(SENDER.site) || body.includes(name)
+  const name = settings.sender_name?.trim() || profile.signature_name
+  return body.includes(profile.site) || body.includes(name)
 }
 
 export function composeEmail(
@@ -48,8 +48,12 @@ export function composeEmail(
   /** Per-send unsubscribe token, so the footer carries a real one-click link
    * instead of only a "reply to opt out" sentence. Omit for a preview. */
   unsubToken?: string | null,
+  /** Tenant offer profile — supplies the fallback signature pieces when the
+   * company hasn't configured sender_name/signature. Defaults preserve the
+   * original behavior for callers that don't pass one. */
+  profile: OfferProfile = DEFAULT_OFFER_PROFILE,
 ): ComposedEmail {
-  const fromName = settings.sender_name?.trim() || SENDER.signatureName
+  const fromName = settings.sender_name?.trim() || profile.signature_name
   const footerParts: string[] = []
   if (settings.physical_address?.trim()) footerParts.push(settings.physical_address.trim())
   // A working link beats a sentence: it is what the recipient reaches for
@@ -67,9 +71,9 @@ export function composeEmail(
   // Sign off before the compliance footer. Personalized drafts already carry the
   // model's sign-off and are left untouched; user templates have none, and
   // without this they arrived signed by nothing but the mailing address.
-  const signed = hasSignature(draftBody, settings)
+  const signed = hasSignature(draftBody, settings, profile)
     ? draftBody
-    : `${draftBody.trimEnd()}\n\n${signatureFor(settings)}`
+    : `${draftBody.trimEnd()}\n\n${signatureFor(settings, profile)}`
 
   // Compliance footer (separated by a rule) so it reads as a normal email, not a blast.
   const body = footerParts.length > 0 ? `${signed}\n\n--\n${footerParts.join('\n')}` : signed

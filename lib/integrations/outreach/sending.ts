@@ -9,6 +9,7 @@ import { getAccount } from '@/lib/integrations/accounts'
 import { composeEmail } from './send/compose'
 import { computeBatchSlots, loadSettings, nextSlot, parseWallTime, runQueue } from './send/worker'
 import { insertSendRows } from './send/queue'
+import { loadOfferProfile } from './offer-profile'
 import { scanReplies } from './send/scan'
 
 const AUTH_ERROR = 'You don’t have access to this workspace.'
@@ -129,7 +130,8 @@ export async function queueDraftSend(companyId: string, draftId: string): Promis
   // to be inside the body, and the body is composed before the row exists.
   const open_token = randomUUID()
   const unsub_token = randomUUID()
-  const composed = composeEmail(draft.subject, draft.body, settings, unsub_token)
+  const profile = await loadOfferProfile(supabase, companyId)
+  const composed = composeEmail(draft.subject, draft.body, settings, unsub_token, profile)
   const scheduled_at = await nextSlot(supabase, companyId, settings)
 
   const base = {
@@ -265,13 +267,14 @@ export async function scheduleDraftSends(
   if (eligible.length === 0) return { ok: true, data: { scheduled: 0, skipped } }
 
   const slots = await computeBatchSlots(supabase, companyId, settings, startAtIso, eligible.length)
+  const profile = await loadOfferProfile(supabase, companyId)
   const rows = eligible.map((d, i) => {
     const p = pById.get(d.prospect_id)!
     // Per-send tokens (see queueDraftSend): the unsubscribe link lives in the
     // body, so it must exist before the row is inserted.
     const open_token = randomUUID()
     const unsub_token = randomUUID()
-    const composed = composeEmail(d.subject, d.body, settings, unsub_token)
+    const composed = composeEmail(d.subject, d.body, settings, unsub_token, profile)
     return {
       company_id: companyId,
       prospect_id: d.prospect_id,

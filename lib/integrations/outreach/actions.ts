@@ -21,6 +21,7 @@ import { buildTemplateFollowup } from './template'
 import { persistOutcome, recordUsage, runEnrichmentBatch, runEnrichmentBatchForIds, enrichToBuffer, RUN_BATCH } from './enrich-run'
 import { loadSettings, getEffectiveDailyCap } from './send/worker'
 import { autoQueueDraftSend } from './send/queue'
+import { loadOfferProfile } from './offer-profile'
 import { openStats, recentBounceStats } from './send/scan'
 import { getAccount } from '../accounts'
 import { draftEmail } from './draft'
@@ -416,6 +417,7 @@ export async function generateFollowup(companyId: string, prospectId: string): P
   // Reuse the verified facts/angle from the personalized touch when there is one.
   const personalized = existing.find((d) => asStringArray(d.facts_for_draft).length > 0)
 
+  const profile = await loadOfferProfile(supabase, companyId)
   const usage: LLMUsage[] = []
   let row: {
     subject: string
@@ -437,7 +439,7 @@ export async function generateFollowup(companyId: string, prospectId: string): P
       angle: personalized.angle,
       facts_for_draft: facts,
     }
-    const review = await draftEmail(synthesis, usage, { step: nextStep, priorSubject })
+    const review = await draftEmail(synthesis, usage, { step: nextStep, priorSubject }, profile)
     if (!review) return { ok: false, error: 'Could not draft a follow-up. Try again.' }
     row = {
       subject: review.draft.subject,
@@ -452,7 +454,7 @@ export async function generateFollowup(companyId: string, prospectId: string): P
   } else {
     // Same seed as the opener, so the nudge continues that variant's question
     // rather than opening an unrelated one.
-    const tmpl = buildTemplateFollowup(p.recipient_name ?? null, prospectId)
+    const tmpl = buildTemplateFollowup(p.recipient_name ?? null, prospectId, profile)
     row = {
       subject: tmpl.subject,
       body: tmpl.body,
@@ -587,9 +589,10 @@ export async function resolveManual(
     .single()
   if (!prospect) return { ok: false, error: 'Prospect not found.' }
 
+  const profile = await loadOfferProfile(supabase, companyId)
   const usage: LLMUsage[] = []
-  const outcome = await runPipelineFromName(prospect.email, name, usage)
-  await persistOutcome(supabase, companyId, prospectId, outcome)
+  const outcome = await runPipelineFromName(prospect.email, name, usage, profile)
+  await persistOutcome(supabase, companyId, prospectId, outcome, profile)
   await recordUsage(supabase, companyId, access.userId, usage)
   revalidatePath('/outreach')
   return { ok: true, data: { status: outcome.status } }

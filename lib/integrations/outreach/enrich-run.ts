@@ -14,6 +14,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database, Json } from '@/lib/types/database.types'
 import { runPipeline, type PipelineOutcome } from './pipeline'
 import { fetchAllPages } from './fetch-all'
+import { loadOfferProfile, DEFAULT_OFFER_PROFILE, type OfferProfile } from './offer-profile'
 import { autoQueueDraftSend } from './send/queue'
 import { buildTemplateDraft, renderTemplate } from './template'
 import type { DraftResult } from './types'
@@ -65,6 +66,7 @@ async function pickTemplateDraft(
   companyId: string,
   recipientName: string | null,
   prospectId: string,
+  profile: OfferProfile = DEFAULT_OFFER_PROFILE,
 ): Promise<{ draft: DraftResult; template_id: string | null }> {
   const { data: templates } = await supabase
     .from('outreach_templates')
@@ -75,7 +77,7 @@ async function pickTemplateDraft(
   // No user templates: rotate the five built-in variants instead of sending one
   // email to everybody. Keyed off the prospect id rather than randomly, so a
   // later follow-up derives the same variant without a column to remember it.
-  if (active.length === 0) return { draft: buildTemplateDraft(recipientName, prospectId), template_id: null }
+  if (active.length === 0) return { draft: buildTemplateDraft(recipientName, prospectId, profile), template_id: null }
 
   // Weighted random across the active set.
   const total = active.reduce((s, t) => s + Math.max(1, t.weight), 0)
@@ -89,7 +91,13 @@ async function pickTemplateDraft(
 }
 
 /** Persist a pipeline outcome for a prospect (shared by run + manual resolve). */
-export async function persistOutcome(supabase: DB, companyId: string, prospectId: string, outcome: PipelineOutcome): Promise<void> {
+export async function persistOutcome(
+  supabase: DB,
+  companyId: string,
+  prospectId: string,
+  outcome: PipelineOutcome,
+  profile: OfferProfile = DEFAULT_OFFER_PROFILE,
+): Promise<void> {
   const enriched = 'enriched' in outcome ? outcome.enriched : undefined
   const prospectUpdate: ProspectUpdate = { enriched_at: new Date().toISOString() }
   if (enriched) {
@@ -137,7 +145,7 @@ export async function persistOutcome(supabase: DB, companyId: string, prospectId
     // Templates are pre-approved copy, so the draft skips review ('approved')
     // and goes straight for the send queue; autoQueueDraftSend silently leaves
     // it in Ready to email when sending isn't configured yet.
-    const { draft: tmpl, template_id } = await pickTemplateDraft(supabase, companyId, enriched?.recipient_name ?? null, prospectId)
+    const { draft: tmpl, template_id } = await pickTemplateDraft(supabase, companyId, enriched?.recipient_name ?? null, prospectId, profile)
     const { data: created } = await supabase
       .from('outreach_drafts')
       .upsert(
@@ -193,9 +201,10 @@ export async function backfillTemplateDrafts(supabase: DB, companyId: string): P
   if (missing.length === 0) return 0
 
   // Rotate independently per prospect so the fallback pool is spread across the list.
+  const profile = await loadOfferProfile(supabase, companyId)
   const rows = []
   for (const p of missing) {
-    const { draft: tmpl, template_id } = await pickTemplateDraft(supabase, companyId, p.recipient_name ?? null, p.id)
+    const { draft: tmpl, template_id } = await pickTemplateDraft(supabase, companyId, p.recipient_name ?? null, p.id, profile)
     rows.push({
       prospect_id: p.id,
       company_id: companyId,
@@ -245,12 +254,13 @@ export async function runEnrichmentBatch(supabase: DB, companyId: string, limit:
     return { processed: 0, drafted: 0, skipped: 0, remaining: 0, cost_usd: 0 }
   }
 
+  const profile = await loadOfferProfile(supabase, companyId)
   const usage: LLMUsage[] = []
   let drafted = 0
   let skipped = 0
   for (const p of pending) {
-    const outcome = await runPipeline(p.email, usage)
-    await persistOutcome(supabase, companyId, p.id, outcome)
+    const outcome = await runPipeline(p.email, usage, profile)
+    await persistOutcome(supabase, companyId, p.id, outcome, profile)
     if (outcome.status === 'drafted') drafted += 1
     else skipped += 1
   }
@@ -296,13 +306,14 @@ export async function runEnrichmentBatchForIds(
     return { processed: 0, drafted: 0, skipped: 0, remaining: 0, cost_usd: 0, processedIds: [] }
   }
 
+  const profile = await loadOfferProfile(supabase, companyId)
   const usage: LLMUsage[] = []
   let drafted = 0
   let skipped = 0
   const processedIds: string[] = []
   for (const p of pending) {
-    const outcome = await runPipeline(p.email, usage)
-    await persistOutcome(supabase, companyId, p.id, outcome)
+    const outcome = await runPipeline(p.email, usage, profile)
+    await persistOutcome(supabase, companyId, p.id, outcome, profile)
     processedIds.push(p.id)
     if (outcome.status === 'drafted') drafted += 1
     else skipped += 1
