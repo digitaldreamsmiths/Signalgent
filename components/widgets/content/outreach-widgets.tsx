@@ -19,10 +19,12 @@ import {
   setDisposition,
 } from '@/lib/integrations/outreach/actions'
 import { queueDraftSend, cancelSend, processSendQueue, scheduleDraftSends, getScheduledSends, scanRepliesNow } from '@/lib/integrations/outreach/sending'
+import { assignProspectsToCampaign } from '@/lib/integrations/outreach/campaign-actions'
+import type { OutreachCampaign } from '@/lib/integrations/outreach/campaigns'
 import type { Disposition, OutreachDraftView, OutreachSnapshot, OutreachProspectView, ScheduledSendView } from '@/lib/integrations/outreach/types'
 import { hygieneWarnings, replyRiskWarnings } from '@/lib/integrations/outreach/hygiene'
 import { SendingSettingsModal } from './sending-settings-modal'
-import { CampaignsModal } from './campaigns-modal'
+import { CampaignsModal, type CampaignStats } from './campaigns-modal'
 import { TemplatesModal } from './templates-modal'
 import { ScheduledView } from './scheduled-view'
 import { ScheduleDialog } from './schedule-dialog'
@@ -219,7 +221,7 @@ function ProspectRow({ p, selected, onSelect, checked, onToggle }: { p: Outreach
 
 // ── Contacts table ──────────────────────────────────────────────────────────
 
-type ContactSortKey = 'email' | 'name' | 'domain' | 'status' | 'added'
+type ContactSortKey = 'email' | 'name' | 'domain' | 'status' | 'campaign' | 'added'
 type StageBucket = 'new' | 'review' | 'ready' | 'emailed' | 'replied' | 'other'
 type ContactFilter = 'all' | StageBucket
 
@@ -297,7 +299,7 @@ const CONTACT_FILTERS: { key: ContactFilter; label: string }[] = [
 /** Master list of every ingested email — visible before enrichment, sortable by
  * any column, with per-row and bulk delete. This is the only place raw `new`
  * prospects (no draft yet) surface, since the workflow tabs all require a draft. */
-function ContactsTable({ prospects, companyId, onChanged }: { prospects: OutreachProspectView[]; companyId: string; onChanged: () => void }) {
+function ContactsTable({ prospects, companyId, campaigns, onChanged }: { prospects: OutreachProspectView[]; companyId: string; campaigns: OutreachCampaign[]; onChanged: () => void }) {
   const [sortKey, setSortKey] = useState<ContactSortKey>('added')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -314,6 +316,9 @@ function ContactsTable({ prospects, companyId, onChanged }: { prospects: Outreac
   const statusById = new Map(prospects.map((p) => [p.id, p.status]))
   const selectedNew = [...selected].filter((id) => statusById.get(id) === 'new')
 
+  const campaignNameById = new Map(campaigns.map((c) => [c.id, c.name]))
+  const campaignName = (p: OutreachProspectView) => (p.campaign_id ? campaignNameById.get(p.campaign_id) ?? '' : '')
+
   const dir = sortDir === 'asc' ? 1 : -1
   const cmp = (a: OutreachProspectView, b: OutreachProspectView): number => {
     switch (sortKey) {
@@ -321,6 +326,7 @@ function ContactsTable({ prospects, companyId, onChanged }: { prospects: Outreac
       case 'name': return (a.recipient_name ?? '').localeCompare(b.recipient_name ?? '')
       case 'domain': return (a.domain ?? '').localeCompare(b.domain ?? '')
       case 'status': return contactStage(a).label.localeCompare(contactStage(b).label)
+      case 'campaign': return campaignName(a).localeCompare(campaignName(b))
       case 'added': return a.created_at.localeCompare(b.created_at)
     }
   }
@@ -440,6 +446,31 @@ function ContactsTable({ prospects, companyId, onChanged }: { prospects: Outreac
                   Process ({selectedNew.length})
                 </button>
               )}
+              {campaigns.length > 0 && (
+                <select
+                  value=""
+                  disabled={busy}
+                  onChange={async (e) => {
+                    const v = e.target.value
+                    if (!v) return
+                    setBusy(true)
+                    const r = await assignProspectsToCampaign(companyId, [...selected], v === '__none' ? null : v)
+                    setBusy(false)
+                    if (!r.ok) return setProcError(r.error)
+                    setProcError(null)
+                    setSelected(new Set())
+                    onChanged()
+                  }}
+                  style={{ fontSize: 11, fontWeight: 600, color: 'var(--app-text-2)', background: 'var(--app-input)', border: `1px solid ${BORDER}`, borderRadius: 6, padding: '5px 8px', cursor: 'pointer' }}
+                  title="Move the selected contacts into a campaign"
+                >
+                  <option value="" disabled>Move to campaign…</option>
+                  {campaigns.filter((cm) => cm.status === 'active').map((cm) => (
+                    <option key={cm.id} value={cm.id}>{cm.name}</option>
+                  ))}
+                  <option value="__none">No campaign</option>
+                </select>
+              )}
               <button
                 disabled={busy}
                 onClick={() => (confirmBulk ? del([...selected]) : setConfirmBulk(true))}
@@ -464,13 +495,14 @@ function ContactsTable({ prospects, companyId, onChanged }: { prospects: Outreac
               <th style={th} onClick={() => toggleSort('name')}>Name{caret('name')}</th>
               <th style={th} onClick={() => toggleSort('domain')}>Website{caret('domain')}</th>
               <th style={th} onClick={() => toggleSort('status')}>Status{caret('status')}</th>
+              {campaigns.length > 0 && <th style={th} onClick={() => toggleSort('campaign')}>Campaign{caret('campaign')}</th>}
               <th style={th} onClick={() => toggleSort('added')}>Added{caret('added')}</th>
               <th style={{ ...th, cursor: 'default', textAlign: 'right' }} />
             </tr>
           </thead>
           <tbody>
             {visible.length === 0 && (
-              <tr><td colSpan={7} style={{ ...td, color: MUTED, textAlign: 'center', padding: 20 }}>No contacts in this view.</td></tr>
+              <tr><td colSpan={campaigns.length > 0 ? 8 : 7} style={{ ...td, color: MUTED, textAlign: 'center', padding: 20 }}>No contacts in this view.</td></tr>
             )}
             {visible.map((p) => {
               const stage = contactStage(p)
@@ -489,6 +521,11 @@ function ContactsTable({ prospects, companyId, onChanged }: { prospects: Outreac
                     : <span style={{ color: MUTED }}>—</span>}
                 </td>
                 <td style={td}><Pill label={stage.label} color={stage.color} /></td>
+                {campaigns.length > 0 && (
+                  <td style={{ ...td, whiteSpace: 'nowrap' }}>
+                    {campaignName(p) || <span style={{ color: MUTED }}>—</span>}
+                  </td>
+                )}
                 <td style={{ ...td, color: MUTED, whiteSpace: 'nowrap' }}>{fmtWhen(p.created_at)}</td>
                 <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap' }}>
                   {confirmId === p.id ? (
@@ -1017,9 +1054,18 @@ export function OutreachWorkspace() {
 
   const allProspects = snapshot?.prospects ?? []
   const campaigns = snapshot?.campaigns ?? []
-  const countByCampaign = new Map<string, number>()
+  // Per-campaign funnel, derived client-side from the snapshot the workspace
+  // already holds. Opens are per-send (`opened_at`), so `opened` undercounts
+  // for pre-tracking sends — same caveat as the company-wide open rate.
+  const campaignStats = new Map<string, CampaignStats>()
   for (const p of allProspects) {
-    if (p.campaign_id) countByCampaign.set(p.campaign_id, (countByCampaign.get(p.campaign_id) ?? 0) + 1)
+    if (!p.campaign_id) continue
+    const s = campaignStats.get(p.campaign_id) ?? { prospects: 0, sent: 0, replied: 0, opened: 0 }
+    s.prospects += 1
+    if (p.drafts.some((d) => d.status === 'exported' || d.send?.status === 'sent')) s.sent += 1
+    if (p.disposition === 'replied' || p.disposition === 'interested' || p.disposition === 'not_interested') s.replied += 1
+    if (p.drafts.some((d) => d.send?.opened_at)) s.opened += 1
+    campaignStats.set(p.campaign_id, s)
   }
   // The campaign filter scopes every tab and list; the metrics bar stays
   // company-wide (queue, caps, and cost are company-level infrastructure).
@@ -1183,7 +1229,7 @@ export function OutreachWorkspace() {
         >
           <option value="all">All campaigns</option>
           {campaigns.filter((cm) => cm.status === 'active').map((cm) => (
-            <option key={cm.id} value={cm.id}>{cm.name} ({countByCampaign.get(cm.id) ?? 0})</option>
+            <option key={cm.id} value={cm.id}>{cm.name} ({campaignStats.get(cm.id)?.prospects ?? 0})</option>
           ))}
           {campaigns.filter((cm) => cm.status === 'archived').map((cm) => (
             <option key={cm.id} value={cm.id}>{cm.name} (archived)</option>
@@ -1341,7 +1387,7 @@ export function OutreachWorkspace() {
               <ScheduledView companyId={companyId} sends={scheduledSends} onChanged={() => { loadScheduled(); refresh() }} />
             )
           ) : filter === 'contacts' ? (
-            <ContactsTable prospects={current} companyId={companyId} onChanged={refresh} />
+            <ContactsTable prospects={current} companyId={companyId} campaigns={campaigns} onChanged={refresh} />
           ) : (
           <div className="outreach-split" style={{ flex: 1, minHeight: 0, gap: 14 }}>
             {/* List */}
@@ -1454,7 +1500,7 @@ export function OutreachWorkspace() {
         <CampaignsModal
           companyId={companyId}
           campaigns={campaigns}
-          countByCampaign={countByCampaign}
+          stats={campaignStats}
           onClose={() => setCampaignsModalOpen(false)}
           onChanged={refresh}
         />
