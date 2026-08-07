@@ -208,7 +208,7 @@ export async function getOutreachSnapshot(companyId: string): Promise<OutreachSn
       supabase.from('api_usage').select('cost_usd').eq('company_id', companyId).like('feature', 'outreach:%')
         .order('id').range(from, to)),
     fetchAllPages((from, to) =>
-      supabase.from('outreach_sends').select('id, draft_id, status, scheduled_at, sent_at, opened_at, error').eq('company_id', companyId)
+      supabase.from('outreach_sends').select('id, draft_id, prospect_id, status, scheduled_at, sent_at, opened_at, thread_id, error').eq('company_id', companyId)
         .order('created_at', { ascending: false }).order('id').range(from, to)),
     loadCampaigns(supabase, companyId),
   ])
@@ -217,9 +217,14 @@ export async function getOutreachSnapshot(companyId: string): Promise<OutreachSn
 
   // Latest send per draft (rows arrive newest-first, so first seen wins).
   const sendByDraft = new Map<string, OutreachSendView>()
+  // Gmail thread per prospect, for the "open the conversation" deep link.
+  // Follow-ups thread under the opener, so any send's thread id reaches the
+  // same conversation; newest-first ordering makes this the most recent one.
+  const threadByProspect = new Map<string, string>()
   let queued = 0
   for (const s of sends ?? []) {
     if (s.status === 'queued') queued += 1
+    if (s.thread_id && !threadByProspect.has(s.prospect_id)) threadByProspect.set(s.prospect_id, s.thread_id)
     if (!sendByDraft.has(s.draft_id)) {
       sendByDraft.set(s.draft_id, { id: s.id, status: s.status, scheduled_at: s.scheduled_at, sent_at: s.sent_at, opened_at: s.opened_at ?? null, error: s.error })
     }
@@ -281,6 +286,7 @@ export async function getOutreachSnapshot(companyId: string): Promise<OutreachSn
       reply_from: p.reply_from,
       reply_subject: p.reply_subject,
       reply_snippet: p.reply_snippet,
+      thread_id: threadByProspect.get(p.id) ?? null,
       // A plausible-but-uncertain resolver result (low confidence) — surfaced
       // for manual disambiguation rather than left as a silent skip. Only while
       // it still awaits a decision: approving/editing/sending a draft anyway
@@ -341,6 +347,7 @@ export async function getOutreachSnapshot(companyId: string): Promise<OutreachSn
 
   const sending = {
     active: settings.active,
+    sender_email: settings.sender_email,
     pause_reason: settings.pause_reason,
     effective_daily_cap: getEffectiveDailyCap(settings),
     daily_send_limit: settings.daily_send_limit,

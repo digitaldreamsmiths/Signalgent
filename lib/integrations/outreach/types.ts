@@ -194,6 +194,9 @@ export interface OutreachProspectView {
   reply_from: string | null
   reply_subject: string | null
   reply_snippet: string | null
+  /** Gmail thread carrying this conversation, for the deep link out to the
+   * full thread. null before anything has actually sent. */
+  thread_id: string | null
   /** Resolver found a plausible-but-uncertain match (low confidence) — surface
    * for manual disambiguation rather than silent skip. */
   needs_review: boolean
@@ -237,6 +240,9 @@ export interface OutreachSnapshot {
   /** Sending health for the header/banner. */
   sending: {
     active: boolean
+    /** The mailbox sends go from — also picks the right Google account when
+     * deep-linking to a Gmail thread. */
+    sender_email: string | null
     pause_reason: 'manual' | 'bounce_rate' | null
     /** Today's effective daily cap (warmup-ramped). */
     effective_daily_cap: number

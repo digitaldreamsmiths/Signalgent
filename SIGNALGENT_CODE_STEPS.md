@@ -2334,3 +2334,43 @@ Every tab's empty message now says what the tab is *for* and what fills it ("Pro
 ### Phase 2 complete — design-partner readiness
 
 Setup checklist, deliverability preflight, warmup visibility, and teach-first empty states are all in. Per the spec that closes Phase 2; next is **Phase 3, reply triage** (show the reply thread in-app with quick triage, deep-linking to Gmail to answer).
+
+---
+
+## Session 40 — Phase 3: reply triage
+
+The scanner has detected replies since Session 23 and filed a neutral `replied` disposition — but that only ever moved a row into a list. This turns it into a worklist.
+
+### The Replied tab is now an inbox
+
+`ReplyInbox` replaces the generic two-pane list on that tab:
+- **Needs triage first.** `replied` is what the scanner sets automatically; anything still in that state is awaiting a human decision, so it sorts above the triaged pile under its own accent header.
+- **One-click classify** — Interested / Not interested / Opt out (which suppresses the address permanently), and Re-triage to send something back to the queue.
+- **Deep link out.** Answering happens in Gmail; composing in-app stays out of scope for v1 per the spec.
+
+### Gmail deep links
+
+`gmailThreadUrl(threadId, senderEmail)` builds `mail.google.com/mail/u/<email>/#all/<thread>`. Using the address rather than `u/0` makes Gmail resolve the *right* account instead of whichever is signed in first — which matters the moment someone has a personal and a work account open. Falls back to `u/0` when no sender is configured. Threads reach the snapshot via a new prospect-level `thread_id` (follow-ups thread under the opener, so any send's thread id reaches the same conversation) and the link also appears in the draft detail's reply block.
+
+### Bug found in live data: HTML entities in reply previews
+
+Real bounce notices were rendering as `Your message wasn&#39;t delivered` — Gmail's API returns snippets HTML-escaped and we store them verbatim, so every preview since open-tracking shipped has shown raw entities. New `decodeEntities` decodes at *display*, which fixes the messages already captured rather than only future ones, and is idempotent. Deliberately not `innerHTML`-based: this is untrusted inbound content, and React escapes the result on render, so a decoded `<` stays text.
+
+### Changes
+
+| File | Change |
+| --- | --- |
+| `components/widgets/content/reply-inbox.tsx` (NEW) | The inbox, `gmailThreadUrl`, and `decodeEntities`. |
+| `lib/integrations/outreach/actions.ts`, `types.ts` | Snapshot carries `thread_id` per prospect and `sender_email` on `sending`. |
+| `components/widgets/content/outreach-widgets.tsx` | Replied tab routes to the inbox; draft detail gains the Gmail link and decodes preview text. |
+
+### Verification
+
+- 5 assertions on `gmailThreadUrl` (account form, `u/0` fallback, blank/whitespace sender, trimming, plus-addressed encoding) and 12 on `decodeEntities` (the real `&#39;` bug, named/hex/decimal forms, unknown entities and bare ampersands left alone, out-of-range codepoints, idempotence): ALL PASS.
+- Live, read-only on SourceGent: the Gmail link renders on a real bounced thread with the correct href (`…/u/thedvegroup%40gmail.com/#all/19fa8f4af8c1698a`), and previews now read "wasn't delivered" instead of `wasn&#39;t`.
+- Live on the ABC Corp test tenant: temporarily set its one prospect to `replied` with an entity-laden preview, confirmed the Needs-triage card, decoding, and that Interested moves it to Triaged with the pill — then **restored the row exactly** (disposition `open`, all reply fields null). Chose that tenant precisely because it has no queued sends, so a temporarily-suppressed prospect could not cause the worker to cancel anything.
+- A console `decodeEntities is not defined` appeared from the HMR window between adding the call and adding the import; confirmed stale by re-exercising the path with no new error and correct decoded output. `tsc` clean; eslint identical to `main`.
+
+### Not in this chunk (per spec)
+
+Composing replies in-app, and a full unified inbox (message bodies live in Gmail; we hold previews only).
