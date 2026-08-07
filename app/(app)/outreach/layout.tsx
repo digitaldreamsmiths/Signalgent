@@ -3,6 +3,7 @@
 import { useCompany } from '@/contexts/company-context'
 import { OutreachProvider } from '@/contexts/outreach-context'
 import { OutreachNav } from '@/components/widgets/content/outreach-nav'
+import { OutreachChrome } from '@/components/widgets/content/outreach-chrome'
 
 /**
  * Hosts the shared workspace data for everything under /outreach, plus the
@@ -35,10 +36,12 @@ export default function OutreachLayout({ children }: { children: React.ReactNode
           .outreach-nav-item { border-radius: 999px; }
         }
       `}</style>
-      <div className="outreach-shell">
-        <OutreachNav />
-        <div className="outreach-main">{children}</div>
-      </div>
+      <OutreachChrome>
+        <div className="outreach-shell">
+          <OutreachNav />
+          <div className="outreach-main">{children}</div>
+        </div>
+      </OutreachChrome>
     </OutreachProvider>
   )
 }
