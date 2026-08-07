@@ -2224,3 +2224,46 @@ Closes the two loose ends from chunk 2 (migration applied and verified live this
 - Created campaign "Pilot list" through the modal (real insert — the migration works), stats line rendered.
 - Selected the tenant's one contact → "Move to campaign…" → Pilot list: Campaign column shows it, the workspace selector updated to "Pilot list (1)", and filtering by it scoped every tab correctly (Contacts 1 / Ready to email 1). "Pilot list" left in place as a working example.
 - `tsc` clean; eslint identical to `main`; no console errors.
+
+---
+
+## Session 37 — Phase 2 chunk 1: deliverability preflight (SPF / DKIM / DMARC / MX / tracking domain)
+
+First Phase 2 chunk. A stranger who connects a mailbox and starts sending without authentication lands in spam, blames the tool, and burns their domain doing it. These are plain DNS lookups (no third-party service, no API key) turned into pass / warn / fail verdicts, each with the fix spelled out.
+
+### Design
+
+- **Pure evaluators over raw records** (`evaluateSpf`, `evaluateDmarc`, `evaluateDkim`, `evaluateMx`, `evaluateTrackingDomain`) — unit-testable without touching DNS — with the I/O split out and mirroring `deliverability.ts`: short timeout, and any transient/unknown DNS error resolves to an `unknown` verdict rather than a red failure the user can't act on.
+- **Checks**: SPF (missing / duplicate / `+all` / `?all` / no-`all` / >10 lookups / provider alignment), DKIM (12 common selectors on both the sending domain and its parent), DMARC (missing / `p=none` / enforced / missing `rua`), MX (replies need somewhere to land), and tracking-domain alignment — which finally surfaces the long-standing `*.vercel.app` residual as an in-app finding.
+- **SPF provider alignment**: sending through Gmail while SPF authorizes only Amazon SES is a silent SPF failure on every message. Warn, not fail, since a relay can legitimately sit in between.
+
+### Three false positives caught by testing against live DNS (each fixed)
+
+1. **DMARC on subdomains.** `send.sourcegent.io` has no `_dmarc` record of its own, and the checker called that a hard fail — but RFC 7489 §6.6.3 says receivers fall back to the organizational domain, and `sourcegent.io` publishes `p=quarantine`. Now looks up the parent, honors `sp=` when present, and reports the inherited policy explicitly. A tool that cries wolf about DNS is worse than no tool.
+2. **`redirect=` is authorization.** `gmail.com`'s own record is `v=spf1 redirect=_spf.google.com`; matching only `include:` reported it as unauthorized. Both forms now count.
+3. **`redirect=` legitimately has no `all`.** RFC 7208 forbids the two coexisting, so the "no `all` mechanism" warning is wrong for redirect records and is now skipped there.
+
+### Consumer sending domains
+
+Live-checking the real SourceGent settings surfaced that its sender is **`thedvegroup@gmail.com`** — a consumer mailbox domain. SPF/DKIM/DMARC advice about `gmail.com` is unactionable (those are Google's records to publish), so the checker now detects consumer domains and replaces that noise with the finding that matters: the sending address itself, plus the fix (send from a domain you own). Tracking-domain alignment likewise drops the "align to gmail.com" advice while still flagging `*.vercel.app`.
+
+### Changes
+
+| File | Change |
+| --- | --- |
+| `lib/integrations/outreach/dns-check.ts` (NEW) | Verdict types, pure evaluators, consumer-domain detection, and `checkSendingDomain` — every lookup concurrent and timeout-bounded, never throws. |
+| `lib/integrations/outreach/dns-actions.ts` (NEW) | `checkDeliverability(companyId)` — read-only; derives the domain from the saved sender email and passes the configured provider for the alignment check. |
+| `components/widgets/content/sending-settings-modal.tsx` | "Deliverability" panel: overall badge, Check now / Re-check, and a colour-coded row per finding with its fix. Read-only — it never mutates settings. |
+
+### Verification
+
+- 60+ assertions across every evaluator (including all three false-positive regressions and the consumer-domain path): ALL PASS.
+- Live DNS against `sourcegent.io`, `send.sourcegent.io`, `google.com`, `gmail.com` — results match the raw records, confirmed by dumping the TXT records alongside.
+- `tsc` clean. eslint: the file's two pre-existing `no-unescaped-entities` errors (warmup/bounce copy) are unchanged — verified identical on `main`.
+- In-browser against the live SourceGent workspace: the panel renders in Sending settings, "Check now" runs against real DNS and returns the FAIL badge with the consumer-domain finding and the tracking-domain finding (correctly `localhost` in dev). The unactionable SPF/DKIM/DMARC rows are suppressed as designed. Closed via the backdrop, never Save, so live sending settings were untouched. No console errors.
+
+### Findings for SourceGent's live setup (informational, no action taken)
+
+1. Sending is configured from **`thedvegroup@gmail.com`**. Cold outreach from a consumer Gmail address can't be authenticated (no SPF/DKIM/DMARC you can publish) and is heavily filtered under Google/Yahoo bulk-sender rules — the single biggest deliverability lever available, and plausibly a contributor to the 0-reply run.
+2. `NEXT_PUBLIC_APP_URL` still points at `*.vercel.app` (the standing residual), so tracking and unsubscribe links don't align with the sending domain.
+3. `send.sourcegent.io` authorizes Amazon SES in SPF, not Google — relevant if sending ever moves to that domain over Gmail.
