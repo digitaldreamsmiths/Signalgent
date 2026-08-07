@@ -2445,3 +2445,31 @@ Ten flat tabs read as ten unrelated things to check. Four sections read as a wor
 ### Observation for Eudon (not changed here)
 
 The Schedule calendar shows the 369 queued follow-ups laid out at 45/day straight across **Saturday and Sunday** (Aug 8–9 and 15–16). That comes from an inconsistency between the two scheduling paths: `nextSlot` (auto-queue) skips weekends explicitly, while `computeBatchSlots` (the "Schedule (N)" batch path) only rolls a day forward when it hits the daily cap and never checks the weekday. For B2B govcon outreach, Saturday-morning cold email is both less likely to be read and more likely to read as automated. Worth deciding whether the batch path should skip weekends like the drip path does — a small fix, deliberately not bundled into an IA change.
+
+---
+
+## Session 43 — Weekend scheduling policy
+
+Follows the Session 42 observation. Eudon's call: **no weekend sends, unless a weekend is explicitly chosen.**
+
+### The inconsistency
+
+Two scheduling paths disagreed. `nextSlot` (the auto-queue path behind template auto-queue and follow-ups) skips Saturday and Sunday outright. `computeBatchSlots` (the "Schedule (N)" / reschedule path) only rolled a day forward when it hit the daily cap and never looked at the weekday — so a batch large enough to overflow simply spilled onto the weekend.
+
+### The rule
+
+Weekend days are skipped, **except the day the user explicitly asked to start on**. The schedule dialog already defaults to the *next weekday*, so picking a Saturday there is a deliberate act and is honoured; overflow rolling onto a weekend never is. Keyed off the **requested** start rather than the clamped one — a start pushed forward to "now" that happens to land on a Saturday was never chosen.
+
+| File | Change |
+| --- | --- |
+| `send/worker.ts` | New pure `isSendableDay(wall, explicitDayKey)` + `dayKeyOf`; `computeBatchSlots` derives the explicit day from the raw `startAtIso` and rolls past any day the policy rules out as well as any day at capacity. |
+
+`isSendableDay` is exported precisely because the functions around it need a Supabase client, and this rule is the part worth pinning down.
+
+### Verification
+
+15 assertions, all passing: the pure rule (weekday allowed, Sat/Sun blocked, the chosen weekend day allowed, a *different* Saturday still blocked, explicit key not affecting weekdays), plus `computeBatchSlots` end-to-end against a stubbed client — Monday start stays on weekdays; a Friday start at cap 2 puts two on Friday and rolls the overflow to **Monday**, not Saturday; an explicitly chosen Saturday keeps its two sends but rolls overflow past Sunday to Monday; an explicit Sunday is honoured; and a 20-email batch lands **zero** weekend slots. `tsc` and eslint clean; nav re-verified in-browser at desktop and mobile widths.
+
+### Live queue — needs a decision, not applied
+
+An audit of prod found **90 already-queued sends on this weekend**: 45 on Sat Aug 8 and 45 on Sun Aug 9, with sending ON. The fix only governs *future* scheduling, so those remain as laid out. They can be moved in the UI — Schedule → tick the Saturday and Sunday day headers → Reschedule with a Monday start — or by request. Not touched here: rescheduling 90 live queued emails is an outward-facing change and belongs to Eudon.

@@ -131,6 +131,23 @@ function fromZonedWall(y: number, mo: number, d: number, h: number, mi: number, 
   return new Date(guess - offset)
 }
 
+/** Stable per-day key for the capacity map ("2026-8-7"). */
+function dayKeyOf(w: { y: number; mo: number; d: number }): string {
+  return `${w.y}-${w.mo}-${w.d}`
+}
+
+/**
+ * Whether a day may carry sends under the weekend policy: weekdays always, and
+ * a weekend day only when it is the one the user explicitly asked to start on.
+ *
+ * Pure and exported for testing — the scheduling functions around it need a
+ * Supabase client, and this rule is the part worth pinning down.
+ */
+export function isSendableDay(w: { y: number; mo: number; d: number; weekday: number }, explicitDayKey: string | null): boolean {
+  const weekend = w.weekday === 0 || w.weekday === 6
+  return !weekend || dayKeyOf(w) === explicitDayKey
+}
+
 function nextDayWindowStart(w: Wall, tz: string, wsH: number, wsM: number): Date {
   const d = new Date(Date.UTC(w.y, w.mo - 1, w.d))
   d.setUTCDate(d.getUTCDate() + 1)
@@ -300,6 +317,15 @@ export async function computeBatchSlots(
   const startH = startWall.h
   const startM = startWall.mi
 
+  // Weekend policy. Cold email that lands Saturday morning is both less likely
+  // to be read and more likely to read as automated, so overflow never rolls
+  // onto a weekend — but a weekend day the user *picked* is honoured, since the
+  // schedule dialog defaults to the next weekday and choosing otherwise is a
+  // deliberate act. Keyed off the REQUESTED start, not `cur`: a start clamped
+  // forward to "now" that happens to land on a Saturday was never chosen.
+  const requested = new Date(startAtIso)
+  const explicitDayKey = isNaN(requested.getTime()) ? null : dayKeyOf(wallParts(requested, tz))
+
   const exclude = new Set(excludeSendIds)
   // Same bound + paging as nextSlot: `cur` never starts before now, so older
   // rows can't affect day counts, and paging keeps a large queued backlog from
@@ -332,14 +358,15 @@ export async function computeBatchSlots(
   const capForDay = (w: Wall) => Math.min(rampForDay(w), planMax)
   const slots: string[] = []
   for (let i = 0; i < count; i++) {
-    // Roll forward over any day that's already at capacity.
+    // Roll forward past any day that's at capacity, or that the weekend policy
+    // rules out.
     for (let guard = 0; guard < 800; guard++) {
       const w = wallParts(cur, tz)
-      if ((counts.get(`${w.y}-${w.mo}-${w.d}`) ?? 0) < capForDay(w)) break
+      if (isSendableDay(w, explicitDayKey) && (counts.get(dayKeyOf(w)) ?? 0) < capForDay(w)) break
       cur = nextDayWindowStart(w, tz, startH, startM)
     }
     const w = wallParts(cur, tz)
-    const key = `${w.y}-${w.mo}-${w.d}`
+    const key = dayKeyOf(w)
     counts.set(key, (counts.get(key) ?? 0) + 1)
     slots.push(cur.toISOString())
     cur = new Date(cur.getTime() + settings.min_gap_minutes * 60000)
