@@ -2033,3 +2033,42 @@ Two selection gaps reported after Session 29 went live: the Scheduled view had n
 - `tsc --noEmit` clean; eslint findings identical to `main` (the two pre-existing `set-state-in-effect` errors, untouched code).
 - In-browser against live data: "Select all (135)" renders on the Scheduled tab; one click on the "Friday, Aug 7 · 45" header checkbox selected all 45 sends and surfaced Reschedule…/Cancel (not confirmed — selection is client-side only, nothing mutated). "Select unqueued" correctly hidden with all 135 ready drafts queued.
 - Incidentally confirmed Session 29 working on prod: Templates tab at 0, 135 auto-queued sends laid out at 45/day across Aug 7–9.
+
+---
+
+## Session 31 — Productization Phase 0: per-tenant offer profile (de-SourceGent the pipeline)
+
+First build phase of the govcon productization plan (`docs/specs/signalgent-govcon-v1.md`, committed this session). The product being pitched was hardcoded across the drafting register, template library, and signatures, so the app could only ever sell SourceGent. Now every pitch surface reads from a per-company **offer profile**, with the SourceGent values as built-in defaults — so the existing tenant behaves identically until a profile row is saved, and a second tenant needs zero code changes.
+
+### Changes
+
+| File | Change |
+| --- | --- |
+| `supabase/migrations/20260807000000_outreach_offer_profile.sql` (NEW) | `outreach_offer_profiles`: company_id PK, product, site, sign_off, signature_name, user_count, pipeline, audience, pitch, artifacts (jsonb). Same RLS shape as outreach_templates. Remote-only/out-of-band as usual. |
+| `lib/types/database.types.ts` | Hand-added Row/Insert/Update for the new table (types file is hand-maintained; migrations apply out-of-band). |
+| `lib/integrations/outreach/offer-profile.ts` (NEW) | `OfferProfile` type, `DEFAULT_OFFER_PROFILE` (the former SENDER values + audience/pitch/artifacts previously baked into the register), `userCountMid(profile)`, and `loadOfferProfile(supabase, companyId)` — client-injected like `loadSettings`, treats a query error (table not yet migrated) as "no row", coalesces per-field to defaults. The profile can never be the reason enrichment or sending stops. |
+| `lib/integrations/outreach/draft.ts` | `SYSTEM` → `systemFor(profile)`: audience, product, pitch, artifact list, social proof, site, and signature all interpolated. `draftEmail` gains a profile param (defaulted); `signatureIndex`/`stripReleaseValves`/`bodyWordCount`/`endsOnQuestion`/`reviewDraft` accept the profile's sign-off (regex-escaped) so cleanup respects a custom signature. One deliberate register change for the default tenant too: rule 3 now states "What it does: {pitch}" explicitly (previously implied by the artifact list alone). |
+| `lib/integrations/outreach/template-library.ts` | `templateLibraryFor(profile)`; `TEMPLATE_LIBRARY` kept as the default-profile constant for client surfaces. Product/pitch/social proof interpolated; the five QUESTIONS stay proposal-domain by design — built-ins are the last-resort fallback and a tenant with a different offer authors user templates, which always win the rotation. Two follow-up lines lightly genericized (they previously named SourceGent mechanics verbatim). |
+| `lib/integrations/outreach/template.ts` | `variantFor`/`buildTemplateDraft`/`buildTemplateFollowup` take a profile (defaulted); built-in signature renders from it. |
+| `lib/integrations/outreach/send/compose.ts` | `composeEmail` gains a trailing optional profile; signature fallback + already-signed detection use it instead of the SENDER constant. |
+| `lib/integrations/outreach/pipeline.ts` | `runPipeline`/`runPipelineFromName` thread an optional profile to `draftEmail`. |
+| `lib/integrations/outreach/enrich-run.ts` | Batch runners load the profile once per batch and pass it through `runPipeline`, `persistOutcome`, `pickTemplateDraft`, and `backfillTemplateDrafts`. |
+| `lib/integrations/outreach/actions.ts`, `sending.ts`, `send/queue.ts` | `generateFollowup`, `resolveManual`, `queueDraftSend`, `scheduleDraftSends`, and `autoQueueDraftSend` load and pass the profile. |
+| `lib/integrations/outreach/offer-actions.ts` (NEW) | `getOfferProfile` / `saveOfferProfile` server actions. Save validates required fields + at least one artifact, upserts, and reports "migration hasn't been applied yet" specifically when the table is missing. |
+| `app/(app)/settings/offer/page.tsx` (NEW) + `settings/layout.tsx` | Settings → Offer profile editor: product, site, sign-off/signature, audience, pitch, artifacts (one per line), social-proof phrases, each with guidance text. Nav item added. |
+
+### Verification
+
+- `tsc --noEmit` and eslint clean on all touched files (actions.ts keeps only its pre-existing unused-import warning).
+- In-browser: Settings → Offer profile renders with the SourceGent defaults loaded through the fallback loader (table doesn't exist yet); Save correctly reports "The offer-profile migration hasn't been applied to the database yet." No console errors.
+- Prompt-shape check: with `DEFAULT_OFFER_PROFILE` the rendered register matches the original except the added "What it does" sentence.
+
+### Handoff (not applied)
+
+1. Apply `supabase/migrations/20260807000000_outreach_offer_profile.sql` (remote-only, out-of-band). Until then the pipeline runs on defaults and the settings form can read but not save — everything else is unaffected.
+
+### Residuals / next in Phase 0
+
+- Contact-name enrichment (emails still open "Hi,") — next chunk.
+- The template editor's five starters still render from the DEFAULT profile on the client; they should read the tenant profile once a second tenant exists (small wiring, noted for the Phase 2 onboarding pass, which will generate starters from the profile anyway).
+- Built-in follow-up copy changed slightly for the live tenant (two lines genericized); openers are unaffected in prod because SourceGent's active user templates win the rotation.

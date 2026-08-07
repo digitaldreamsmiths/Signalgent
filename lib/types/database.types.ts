@@ -369,6 +369,49 @@ export interface Database {
         }
         Relationships: []
       }
+      outreach_offer_profiles: {
+        Row: {
+          company_id: string
+          product: string
+          site: string
+          sign_off: string
+          signature_name: string
+          user_count: string
+          pipeline: string
+          audience: string
+          pitch: string
+          artifacts: Json
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          company_id: string
+          product: string
+          site: string
+          sign_off: string
+          signature_name: string
+          user_count: string
+          pipeline: string
+          audience: string
+          pitch: string
+          artifacts?: Json
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          product?: string
+          site?: string
+          sign_off?: string
+          signature_name?: string
+          user_count?: string
+          pipeline?: string
+          audience?: string
+          pitch?: string
+          artifacts?: Json
+          updated_at?: string
+        }
+        Relationships: []
+      }
       outreach_templates: {
         Row: {
           id: string

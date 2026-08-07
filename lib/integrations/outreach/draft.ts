@@ -24,7 +24,8 @@
  */
 
 import { callClaudeJSON } from './llm'
-import { SENDER, userCountMid } from './sender'
+import { SENDER } from './sender'
+import { DEFAULT_OFFER_PROFILE, userCountMid, type OfferProfile } from './offer-profile'
 import type { DraftResult, DraftReview, SynthesisResult } from './types'
 import type { LLMUsage } from '../../llm/client'
 
@@ -33,12 +34,16 @@ import type { LLMUsage } from '../../llm/client'
 // bundle. Re-exported here because existing callers import SENDER from './draft'.
 export { SENDER }
 
-const SYSTEM = `You write a single cold outreach email to a government contractor. The email exists to get a REPLY, not to explain a product. You may use ONLY the facts provided in facts_for_draft. Use nothing else about the company.
+/** The register, rendered against a tenant's offer profile. With the SourceGent
+ * defaults this matches the original hardcoded prompt, plus an explicit "what
+ * it does" sentence (previously implied by the artifact list alone). */
+function systemFor(p: OfferProfile): string {
+  return `You write a single cold outreach email to ${p.audience}. The email exists to get a REPLY, not to explain a product. You may use ONLY the facts provided in facts_for_draft. Use nothing else about the company.
 
 Shape (follow exactly, in this order):
 1. Greet with exactly "Hi," on its own line. You do NOT know the recipient's name, so NEVER write a placeholder like "[Name]", "[First Name]", or "[Company]" anywhere. No square brackets at all.
 2. ONE sentence that earns the email from the facts. Specific, no flattery, no "I came across your company". Never congratulate.
-3. ONE or TWO sentences naming ${SENDER.product} exactly once, as a live tool in active use. NEVER "building", "launching", "working on", or anything pre-launch. Include at least one CONCRETE artifact of the work from this list: shred the solicitation, compliance matrix, first draft the same day, past performance write-up, Section L, Section M, pink team. Social proof in passing, at most once, phrased as "${userCountMid} use it" and optionally "${SENDER.pipeline}". Never a boast.
+3. ONE or TWO sentences naming ${p.product} exactly once, as a live tool in active use. NEVER "building", "launching", "working on", or anything pre-launch. What it does: ${p.pitch} Include at least one CONCRETE artifact of the work from this list: ${p.artifacts.join(', ')}. Social proof in passing, at most once, phrased as "${userCountMid(p)} use it" and optionally "${p.pipeline}". Never a boast.
 4. The LAST line of the body is a QUESTION ending in "?". One question, closed, answerable in a single line by someone who has never heard of you (e.g. "Is drafting the slow part, or is past performance worse?"). The body ends there.
 
 Hard rules:
@@ -47,9 +52,9 @@ Hard rules:
 - No vague benefit language. BANNED words and phrases: "lighter load", "proposal load", "busywork", "heavy lifting", "streamline", "solution", "leverage", "game changer", "revolutionize", "empower", "seamless", "cutting edge".
 - No free-labor offers. No "problem -> solution -> demo" skeleton. No generic "15 minutes" or "quick call" ask.
 - No spam-filter bait anywhere in subject or body: no "congratulations", "guarantee", "winner", "act now", "limited time", "risk-free", "100%", "cheap".
-- The site link (${SENDER.site}) lives in the signature only. The body never sells hard.
+- The site link (${p.site}) lives in the signature only. The body never sells hard.
 - No dashes used as punctuation anywhere: no em dashes, no en dashes, no double hyphens (--), no spaced hyphens ( - ). Use commas or separate sentences instead. Normal hyphenated words (service-disabled) are fine.
-- Sign off as "${SENDER.signOff},\\n${SENDER.signatureName}\\n${SENDER.product}\\n${SENDER.site}". The signature is not part of the 90 words.
+- Sign off as "${p.sign_off},\\n${p.signature_name}\\n${p.product}\\n${p.site}". The signature is not part of the 90 words.
 
 Subject line rules:
 - 2 to 5 words. Lowercase except proper nouns. It should read like a colleague's subject, not marketing.
@@ -59,6 +64,7 @@ Subject line rules:
 Output ONLY JSON:
 {"subject":"...","body":"...","facts_used":["the exact facts_for_draft strings you used"]}
 facts_used MUST be copied verbatim from facts_for_draft. Do not paraphrase them there.`
+}
 
 /** Optional follow-up context. step > 1 means this is a nudge, not the opener. */
 export interface TouchContext {
@@ -128,8 +134,9 @@ const RELEASE_PHRASES =
   /\b(either way|no worries|wishing you|good luck (?:with|on|in)|best of luck|thanks for your time|no pressure|hope (?:this|that) helps|feel free to ignore)\b/i
 
 /** Index of the sign-off block, so cleanup never chews into the signature. */
-function signatureIndex(body: string): number {
-  const m = body.match(new RegExp(`\\n[ \\t]*${SENDER.signOff},[ \\t]*\\n`))
+function signatureIndex(body: string, signOff: string = DEFAULT_OFFER_PROFILE.sign_off): number {
+  const escaped = signOff.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const m = body.match(new RegExp(`\\n[ \\t]*${escaped},[ \\t]*\\n`))
   return m?.index ?? -1
 }
 
@@ -139,8 +146,8 @@ function sentences(line: string): string[] {
 }
 
 /** Drops the sentences that release the reader, leaving the body ending on its ask. */
-export function stripReleaseValves(body: string): string {
-  const idx = signatureIndex(body)
+export function stripReleaseValves(body: string, signOff?: string): string {
+  const idx = signatureIndex(body, signOff)
   const head = idx >= 0 ? body.slice(0, idx) : body
   const tail = idx >= 0 ? body.slice(idx) : ''
 
@@ -164,25 +171,25 @@ export function stripReleaseValves(body: string): string {
 }
 
 /** Body length excluding the signature block — what the 90-word ceiling governs. */
-export function bodyWordCount(body: string): number {
-  const idx = signatureIndex(body)
+export function bodyWordCount(body: string, signOff?: string): number {
+  const idx = signatureIndex(body, signOff)
   const head = idx >= 0 ? body.slice(0, idx) : body
   return head.trim().split(/\s+/).filter(Boolean).length
 }
 
 /** Whether the body's last line before the signature is a question. */
-export function endsOnQuestion(body: string): boolean {
-  const idx = signatureIndex(body)
+export function endsOnQuestion(body: string, signOff?: string): boolean {
+  const idx = signatureIndex(body, signOff)
   const head = (idx >= 0 ? body.slice(0, idx) : body).trimEnd()
   return head.endsWith('?')
 }
 
 /** Drift check + dash/placeholder/release-valve sanitize. Body is cleaned; drift on facts_used is reported. */
-export function reviewDraft(draft: DraftResult, factsForDraft: string[]): DraftReview {
+export function reviewDraft(draft: DraftResult, factsForDraft: string[], signOff?: string): DraftReview {
   const cleaned: DraftResult = {
     ...draft,
     subject: stripPlaceholders(sanitizeDashes(draft.subject)),
-    body: stripReleaseValves(stripPlaceholders(sanitizeDashes(draft.body))),
+    body: stripReleaseValves(stripPlaceholders(sanitizeDashes(draft.body)), signOff),
   }
   const known = new Set(factsForDraft.map((f) => f.trim().toLowerCase()))
   const drifted = cleaned.facts_used.filter((f) => !known.has(f.trim().toLowerCase()))
@@ -203,12 +210,12 @@ const FOLLOWUP_WORD_CEILING = 60
  * prose, and an over-long body needs to be rewritten rather than truncated. So
  * we re-ask once with the specific complaint.
  */
-function shapeComplaints(body: string, ceiling: number): string[] {
+function shapeComplaints(body: string, ceiling: number, signOff: string): string[] {
   const out: string[] = []
-  if (!endsOnQuestion(body)) {
+  if (!endsOnQuestion(body, signOff)) {
     out.push('The body did not END on a question. Rewrite so the final line before the signature is one closed question ending in "?", with nothing after it.')
   }
-  const words = bodyWordCount(body)
+  const words = bodyWordCount(body, signOff)
   if (words > ceiling) {
     out.push(`The body was ${words} words, over the ${ceiling}-word ceiling. Cut it down, do not just trim the ending.`)
   }
@@ -219,12 +226,13 @@ async function callDraft(
   synthesis: SynthesisResult,
   collect: LLMUsage[] | undefined,
   touch: TouchContext | undefined,
+  profile: OfferProfile,
   extra?: string,
 ): Promise<DraftResult | null> {
   const input = renderInput(synthesis.angle, synthesis.facts_for_draft, touch)
   const out = await callClaudeJSON<Partial<DraftResult>>(
     'draft',
-    SYSTEM,
+    systemFor(profile),
     extra ? `${input}\n\nYour previous attempt was rejected:\n${extra}\nEverything else about it was fine. Rewrite the whole email.` : input,
     1500,
     collect,
@@ -239,22 +247,27 @@ async function callDraft(
   }
 }
 
-export async function draftEmail(synthesis: SynthesisResult, collect?: LLMUsage[], touch?: TouchContext): Promise<DraftReview | null> {
+export async function draftEmail(
+  synthesis: SynthesisResult,
+  collect?: LLMUsage[],
+  touch?: TouchContext,
+  profile: OfferProfile = DEFAULT_OFFER_PROFILE,
+): Promise<DraftReview | null> {
   if (synthesis.skip || synthesis.facts_for_draft.length === 0) return null
 
   const ceiling = touch && touch.step > 1 ? FOLLOWUP_WORD_CEILING : WORD_CEILING
 
-  const first = await callDraft(synthesis, collect, touch)
+  const first = await callDraft(synthesis, collect, touch, profile)
   if (!first) return null
-  const firstReview = reviewDraft(first, synthesis.facts_for_draft)
+  const firstReview = reviewDraft(first, synthesis.facts_for_draft, profile.sign_off)
 
   // Deletion-based cleanup runs before the shape check, so a draft whose only
   // sin was a trailing good-wish already passes without burning a second call.
-  const complaints = shapeComplaints(firstReview.draft.body, ceiling)
+  const complaints = shapeComplaints(firstReview.draft.body, ceiling, profile.sign_off)
   if (complaints.length === 0) return firstReview
 
-  const retry = await callDraft(synthesis, collect, touch, complaints.map((c) => `- ${c}`).join('\n'))
+  const retry = await callDraft(synthesis, collect, touch, profile, complaints.map((c) => `- ${c}`).join('\n'))
   if (!retry) return firstReview // one bad shape beats no email at all; the queue is reviewed anyway
-  const retryReview = reviewDraft(retry, synthesis.facts_for_draft)
-  return shapeComplaints(retryReview.draft.body, ceiling).length === 0 ? retryReview : firstReview
+  const retryReview = reviewDraft(retry, synthesis.facts_for_draft, profile.sign_off)
+  return shapeComplaints(retryReview.draft.body, ceiling, profile.sign_off).length === 0 ? retryReview : firstReview
 }

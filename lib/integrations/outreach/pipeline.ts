@@ -12,6 +12,7 @@
 import { enrichByName, enrichTarget, type EnrichResult } from './enrich'
 import { synthesize } from './synthesize'
 import { draftEmail } from './draft'
+import { DEFAULT_OFFER_PROFILE, type OfferProfile } from './offer-profile'
 import type { DraftReview, EnrichedTarget, SynthesisResult } from './types'
 import type { LLMUsage } from '../../llm/client'
 
@@ -20,7 +21,7 @@ export type PipelineOutcome =
   | { status: 'skipped'; email: string; stage: 'enrich' | 'synthesis' | 'draft'; reason: string; enriched?: EnrichedTarget; synthesis?: SynthesisResult }
 
 /** Shared tail: enrichment result → synthesize → gate → draft → outcome. */
-async function fromEnriched(email: string, enriched: EnrichResult, collect?: LLMUsage[]): Promise<PipelineOutcome> {
+async function fromEnriched(email: string, enriched: EnrichResult, collect?: LLMUsage[], profile?: OfferProfile): Promise<PipelineOutcome> {
   if (!enriched.ok) {
     return { status: 'skipped', email, stage: 'enrich', reason: `${enriched.reason}${enriched.detail ? `: ${enriched.detail}` : ''}` }
   }
@@ -30,7 +31,7 @@ async function fromEnriched(email: string, enriched: EnrichResult, collect?: LLM
     return { status: 'skipped', email, stage: 'synthesis', reason: synthesis.skip_reason ?? 'skip', enriched: enriched.target, synthesis }
   }
 
-  const review = await draftEmail(synthesis, collect)
+  const review = await draftEmail(synthesis, collect, undefined, profile ?? DEFAULT_OFFER_PROFILE)
   if (!review) {
     return { status: 'skipped', email, stage: 'draft', reason: 'draft unavailable', enriched: enriched.target, synthesis }
   }
@@ -39,11 +40,11 @@ async function fromEnriched(email: string, enriched: EnrichResult, collect?: LLM
 }
 
 /** Automatic path — resolve the company from the email domain. */
-export async function runPipeline(email: string, collect?: LLMUsage[]): Promise<PipelineOutcome> {
-  return fromEnriched(email, await enrichTarget(email, {}, collect), collect)
+export async function runPipeline(email: string, collect?: LLMUsage[], profile?: OfferProfile): Promise<PipelineOutcome> {
+  return fromEnriched(email, await enrichTarget(email, {}, collect), collect, profile)
 }
 
 /** Manual path — caller supplies the company name (disambiguation recovery). */
-export async function runPipelineFromName(email: string, companyName: string, collect?: LLMUsage[]): Promise<PipelineOutcome> {
-  return fromEnriched(email, await enrichByName(email, companyName), collect)
+export async function runPipelineFromName(email: string, companyName: string, collect?: LLMUsage[], profile?: OfferProfile): Promise<PipelineOutcome> {
+  return fromEnriched(email, await enrichByName(email, companyName), collect, profile)
 }
