@@ -2543,3 +2543,36 @@ Each section is now a real route, so views are linkable and the browser's back b
 ### A console error chased down and cleared
 
 `TypeError: Cannot read properties of undefined (reading 'filters')` appeared on initial load and looked like the new `SECTIONS.find(...)!.filters`. It wasn't: instrumenting that line showed `SECTIONS` is always the full four-element array and `section` always a valid key, client-side navigation produced zero errors, and — decisively — **stashing every change reproduced the identical error on `main`**. It arrives with Next's HMR WebSocket failures and a `node_modules/next/dist/compiled` frame, i.e. dev tooling rather than application code. Pre-existing, not introduced here.
+
+---
+
+## Session 46 — Phase 5: hoist the chrome into the layout
+
+The polish item left over from stage 2b. The persistent frame — banners, setup checklist, header + intake, metrics bar, the modals those buttons open, and the toast stack — was still inside `OutreachWorkspace`, so every section navigation unmounted and rebuilt it.
+
+### What it buys
+
+- **A half-typed contact list survives navigation.** Previously, pasting emails and then clicking another section lost the text.
+- **In-flight actions keep their spinner and completion toast.** Kicking off "Enrich wave" and navigating away used to orphan the UI (the server action still completed, but the result toast never arrived).
+- **The header and metrics stop re-rendering on every click.**
+
+### Shape
+
+| File | Role |
+| --- | --- |
+| `outreach-ui.tsx` (NEW) | The small shared pieces — colour constants, `btn`/`btnGhost`, `fmtPct`/`fmtUsd`, `Pill`, `Banner`, `Metric` — so neither of the two big files has to import the other. |
+| `outreach-chrome.tsx` (NEW) | The frame, plus the workspace-wide gates (loading, "no prospects yet"). `children` renders only once there is something to show. Owns intake, enrich, process-queue and scan-replies. |
+| `outreach-widgets.tsx` | Now just the section views and their local state. **1,610 → 1,144 lines.** |
+| `outreach/layout.tsx` | `Provider → Chrome → (Nav + children)`. |
+
+### Two small deletions, both deliberate
+
+- **The dead enrich-progress panel.** `progress` was never assigned (`setProgress` had no callers), so `{running && progress && …}` could not render. Carrying unreachable UI through a move would have been worse than removing it; the "Enriching…" button state and the completion toast still cover the feedback.
+- **The duplicate "Manage templates" button** on the Templates sub-tab. The header carries an always-visible one, and the sub-tab copy could no longer reach the modal now that it lives in the chrome.
+
+### Verification
+
+- **The behaviour this exists for:** typed `persistence-test@example.com` into the paste box on `/outreach/pipeline`, navigated to `/outreach/schedule`, and the value survived. Cleared afterwards.
+- Chrome renders above the rail and persists; every section still renders (Contacts deep-load shows all 4,933 rows with chrome and a 4-link rail); Sending settings still opens from the header and closes without saving.
+- `tsc` clean. eslint: **every file touched here is clean** — the four remaining findings in `components/widgets/content/` are all pre-existing, in files this change didn't touch (`scheduled-view`, `sending-settings-modal`, `templates-modal`).
+- A mid-refactor parse error (a bad brace match left three orphaned function fragments) was fixed before commit; the console kept showing it from its buffer, so the dev server was restarted to confirm — a fresh server shows only the pre-existing HMR WebSocket noise, no parse errors and no 500s.

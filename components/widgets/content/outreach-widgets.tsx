@@ -1,7 +1,6 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useRouter } from 'next/navigation'
 import {
   useOutreach,
   FILTER_LABEL,
@@ -15,32 +14,23 @@ import {
   deleteProspects,
   editDraft,
   generateFollowup,
-  ingestProspects,
   markExported,
   processProspects,
   rejectDraft,
   resolveManual,
-  enrichWaveNow,
   setContactName,
   setDisposition,
 } from '@/lib/integrations/outreach/actions'
-import { queueDraftSend, cancelSend, processSendQueue, scheduleDraftSends, scanRepliesNow } from '@/lib/integrations/outreach/sending'
+import { queueDraftSend, cancelSend, scheduleDraftSends } from '@/lib/integrations/outreach/sending'
 import { assignProspectsToCampaign } from '@/lib/integrations/outreach/campaign-actions'
 import type { OutreachCampaign } from '@/lib/integrations/outreach/campaigns'
 import type { Disposition, OutreachDraftView, OutreachProspectView } from '@/lib/integrations/outreach/types'
 import { hygieneWarnings, replyRiskWarnings } from '@/lib/integrations/outreach/hygiene'
-import { SendingSettingsModal } from './sending-settings-modal'
-import { CampaignsModal } from './campaigns-modal'
-import { SetupChecklist } from './setup-checklist'
+import { ACCENT, BORDER, CARD, MUTED, Pill, btn, btnGhost } from './outreach-ui'
 import { ReplyInbox, decodeEntities, gmailThreadUrl } from './reply-inbox'
-import { TemplatesModal } from './templates-modal'
 import { ScheduledView } from './scheduled-view'
 import { ScheduleDialog } from './schedule-dialog'
 
-const ACCENT = '#D85A30'
-const BORDER = 'var(--app-border)'
-const CARD = 'var(--app-card)'
-const MUTED = 'var(--app-muted)'
 
 /** Sort keys for the draft lists (Ready to email / Sent / All). 'type' is the
  * default and keeps the grouped Personalized/Templates sections; the rest
@@ -64,16 +54,7 @@ const DISPOSITIONS: { key: Disposition; label: string; color: string }[] = [
   { key: 'unsubscribed', label: 'Unsubscribed', color: 'var(--app-muted)' },
 ]
 
-function fmtPct(frac: number, sent: number): string {
-  return sent > 0 ? `${Math.round(frac * 100)}%` : '—'
-}
 
-function btn(bg: string): React.CSSProperties {
-  return { fontSize: 12, fontWeight: 600, color: '#fff', background: bg, border: 'none', borderRadius: 6, padding: '6px 14px', cursor: 'pointer' }
-}
-function btnGhost(color = 'var(--app-text-2)'): React.CSSProperties {
-  return { fontSize: 12, fontWeight: 600, color, background: 'transparent', border: `1px solid ${BORDER}`, borderRadius: 6, padding: '6px 14px', cursor: 'pointer' }
-}
 function csvCell(v: unknown): string {
   const s = v == null ? '' : String(v)
   // Quote any field with a quote, comma, or newline. Excel keeps a multi-line cell
@@ -120,9 +101,6 @@ function toCsv(rows: OutreachProspectView[]): string {
   return lines.join('\r\n')
 }
 
-function fmtUsd(n: number): string {
-  return `$${n.toFixed(n < 1 ? 4 : 2)}`
-}
 
 function downloadCsv(filename: string, csv: string): void {
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
@@ -134,35 +112,6 @@ function downloadCsv(filename: string, csv: string): void {
   URL.revokeObjectURL(url)
 }
 
-function Pill({ label, color }: { label: string; color: string }) {
-  return (
-    <span style={{ fontSize: 10, fontWeight: 600, color, border: `1px solid ${color}`, borderRadius: 4, padding: '1px 6px', textTransform: 'uppercase', letterSpacing: 0.3 }}>
-      {label}
-    </span>
-  )
-}
-
-/** Prominent full-width alert for pipeline-stopping states (paused, Gmail broken). */
-function Banner({ color, children }: { color: string; children: React.ReactNode }) {
-  return (
-    <div style={{ fontSize: 12, fontWeight: 600, color, background: 'var(--app-card-2)', border: `1px solid ${color}`, borderRadius: 8, padding: '8px 12px' }}>
-      {children}
-    </div>
-  )
-}
-
-/** A compact metric tile for the status bar. Numbers use the mono face. */
-function Metric({ label, value, accent, hint }: { label: string; value: string | number; accent?: string; hint?: string }) {
-  return (
-    <div style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: 8, padding: '8px 12px' }} title={hint}>
-      <div style={{ fontSize: 9, fontWeight: 600, color: MUTED, textTransform: 'uppercase', letterSpacing: 0.6 }}>{label}</div>
-      <div style={{ fontSize: 20, fontWeight: 600, color: accent ?? 'var(--app-text)', fontFamily: 'var(--font-mono)', marginTop: 3, lineHeight: 1 }}>{value}</div>
-      {hint && <div style={{ fontSize: 9, color: MUTED, marginTop: 3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{hint}</div>}
-    </div>
-  )
-}
-
-/** Contextual empty-state copy per filter tab. */
 /** Contextual empty-state copy per filter tab. Each one says what the tab is
  * FOR and what fills it, so a new user learns the pipeline by walking the tabs
  * rather than guessing which of ten is broken. */
@@ -898,38 +847,20 @@ function DraftDetail({ prospect, companyId, senderEmail, onChanged }: { prospect
  * plus whichever views the given section contains.
  */
 export function OutreachWorkspace({ section }: { section: Section }) {
-  // Shared across every section (and, once the routes land, across every
-  // route): the snapshot, campaign scope, queued sends, toasts, and the poll.
-  const {
-    companyId, snapshot, loading, refresh,
-    prospects, lists,
-    campaigns, campaignStats, campaignFilter, setCampaignFilter,
-    scheduledSends, loadScheduled,
-    toasts, pushToast, dismissToast,
-    setupKey,
-  } = useOutreach()
+  // The chrome (header, metrics, banners, modals, toasts) lives in the layout
+  // now; this component renders only the section's own views.
+  const { companyId, snapshot, refresh, lists, campaigns, scheduledSends, loadScheduled, pushToast } = useOutreach()
 
-  // View-local state — this is what will move into each route.
-  const [raw, setRaw] = useState('')
-  const [running, setRunning] = useState(false)
-  const [progress, setProgress] = useState<{ processed: number; total: number; drafted: number; skipped: number; cost: number } | null>(null)
+  // View-local state.
   const sectionFilters = SECTIONS.find((sec) => sec.key === section)!.filters
   const [filter, setFilter] = useState<Filter>(sectionFilters[0])
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [sendingModalOpen, setSendingModalOpen] = useState(false)
-  const [templatesModalOpen, setTemplatesModalOpen] = useState(false)
-  const [campaignsModalOpen, setCampaignsModalOpen] = useState(false)
-  const [processing, setProcessing] = useState(false)
-  const [scanning, setScanning] = useState(false)
   const [selectedDraftIds, setSelectedDraftIds] = useState<Set<string>>(new Set())
   const [scheduleDialogOpen, setScheduleDialogOpen] = useState(false)
   const [scheduling, setScheduling] = useState(false)
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(false)
   const [listSortKey, setListSortKey] = useState<ListSortKey>('type')
   const [listSortDir, setListSortDir] = useState<'asc' | 'desc'>('asc')
-  const fileInputRef = useRef<HTMLInputElement>(null)
-  const rawInputRef = useRef<HTMLInputElement>(null)
-  const router = useRouter()
 
   const toggleListSort = (k: ListSortKey) => {
     if (k === listSortKey) setListSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
@@ -939,61 +870,6 @@ export function OutreachWorkspace({ section }: { section: Section }) {
   useEffect(() => {
     if (filter === 'scheduled') loadScheduled()
   }, [filter, loadScheduled])
-
-  // Shared ingest core: takes any text blob (pasted or read from a file),
-  // hands it to the server action (which regex-extracts emails regardless of
-  // separators/columns), then reports the result.
-  const ingest = useCallback(
-    async (text: string, onSuccess?: () => void) => {
-      if (!companyId || !text.trim()) return
-      // New prospects join the currently selected campaign ('all'/'none' → pool).
-      const target = campaignFilter !== 'all' && campaignFilter !== 'none' ? campaignFilter : null
-      const r = await ingestProspects(companyId, text, target)
-      if (!r.ok) return pushToast(r.error, 'error')
-      onSuccess?.()
-      pushToast(
-        `Added ${r.data.added}. ${r.data.duplicates} duplicate(s), ${r.data.invalid} invalid` +
-          (r.data.undeliverable > 0 ? `, ${r.data.undeliverable} undeliverable (no mail server)` : '') +
-          '.',
-      )
-      refresh()
-    },
-    [companyId, campaignFilter, refresh, pushToast],
-  )
-
-  const handleIngest = useCallback(() => ingest(raw, () => setRaw('')), [ingest, raw])
-
-  const handleFileUpload = useCallback(
-    async (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0]
-      e.target.value = '' // reset so the same file can be re-selected
-      if (!file) return
-      const text = await file.text()
-      await ingest(text)
-    },
-    [ingest],
-  )
-
-  // Chunked run: processes the queue 5 at a time, updating the progress panel
-  // and the live list after each chunk, until the queue drains. This both shows
-  // progress and lets lists larger than the per-call cap finish in one click.
-  // Wave-based: enrich one buffer's worth (~3 days of send capacity) per click so
-  // time-sensitive facts stay fresh. The cron tops up automatically too; click
-  // again (or wait) to enrich the next wave.
-  const handleRun = useCallback(async () => {
-    if (!companyId) return
-    setRunning(true)
-    const r = await enrichWaveNow(companyId)
-    setRunning(false)
-    if (!r.ok) return pushToast(r.error, 'error')
-    const { enriched, drafted, skipped, remaining, cost_usd, note } = r.data
-    pushToast(
-      enriched === 0
-        ? `Nothing enriched${note ? ` — ${note}` : ''}.`
-        : `Enriched ${enriched} (${drafted} personalized, ${skipped} template). ${remaining} left for later waves. ${fmtUsd(cost_usd)} this run.`,
-    )
-    refresh()
-  }, [companyId, refresh, pushToast])
 
   const handleMarkExported = useCallback(
     async (ids: string[]) => {
@@ -1030,40 +906,6 @@ export function OutreachWorkspace({ section }: { section: Section }) {
   const c = snapshot?.counts
   const current = lists[filter]
   const selected = current.find((p) => p.id === selectedId) ?? current[0] ?? null
-
-  const handleProcessQueue = async () => {
-    if (!companyId) return
-    setProcessing(true)
-    const r = await processSendQueue(companyId)
-    setProcessing(false)
-    if (!r.ok) return pushToast(r.error, 'error')
-    pushToast(
-      `Sent ${r.data.sent}${r.data.failed ? `, ${r.data.failed} failed` : ''}.` +
-        (r.data.recovered ? ` Recovered ${r.data.recovered} send${r.data.recovered === 1 ? '' : 's'} stuck from an interrupted run — marked failed, verify in Gmail Sent before re-queuing.` : ''),
-      r.data.failed || r.data.recovered ? 'error' : 'info',
-    )
-    refresh()
-  }
-
-  const handleScanReplies = async () => {
-    if (!companyId) return
-    setScanning(true)
-    const r = await scanRepliesNow(companyId)
-    setScanning(false)
-    if (!r.ok) return pushToast(r.error, 'error')
-    const { replied, bounced, unsubscribed, skipped } = r.data
-    if (replied === 0 && bounced === 0 && unsubscribed === 0) {
-      pushToast(`No new replies or bounces${skipped ? ` (${skipped})` : ''}.`)
-    } else {
-      const optPart = unsubscribed > 0 ? `, ${unsubscribed} opt-out${unsubscribed === 1 ? '' : 's'}` : ''
-      pushToast(
-        `Found ${replied} repl${replied === 1 ? 'y' : 'ies'}, ${bounced} bounce${bounced === 1 ? '' : 's'}${optPart}.` +
-          (unsubscribed > 0 ? ' Opt-outs were flagged and suppressed from sending.' : ''),
-        unsubscribed > 0 ? 'error' : 'info',
-      )
-    }
-    refresh()
-  }
 
   const toggleDraft = (id: string) => {
     setConfirmBulkDelete(false)
@@ -1115,199 +957,13 @@ export function OutreachWorkspace({ section }: { section: Section }) {
   const countFor = (f: Filter): number => (f === 'scheduled' ? c?.queued ?? 0 : lists[f].length)
 
   return (
-    <div className="outreach-ws" style={{ height: '100%', display: 'flex', flexDirection: 'column', gap: 12, minHeight: 0 }}>
-      {/* Inline styles can't express media queries, so the responsive bits live
-          here: the two-pane grid stacks below 700px and touch targets grow. */}
-      <style>{`
-        .outreach-split { display: grid; grid-template-columns: minmax(0, 300px) minmax(0, 1fr); }
-        @media (max-width: 700px) {
-          /* The app shell hands the workspace a fixed height, but on a phone the
-             wrapped header/metrics/tabs eat nearly all of it. main scrolls, so
-             release the height (!important beats the inline style; flex-shrink 0
-             stops the page wrapper squeezing it back) and let the page grow: the
-             list caps at 38vh and scrolls, the detail pane runs at natural height. */
-          .outreach-ws { height: auto !important; flex-shrink: 0; }
-          .outreach-split { grid-template-columns: minmax(0, 1fr); }
-          .outreach-split > :first-child { max-height: 38vh; }
-          .outreach-ws button { min-height: 40px; }
-          .outreach-ws input:not([type="checkbox"]):not([type="file"]) { min-height: 40px; }
-        }
-      `}</style>
-
-      {/* First-run guidance. Hides itself once setup is complete. */}
-      {companyId && (
-        <SetupChecklist
-          companyId={companyId}
-          refreshKey={setupKey}
-          onAction={(action) => {
-            if (action === 'sending_settings') setSendingModalOpen(true)
-            else if (action === 'offer_profile') router.push('/settings/offer')
-            else if (action === 'connections') router.push('/settings/connections')
-            else if (action === 'add_prospects') rawInputRef.current?.focus()
-          }}
-        />
-      )}
-
-      {/* Pipeline-stopping states. Each of these silently halts sends/scans, so
-          they go first — above everything else, impossible to miss. */}
-      {snapshot?.sending?.gmail && snapshot.sending.gmail.status !== 'connected' && (
-        <Banner color="#b04545">
-          ⚠ Gmail connection {snapshot.sending.gmail.status === 'not_connected' ? 'missing' : `in ${snapshot.sending.gmail.status} state`} — sending and reply detection are stopped
-          {snapshot.sending.gmail.last_error ? `: ${snapshot.sending.gmail.last_error}` : ''}. Reconnect Gmail in Settings → Connections.
-        </Banner>
-      )}
-      {snapshot?.sending?.pause_reason === 'bounce_rate' && !snapshot.sending.active && (
-        <Banner color="#e0a060">
-          ⚠ Sending auto-paused — bounce rate hit {Math.round((snapshot.sending.bounce_rate_7d ?? 0) * 100)}% over the last 7 days. Clean the list, then re-enable in <button onClick={() => setSendingModalOpen(true)} style={{ ...btnGhost('#e0a060'), padding: '2px 8px' }}>Sending</button>.
-        </Banner>
-      )}
-      {snapshot?.sending?.pause_reason === 'manual' && !snapshot.sending.active && (c?.queued ?? 0) > 0 && (
-        <Banner color="#e0a060">
-          ⚠ Sending is off — {c!.queued} queued email{c!.queued === 1 ? '' : 's'} will not go out until you re-enable it in <button onClick={() => setSendingModalOpen(true)} style={{ ...btnGhost('#e0a060'), padding: '2px 8px' }}>Sending</button>.
-        </Banner>
-      )}
-
-      {/* Header: title + intake */}
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-        <h1 style={{ fontSize: 16, fontWeight: 700, color: 'var(--app-text)', margin: 0, marginRight: 4, letterSpacing: 0.2 }}>Outreach</h1>
-        <select
-          value={campaignFilter}
-          onChange={(e) => {
-            const v = e.target.value
-            if (v === '__manage') {
-              setCampaignsModalOpen(true)
-              return // don't change the filter; the controlled value snaps back
-            }
-            setCampaignFilter(v)
-            setSelectedId(null)
-            setSelectedDraftIds(new Set())
-          }}
-          title="Scope the workspace to one campaign. New prospects join the selected campaign."
-          style={{ background: 'var(--app-input)', border: `1px solid ${BORDER}`, borderRadius: 6, color: 'var(--app-text)', fontSize: 12, padding: '7px 8px', maxWidth: 180 }}
-        >
-          <option value="all">All campaigns</option>
-          {campaigns.filter((cm) => cm.status === 'active').map((cm) => (
-            <option key={cm.id} value={cm.id}>{cm.name} ({campaignStats.get(cm.id)?.prospects ?? 0})</option>
-          ))}
-          {campaigns.filter((cm) => cm.status === 'archived').map((cm) => (
-            <option key={cm.id} value={cm.id}>{cm.name} (archived)</option>
-          ))}
-          {campaigns.length > 0 && <option value="none">No campaign</option>}
-          <option value="__manage">Manage campaigns…</option>
-        </select>
-        <input
-          value={raw}
-          onChange={(e) => setRaw(e.target.value)}
-          ref={rawInputRef}
-          placeholder="Paste contact emails (any separator)…"
-          style={{ flex: 1, minWidth: 220, background: 'var(--app-input)', border: `1px solid ${BORDER}`, borderRadius: 6, color: 'var(--app-text)', fontSize: 12, padding: '8px 10px' }}
-        />
-        <button onClick={handleIngest} disabled={!raw.trim()} style={btn(ACCENT)}>Add prospects</button>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".csv,.txt,.tsv,text/csv,text/plain,text/tab-separated-values"
-          onChange={handleFileUpload}
-          style={{ display: 'none' }}
-        />
-        <button onClick={() => fileInputRef.current?.click()} style={btnGhost()} title="Upload a CSV or TXT file of email addresses">Upload file</button>
-        <button onClick={() => setSendingModalOpen(true)} style={btnGhost()}>Sending</button>
-        <button onClick={() => setTemplatesModalOpen(true)} style={btnGhost()} title="Manage the fallback templates rotated for prospects that can't be personalized, and see their performance">Manage templates</button>
-        <button onClick={handleScanReplies} disabled={scanning} style={btnGhost()} title="Check Gmail for replies and bounces, then update outcomes">
-          {scanning ? 'Scanning…' : 'Scan replies'}
-        </button>
-        <button onClick={handleProcessQueue} disabled={processing || (c?.queued ?? 0) === 0} style={btnGhost(ACCENT)}>
-          {processing ? 'Processing…' : `Process queue${c?.queued ? ` (${c.queued})` : ''}`}
-        </button>
-        <button onClick={handleRun} disabled={running || (c?.new ?? 0) === 0} style={btnGhost(ACCENT)} title="Enrich one wave (~3 days of send capacity). Keeps federal-award facts fresh instead of draining the whole list at once.">
-          {running ? 'Enriching…' : `Enrich wave${c?.new ? ` (${c.new})` : ''}`}
-        </button>
-      </div>
-
-      {/* Status bar */}
-      {c && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 8 }}>
-          <Metric label="To review" value={lists.review.length} accent={ACCENT} />
-          <Metric label="Prospects" value={c.total} />
-          <Metric label="Sent" value={c.sent} accent="#378ADD" />
-          <Metric label="Queued" value={c.queued} accent={c.queued > 0 ? ACCENT : undefined} />
-          {/* Today against the cap. The warmup ramp used to be invisible math:
-              the queue would go quiet mid-morning with nothing explaining why. */}
-          {snapshot?.sending && (
-            <Metric
-              label="Today"
-              value={`${snapshot.sending.sent_today}/${snapshot.sending.effective_daily_cap}`}
-              accent={snapshot.sending.sent_today >= snapshot.sending.effective_daily_cap ? '#e0a060' : undefined}
-              // Kept short: the tile ellipsizes its hint (full text on hover).
-              hint={
-                !snapshot.sending.active
-                  ? 'sending is off'
-                  : snapshot.sending.sent_today >= snapshot.sending.effective_daily_cap
-                    ? 'resumes tomorrow'
-                    : snapshot.sending.warmup_day
-                      ? `warmup day ${snapshot.sending.warmup_day} → ${snapshot.sending.daily_send_limit}`
-                      : 'daily limit'
-              }
-            />
-          )}
-          <Metric label="Replied" value={c.replied} accent="#1D9E75" />
-          <Metric label="Reply rate" value={fmtPct(snapshot?.reply_rate ?? 0, c.sent)} />
-          {/* Denominator is tracked sends, not all sends: emails sent before
-              open tracking existed carry no pixel and would drag this to zero. */}
-          <Metric
-            label="Open rate"
-            value={fmtPct(snapshot?.opens.rate ?? 0, snapshot?.opens.tracked ?? 0)}
-            hint={snapshot?.opens.tracked ? `${snapshot.opens.opened} of ${snapshot.opens.tracked} tracked` : 'no tracked sends yet'}
-          />
-          <Metric label="API cost" value={fmtUsd(snapshot?.cost_usd_total ?? 0)} />
-        </div>
-      )}
-      {running && progress && (
-        <div style={{ border: `1px solid ${BORDER}`, borderRadius: 8, padding: 10, background: CARD }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--app-text-2)', marginBottom: 6 }}>
-            <span>Enriching {progress.processed}{progress.total ? ` of ${progress.total}` : ''}…</span>
-            <span style={{ color: MUTED }}>{progress.drafted} personalized · {progress.skipped} template · {fmtUsd(progress.cost)} this run</span>
-          </div>
-          <div style={{ height: 6, background: 'var(--app-input)', borderRadius: 3, overflow: 'hidden' }}>
-            <div style={{ height: '100%', width: `${progress.total ? Math.round((progress.processed / progress.total) * 100) : 0}%`, background: ACCENT, transition: 'width 0.3s' }} />
-          </div>
-        </div>
-      )}
-
-      {loading && !snapshot && (
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, color: MUTED }}>Loading…</div>
-      )}
-      {!loading && prospects.length === 0 && (
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: 16 }}>
-          <div style={{ maxWidth: 460 }}>
-            <div style={{ fontSize: 14, color: 'var(--app-text-2)', marginBottom: 6 }}>
-              {campaignFilter === 'all' ? 'No prospects yet' : 'No prospects in this campaign yet'}
-            </div>
-            <div style={{ fontSize: 12, color: MUTED, lineHeight: 1.6 }}>
-              Paste or upload contact emails above{campaignFilter !== 'all' && campaignFilter !== 'none' ? ' — they’ll join this campaign' : ''}.
-              Enrichment then researches each company’s federal awards, writes a personalized email, and fact-checks it
-              against what it found. Anything it can’t personalize gets one of your templates instead.
-            </div>
-            <div style={{ fontSize: 11, color: MUTED, marginTop: 10, lineHeight: 1.6 }}>
-              You approve the personalized drafts; nothing sends until you turn sending on.
-            </div>
-          </div>
-        </div>
-      )}
-
-      {prospects.length > 0 && (
-        <>
+    <>
           <div style={{ display: 'flex', alignItems: 'center', borderBottom: `1px solid ${BORDER}` }}>
             {/* Sub-tabs, only where a section has more than one view. */}
             <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
               {sectionFilters.length > 1 && sectionFilters.map((f) => tab(f, FILTER_LABEL[f], countFor(f)))}
             </div>
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, paddingBottom: 4, alignItems: 'center' }}>
-              {filter === 'templates' && (
-                <button onClick={() => setTemplatesModalOpen(true)} style={btn(ACCENT)} title="Create, edit, activate, and track your fallback templates">
-                  Manage templates
-                </button>
-              )}
               {(filter === 'review' || filter === 'templates') && current.length > 0 && (
                 <button onClick={() => handleApproveAll(current.map((p) => p.draft!.id))} style={btn('#1D9E75')}>
                   Approve all ({current.length})
@@ -1471,26 +1127,6 @@ export function OutreachWorkspace({ section }: { section: Section }) {
             </div>
           </div>
           )}
-        </>
-      )}
-
-      {sendingModalOpen && companyId && (
-        <SendingSettingsModal companyId={companyId} onClose={() => setSendingModalOpen(false)} onSaved={refresh} />
-      )}
-
-      {templatesModalOpen && companyId && (
-        <TemplatesModal companyId={companyId} prospects={prospects} onClose={() => setTemplatesModalOpen(false)} onChanged={refresh} />
-      )}
-
-      {campaignsModalOpen && companyId && (
-        <CampaignsModal
-          companyId={companyId}
-          campaigns={campaigns}
-          stats={campaignStats}
-          onClose={() => setCampaignsModalOpen(false)}
-          onChanged={refresh}
-        />
-      )}
 
       {scheduleDialogOpen && (
         <ScheduleDialog
@@ -1500,23 +1136,6 @@ export function OutreachWorkspace({ section }: { section: Section }) {
           onClose={() => setScheduleDialogOpen(false)}
         />
       )}
-
-      {/* Toast stack: bottom-right, above everything. Info auto-dismisses in 4s;
-          errors keep their red border and stay until the × is tapped. */}
-      {toasts.length > 0 && (
-        <div style={{ position: 'fixed', bottom: 16, right: 16, zIndex: 100, display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 'min(360px, calc(100vw - 32px))' }}>
-          {toasts.map((t) => (
-            <div key={t.id} style={{ display: 'flex', gap: 10, alignItems: 'flex-start', fontSize: 12, lineHeight: 1.45, color: t.kind === 'error' ? '#d98a8a' : 'var(--app-text-2)', background: CARD, border: `1px solid ${t.kind === 'error' ? '#b04545' : BORDER}`, borderRadius: 8, padding: '10px 12px', boxShadow: '0 6px 20px rgba(0, 0, 0, 0.3)' }}>
-              <span style={{ flex: 1 }}>{t.text}</span>
-              <button
-                onClick={() => dismissToast(t.id)}
-                aria-label="Dismiss"
-                style={{ background: 'transparent', border: 'none', color: MUTED, cursor: 'pointer', fontSize: 15, lineHeight: 1, padding: '0 2px', minHeight: 'auto' }}
-              >×</button>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
+    </>
   )
 }
