@@ -52,10 +52,22 @@ export async function saveSendSettings(
   }
   // Derive warmup anchor + pause reason from an active toggle.
   const derived: Partial<SendSettings> = {}
+
+  // Switching to a different sending mailbox restarts the warmup ramp. The
+  // anchor is per-company, so without this a brand-new mailbox inherits the old
+  // one's fully-ramped cap and sends at full volume on day one — the fastest
+  // way to burn a fresh sender's reputation.
+  if (typeof patch.sender_email === 'string') {
+    const { data: prev } = await supabase.from('outreach_settings').select('sender_email').eq('company_id', companyId).maybeSingle()
+    const before = prev?.sender_email?.trim().toLowerCase() ?? ''
+    const after = patch.sender_email.trim().toLowerCase()
+    if (before && after && before !== after) derived.warmup_started_at = new Date().toISOString()
+  }
+
   if (patch.active === true) {
     derived.pause_reason = null // re-enabling clears any auto-pause
     const { data: cur } = await supabase.from('outreach_settings').select('warmup_started_at').eq('company_id', companyId).maybeSingle()
-    if (!cur?.warmup_started_at) {
+    if (!derived.warmup_started_at && !cur?.warmup_started_at) {
       // Anchor the warmup ramp at the first-ever send, or now if none yet.
       const { data: first } = await supabase
         .from('outreach_sends')
