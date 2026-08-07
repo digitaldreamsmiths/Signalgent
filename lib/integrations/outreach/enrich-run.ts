@@ -15,6 +15,7 @@ import type { Database, Json } from '@/lib/types/database.types'
 import { runPipeline, type PipelineOutcome } from './pipeline'
 import { fetchAllPages } from './fetch-all'
 import { loadOfferProfile, DEFAULT_OFFER_PROFILE, type OfferProfile } from './offer-profile'
+import { enrichmentHeadroom } from '@/lib/billing/billing'
 import { applyGreeting, fetchStoredContactNames, resolveContactName } from './contact-name'
 import { autoQueueDraftSend } from './send/queue'
 import { buildTemplateDraft, renderTemplate } from './template'
@@ -241,18 +242,34 @@ export interface EnrichBatchResult {
   skipped: number
   remaining: number
   cost_usd: number
+  /** Set when the monthly plan quota stopped the run, so the UI can say so
+   * rather than reporting a silent "nothing to do". */
+  quota_exhausted?: boolean
 }
 
 /** Run the pipeline over up to `limit` oldest `new` prospects (FIFO). Idempotent:
  * processed prospects leave 'new', so partial runs resume cleanly next call. */
 export async function runEnrichmentBatch(supabase: DB, companyId: string, limit: number, userId: string | null): Promise<EnrichBatchResult> {
+  // Plan quota first: enrichment is the LLM spend, so an exhausted month has to
+  // stop before any calls are made. Infinity for unmanaged/uncapped tenants.
+  const headroom = await enrichmentHeadroom(supabase, companyId)
+  if (headroom <= 0) {
+    await backfillTemplateDrafts(supabase, companyId)
+    const { count } = await supabase
+      .from('outreach_prospects')
+      .select('id', { count: 'exact', head: true })
+      .eq('company_id', companyId)
+      .eq('status', 'new')
+    return { processed: 0, drafted: 0, skipped: 0, remaining: count ?? 0, cost_usd: 0, quota_exhausted: true }
+  }
+
   const { data: pending, error } = await supabase
     .from('outreach_prospects')
     .select('id, email')
     .eq('company_id', companyId)
     .eq('status', 'new')
     .order('created_at', { ascending: true })
-    .limit(Math.max(1, Math.min(limit, RUN_BATCH)))
+    .limit(Math.max(1, Math.min(limit, RUN_BATCH, headroom)))
 
   if (error || !pending || pending.length === 0) {
     await backfillTemplateDrafts(supabase, companyId)
@@ -298,6 +315,13 @@ export async function runEnrichmentBatchForIds(
 ): Promise<EnrichBatchResult & { processedIds: string[] }> {
   if (ids.length === 0) return { processed: 0, drafted: 0, skipped: 0, remaining: 0, cost_usd: 0, processedIds: [] }
 
+  // Same quota gate as the wave path — a hand-picked "Process selected" spends
+  // the same LLM budget as an automatic run.
+  const headroom = await enrichmentHeadroom(supabase, companyId)
+  if (headroom <= 0) {
+    return { processed: 0, drafted: 0, skipped: 0, remaining: ids.length, cost_usd: 0, processedIds: [], quota_exhausted: true }
+  }
+
   const { data: pending, error } = await supabase
     .from('outreach_prospects')
     .select('id, email')
@@ -305,7 +329,7 @@ export async function runEnrichmentBatchForIds(
     .eq('status', 'new')
     .in('id', ids)
     .order('created_at', { ascending: true })
-    .limit(Math.max(1, Math.min(limit, RUN_BATCH)))
+    .limit(Math.max(1, Math.min(limit, RUN_BATCH, headroom)))
 
   if (error || !pending || pending.length === 0) {
     await backfillTemplateDrafts(supabase, companyId)
@@ -371,11 +395,13 @@ export async function enrichToBuffer(supabase: DB, companyId: string, userId: st
   let cost = 0
   let remaining = 0
   let ranAny = false
+  let quotaExhausted = false
   for (let guard = 0; buffer < target && guard < 50; guard++) {
     const need = Math.min(target - buffer, RUN_BATCH)
     const r = await runEnrichmentBatch(supabase, companyId, need, userId)
     ranAny = true
     remaining = r.remaining
+    if (r.quota_exhausted) quotaExhausted = true
     if (r.processed === 0) break
     enriched += r.processed
     drafted += r.drafted
@@ -400,6 +426,10 @@ export async function enrichToBuffer(supabase: DB, companyId: string, userId: st
     skipped,
     remaining,
     cost_usd: cost,
-    note: enriched === 0 ? (remaining === 0 ? 'no new prospects' : `buffer full (${buffer}/${target} ready)`) : undefined,
+    note: quotaExhausted
+      ? 'monthly enrichment limit reached for this plan'
+      : enriched === 0
+        ? (remaining === 0 ? 'no new prospects' : `buffer full (${buffer}/${target} ready)`)
+        : undefined,
   }
 }

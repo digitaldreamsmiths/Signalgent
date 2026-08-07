@@ -11,6 +11,7 @@ import type { SendSettings } from '../types'
 import { getProvider, type ProviderName } from './provider'
 import { listUnsubscribeHeaders, openPixelUrl, textToHtml, unsubscribeUrl } from './tracking'
 import { fetchAllPages } from '../fetch-all'
+import { planDailySendCap } from '@/lib/billing/billing'
 
 type DB = SupabaseClient<Database>
 
@@ -171,9 +172,11 @@ function makeCapForDay(settings: SendSettings, tz: string): (w: Wall) => number 
   }
 }
 
-/** The effective daily cap for "today" — used for buffer sizing and the UI. */
-export function getEffectiveDailyCap(settings: SendSettings, now: Date = new Date()): number {
-  return makeCapForDay(settings, settings.timezone)(wallParts(now, settings.timezone))
+/** The effective daily cap for "today" — used for buffer sizing and the UI.
+ * `planMax` is the billing plan's ceiling (Infinity when uncapped/unmanaged);
+ * the smaller of the warmup ramp and the plan wins. */
+export function getEffectiveDailyCap(settings: SendSettings, now: Date = new Date(), planMax: number = Infinity): number {
+  return Math.min(makeCapForDay(settings, settings.timezone)(wallParts(now, settings.timezone)), planMax)
 }
 
 /**
@@ -252,7 +255,11 @@ export async function nextSlot(supabase: DB, companyId: string, settings: SendSe
   // over weekends, past-window times, and days already at their (warmup) cap; on a
   // usable day, sit min_gap past whatever is already scheduled that day so a fresh
   // "Queue to send" lands as soon as there's capacity instead of behind the batch.
-  const capForDay = makeCapForDay(settings, tz)
+  // Plan ceiling clamps the warmup ramp, so scheduling never lays out more
+  // sends per day than the tenant is entitled to.
+  const planMax = await planDailySendCap(supabase, companyId)
+  const rampForDay = makeCapForDay(settings, tz)
+  const capForDay = (w: Wall) => Math.min(rampForDay(w), planMax)
   let slot = new Date(now.getTime())
   for (let i = 0; i < 500; i++) {
     const w = wallParts(slot, tz)
@@ -318,7 +325,11 @@ export async function computeBatchSlots(
     counts.set(key, (counts.get(key) ?? 0) + 1)
   }
 
-  const capForDay = makeCapForDay(settings, tz)
+  // Plan ceiling clamps the warmup ramp, so scheduling never lays out more
+  // sends per day than the tenant is entitled to.
+  const planMax = await planDailySendCap(supabase, companyId)
+  const rampForDay = makeCapForDay(settings, tz)
+  const capForDay = (w: Wall) => Math.min(rampForDay(w), planMax)
   const slots: string[] = []
   for (let i = 0; i < count; i++) {
     // Roll forward over any day that's already at capacity.
