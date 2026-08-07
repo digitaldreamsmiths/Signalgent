@@ -2411,3 +2411,37 @@ Note the existing `lib/integrations/stripe/` is Stripe *Connect* — reading a c
 1. Apply `supabase/migrations/20260811000000_company_billing.sql` when convenient. Nothing changes on apply — every tenant stays unmanaged until a row is inserted deliberately.
 2. **The plan numbers are a starting point, not a decision.** Prices come from the spec's $99–299 target; limits were sized so Starter comfortably covers the current live workload (45 sends/day, 115 enrichments/month, 4,933 prospects). They live in one file and are meant to be tuned.
 3. Chunk 2 (Stripe checkout + webhooks) needs a Stripe account with products/prices and `STRIPE_SECRET_KEY` / webhook secret.
+
+---
+
+## Session 42 — Phase 5 chunk 1: IA grouping (ten flat tabs → four sections)
+
+### Why this shape, and not the sidebar yet
+
+The spec's Phase 5 calls for a sidebar with routes (Dashboard / Campaigns / Contacts / Inbox / Analytics / Settings). Sized before starting: `outreach-widgets.tsx` is ~1,600 lines of one stateful component (snapshot, filter, selection, modals, toasts, scheduled sends), and `getOutreachSnapshot` loads *every* prospect — 4,933 today. Splitting that across routes needs a shared provider first, or each route re-fetches the whole workspace; done as one big-bang on a live sending product it is a lot of regression surface to land in a single pass.
+
+So Phase 5 goes in two stages. **This is stage 1: prove the grouping.** Same page, same snapshot, same components — only the navigation changes. Stage 2 promotes the sections to real routes behind a provider, and the section vocabulary introduced here is exactly what those routes will use.
+
+### The grouping
+
+Ten flat tabs read as ten unrelated things to check. Four sections read as a workflow:
+
+| Section | Views |
+| --- | --- |
+| **Pipeline** | To review · Templates · Needs review · Ready to email · Sent · All |
+| **Contacts** | Contacts |
+| **Inbox** | Replied · Bounced / opt-out |
+| **Schedule** | Scheduled |
+
+- Sections render as pills; sub-tabs appear underneath only where a section has more than one view (Contacts and Schedule show none).
+- **Badges are what wants attention, not totals** — Pipeline counts drafts awaiting review plus manual matches, Inbox counts replies still needing triage, Schedule counts the queue. A "Pipeline 4,933" badge would be noise. Zero badges are hidden entirely.
+- Switching sections lands on that section's first view and clears row/draft selection, so a stale selection can't survive into a different context.
+
+### Verification
+
+- In-browser across all four sections on the live workspace: Pipeline lands on To review with its six sub-tabs; Inbox groups Replied + Bounced (14) and lands on the reply inbox; Schedule shows the calendar with no sub-tab row and the bulk-select controls intact; Contacts badge reads 4,933.
+- `tsc` clean; eslint findings identical to `main`; no new console errors.
+
+### Observation for Eudon (not changed here)
+
+The Schedule calendar shows the 369 queued follow-ups laid out at 45/day straight across **Saturday and Sunday** (Aug 8–9 and 15–16). That comes from an inconsistency between the two scheduling paths: `nextSlot` (auto-queue) skips weekends explicitly, while `computeBatchSlots` (the "Schedule (N)" batch path) only rolls a day forward when it hits the daily cap and never checks the weekday. For B2B govcon outreach, Saturday-morning cold email is both less likely to be read and more likely to read as automated. Worth deciding whether the batch path should skip weekends like the drip path does — a small fix, deliberately not bundled into an IA change.
