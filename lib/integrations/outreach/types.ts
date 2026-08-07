@@ -105,6 +105,8 @@ export interface OutreachSendView {
   status: SendStatus
   scheduled_at: string | null
   sent_at: string | null
+  /** First tracked open (noise-filtered server-side; null = never, or untracked). */
+  opened_at: string | null
   error: string | null
 }
 

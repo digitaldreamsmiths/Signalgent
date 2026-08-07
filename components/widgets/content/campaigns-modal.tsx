@@ -11,15 +11,23 @@ const TEXT = 'var(--app-text)'
 const MUTED = 'var(--app-muted)'
 const ACCENT = '#D85A30'
 
+/** Client-derived funnel numbers for one campaign (built by the workspace). */
+export interface CampaignStats {
+  prospects: number
+  sent: number
+  replied: number
+  opened: number
+}
+
 const labelStyle: React.CSSProperties = { fontSize: 10, fontWeight: 600, color: MUTED, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4, display: 'block' }
 const inputStyle: React.CSSProperties = { width: '100%', background: INPUT, border: `1px solid ${BORDER}`, borderRadius: 6, color: TEXT, fontSize: 12, padding: '7px 9px' }
 const btnGhost = (color = 'var(--app-text-2)'): React.CSSProperties => ({ fontSize: 11, fontWeight: 600, color, background: 'transparent', border: `1px solid ${BORDER}`, borderRadius: 6, padding: '5px 10px', cursor: 'pointer' })
 
 /** Per-campaign editor row: rename, archive, and follow-up overrides
  * (blank/inherit = the company-level Sending settings value). */
-function CampaignRow({ campaign, count, companyId, onChanged, onError }: {
+function CampaignRow({ campaign, stats, companyId, onChanged, onError }: {
   campaign: OutreachCampaign
-  count: number
+  stats: CampaignStats | undefined
   companyId: string
   onChanged: () => void
   onError: (msg: string) => void
@@ -36,6 +44,8 @@ function CampaignRow({ campaign, count, companyId, onChanged, onError }: {
   }
 
   const archived = campaign.status === 'archived'
+  const s = stats ?? { prospects: 0, sent: 0, replied: 0, opened: 0 }
+  const replyRate = s.sent > 0 ? ` (${Math.round((s.replied / s.sent) * 100)}%)` : ''
   return (
     <div style={{ border: `1px solid ${BORDER}`, borderRadius: 8, padding: 10, display: 'flex', flexDirection: 'column', gap: 8, opacity: archived ? 0.6 : 1 }}>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -46,7 +56,6 @@ function CampaignRow({ campaign, count, companyId, onChanged, onError }: {
           style={{ ...inputStyle, flex: 1, fontWeight: 600 }}
           disabled={busy}
         />
-        <span style={{ fontSize: 10, color: MUTED, whiteSpace: 'nowrap' }}>{count} prospect{count === 1 ? '' : 's'}</span>
         <button
           disabled={busy}
           onClick={() => patch({ status: archived ? 'active' : 'archived' })}
@@ -55,6 +64,9 @@ function CampaignRow({ campaign, count, companyId, onChanged, onError }: {
         >
           {archived ? 'Restore' : 'Archive'}
         </button>
+      </div>
+      <div style={{ fontSize: 10, color: MUTED, fontFamily: 'var(--font-mono)' }}>
+        {s.prospects} prospect{s.prospects === 1 ? '' : 's'} · {s.sent} sent · {s.opened} opened · {s.replied} replied{replyRate}
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
         <div>
@@ -97,11 +109,11 @@ function CampaignRow({ campaign, count, companyId, onChanged, onError }: {
   )
 }
 
-export function CampaignsModal({ companyId, campaigns, countByCampaign, onClose, onChanged }: {
+export function CampaignsModal({ companyId, campaigns, stats, onClose, onChanged }: {
   companyId: string
   campaigns: OutreachCampaign[]
-  /** Prospect count per campaign id (from the snapshot). */
-  countByCampaign: Map<string, number>
+  /** Funnel numbers per campaign id, derived from the snapshot. */
+  stats: Map<string, CampaignStats>
   onClose: () => void
   onChanged: () => void
 }) {
@@ -156,7 +168,7 @@ export function CampaignsModal({ companyId, campaigns, countByCampaign, onClose,
           <CampaignRow
             key={c.id}
             campaign={c}
-            count={countByCampaign.get(c.id) ?? 0}
+            stats={stats.get(c.id)}
             companyId={companyId}
             onChanged={onChanged}
             onError={setError}

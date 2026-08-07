@@ -2204,3 +2204,23 @@ Until now every prospect lived in one global per-company pool — no way to run 
 ### Not in this chunk (per spec, later)
 
 Per-campaign stats/detail page, per-campaign template sets and offer profiles, bulk "move selected prospects to campaign" UI (the `assignProspectsToCampaign` action exists, unwired), campaign scoping for the enrichment wave.
+
+---
+
+## Session 36 — Phase 1 chunk 3: per-campaign stats + move-to-campaign UI
+
+Closes the two loose ends from chunk 2 (migration applied and verified live this session — table + `campaign_id` column confirmed by read-only probe before building).
+
+### Changes
+
+| File | Change |
+| --- | --- |
+| `lib/integrations/outreach/actions.ts`, `types.ts` | Snapshot's sends select gains `opened_at`; `OutreachSendView.opened_at` exposed (first tracked open, noise-filtered server-side). |
+| `components/widgets/content/outreach-widgets.tsx` | Per-campaign funnel derived client-side from the snapshot (`CampaignStats`: prospects / sent / opened / replied) — drives the selector's counts and the manage modal. ContactsTable gains a **Campaign column** (sortable, shown only when campaigns exist) and a **"Move to campaign…"** bulk action on the selection bar (active campaigns + "No campaign"), wiring the existing `assignProspectsToCampaign`. |
+| `components/widgets/content/campaigns-modal.tsx` | Each campaign row now shows its funnel: `N prospects · S sent · O opened · R replied (rate%)`. Same open-tracking caveat as the company-wide rate: pre-tracking sends undercount opens. |
+
+### Verification (live, ABC Corp tenant, post-migration)
+
+- Created campaign "Pilot list" through the modal (real insert — the migration works), stats line rendered.
+- Selected the tenant's one contact → "Move to campaign…" → Pilot list: Campaign column shows it, the workspace selector updated to "Pilot list (1)", and filtering by it scoped every tab correctly (Contacts 1 / Ready to email 1). "Pilot list" left in place as a working example.
+- `tsc` clean; eslint identical to `main`; no console errors.

@@ -208,7 +208,7 @@ export async function getOutreachSnapshot(companyId: string): Promise<OutreachSn
       supabase.from('api_usage').select('cost_usd').eq('company_id', companyId).like('feature', 'outreach:%')
         .order('id').range(from, to)),
     fetchAllPages((from, to) =>
-      supabase.from('outreach_sends').select('id, draft_id, status, scheduled_at, sent_at, error').eq('company_id', companyId)
+      supabase.from('outreach_sends').select('id, draft_id, status, scheduled_at, sent_at, opened_at, error').eq('company_id', companyId)
         .order('created_at', { ascending: false }).order('id').range(from, to)),
     loadCampaigns(supabase, companyId),
   ])
@@ -221,7 +221,7 @@ export async function getOutreachSnapshot(companyId: string): Promise<OutreachSn
   for (const s of sends ?? []) {
     if (s.status === 'queued') queued += 1
     if (!sendByDraft.has(s.draft_id)) {
-      sendByDraft.set(s.draft_id, { id: s.id, status: s.status, scheduled_at: s.scheduled_at, sent_at: s.sent_at, error: s.error })
+      sendByDraft.set(s.draft_id, { id: s.id, status: s.status, scheduled_at: s.scheduled_at, sent_at: s.sent_at, opened_at: s.opened_at ?? null, error: s.error })
     }
   }
 
