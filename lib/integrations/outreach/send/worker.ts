@@ -177,6 +177,33 @@ export function getEffectiveDailyCap(settings: SendSettings, now: Date = new Dat
 }
 
 /**
+ * UTC instants bounding "today" in the company's timezone — the window the
+ * daily cap is actually measured over. Exported so the snapshot can count
+ * today's sends against the cap without duplicating the timezone maths.
+ */
+export function todayBounds(settings: SendSettings, now: Date = new Date()): { startIso: string; endIso: string } {
+  const tz = settings.timezone
+  const w = wallParts(now, tz)
+  const start = fromZonedWall(w.y, w.mo, w.d, 0, 0, tz)
+  const end = new Date(start.getTime() + 24 * 3600_000)
+  return { startIso: start.toISOString(), endIso: end.toISOString() }
+}
+
+/**
+ * How far into the warmup ramp today is: 1-based sending-weekday index from the
+ * anchor, or null when warmup is off or already at the full limit. Drives the
+ * "day N of the ramp" hint, so a user can see why today's cap is below the
+ * limit they configured.
+ */
+export function warmupDayIndex(settings: SendSettings, now: Date = new Date()): number | null {
+  if (!settings.warmup_enabled) return null
+  if (getEffectiveDailyCap(settings, now) >= settings.daily_send_limit) return null
+  const tz = settings.timezone
+  const anchor = wallParts(settings.warmup_started_at ? new Date(settings.warmup_started_at) : now, tz)
+  return Math.max(1, countWeekdaysInclusive(wallDayNum(anchor), wallDayNum(wallParts(now, tz)), anchor.weekday))
+}
+
+/**
  * The next available send slot: after the last planned send + min gap, clamped
  * into the Mon–Fri business-hours window, rolling to the next day once the daily
  * cap is hit. Returns an ISO string.

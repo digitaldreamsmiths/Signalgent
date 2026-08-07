@@ -240,6 +240,13 @@ export interface OutreachSnapshot {
     pause_reason: 'manual' | 'bounce_rate' | null
     /** Today's effective daily cap (warmup-ramped). */
     effective_daily_cap: number
+    /** The configured ceiling the warmup ramp is climbing toward. */
+    daily_send_limit: number
+    /** Sends completed so far during today (company timezone). */
+    sent_today: number
+    /** 1-based sending-weekday index into the warmup ramp, or null when warmup
+     * is off or already at the full limit. */
+    warmup_day: number | null
     /** Bounce rate over the last 7 days, as a fraction. */
     bounce_rate_7d: number
     provider: 'dry_run' | 'gmail' | 'resend'
