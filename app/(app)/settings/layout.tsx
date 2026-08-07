@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation'
 const NAV_ITEMS = [
   { label: 'Connections', href: '/settings/connections' },
   { label: 'Offer profile', href: '/settings/offer' },
+  { label: 'Plan & usage', href: '/settings/plan' },
 ]
 
 export default function SettingsLayout({ children }: { children: React.ReactNode }) {
@@ -15,14 +16,16 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
     <div style={{ maxWidth: 860, margin: '0 auto' }}>
       {/* Page header */}
       <div style={{ marginBottom: 24 }}>
+        {/* Theme vars, not fixed hex: these were dark-only, which left the
+            heading near-invisible on a light background. */}
         <Link
           href="/outreach"
-          style={{ display: 'inline-block', fontSize: 12, color: '#888', textDecoration: 'none', marginBottom: 10 }}
+          style={{ display: 'inline-block', fontSize: 12, color: 'var(--app-muted)', textDecoration: 'none', marginBottom: 10 }}
         >
           ← Back to Outreach
         </Link>
-        <h1 style={{ fontSize: 20, fontWeight: 500, color: '#e0e0e0', margin: 0 }}>Settings</h1>
-        <p style={{ fontSize: 12, color: '#555', marginTop: 4 }}>
+        <h1 style={{ fontSize: 20, fontWeight: 500, color: 'var(--app-text)', margin: 0 }}>Settings</h1>
+        <p style={{ fontSize: 12, color: 'var(--app-muted)', marginTop: 4 }}>
           Manage your integrations, workspace, and preferences
         </p>
       </div>
@@ -42,8 +45,8 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
                   fontSize: 12,
                   borderRadius: 6,
                   textDecoration: 'none',
-                  color: active ? '#e0e0e0' : '#555',
-                  background: active ? '#1a1a1a' : 'transparent',
+                  color: active ? 'var(--app-text)' : 'var(--app-muted)',
+                  background: active ? 'var(--app-card)' : 'transparent',
                   marginBottom: 2,
                   transition: 'color 150ms, background 150ms',
                 }}

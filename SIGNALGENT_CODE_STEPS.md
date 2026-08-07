@@ -2374,3 +2374,40 @@ Real bounce notices were rendering as `Your message wasn&#39;t delivered` — Gm
 ### Not in this chunk (per spec)
 
 Composing replies in-app, and a full unified inbox (message bodies live in Gmail; we hold previews only).
+
+---
+
+## Session 41 — Phase 4 chunk 1: plans, entitlements, and usage metering
+
+Phase 4 splits in two. This is the **entitlement layer** — plan definitions, limits, enforcement, and usage visibility — which is valuable on its own (it is also what caps runaway LLM spend) and is precisely the thing Stripe will later write into. **Stripe checkout + webhooks is chunk 2** and needs a Stripe account, products, and keys.
+
+Note the existing `lib/integrations/stripe/` is Stripe *Connect* — reading a customer's own revenue for Commerce mode. Unrelated to billing us; the new code lives under `lib/billing/`.
+
+### The rule that made this safe to ship
+
+**No billing row = unlimited, not "trial."** A default-to-trial would have throttled SourceGent's live sending from 45/day to 5/day the moment the migration landed. Any read failure (including the table not existing yet) resolves to unlimited too: over-delivering on a quota is a support conversation, silently halting a customer's outreach is a churn event.
+
+### Changes
+
+| File | Change |
+| --- | --- |
+| `supabase/migrations/20260811000000_company_billing.sql` (NEW) | `company_billing` — plan key, status, trial end, and the (unused-until-chunk-2) Stripe columns. RLS is **select-only**: plan changes come from webhooks or an admin, never the browser. |
+| `lib/billing/plans.ts` (NEW) | Plan table as code (Trial free / Starter $99 / Growth $299) plus `UNLIMITED_PLAN`. Client-safe, so the pricing UI reads the same numbers the server enforces. |
+| `lib/billing/billing.ts` (NEW) | `loadBilling` (tolerant → unmanaged), `effectiveLimits` (one place where "lapsed" means 0 sends / 0 enrichments while keeping the data), `loadUsage`, `enrichmentHeadroom`, `planDailySendCap`, and a UTC `monthStartIso` so a quota month is the same length for everyone and can't be shifted by changing a timezone setting. |
+| `send/worker.ts` | `getEffectiveDailyCap` takes a plan ceiling; `nextSlot` and `computeBatchSlots` load it themselves (they already hold the client and company id, so no call-site churn) and clamp the warmup ramp with it. |
+| `enrich-run.ts` | Monthly quota gate ahead of any LLM call, on both the wave path and "Process selected" — a hand-picked run spends the same budget. Exhaustion surfaces as `quota_exhausted` / a note rather than a silent "nothing to do". |
+| `outreach/actions.ts` | Prospect ceiling checked before ingest, with a message that says how much room is left; snapshot's daily cap now reflects the plan. |
+| `lib/billing/actions.ts`, `app/(app)/settings/plan/page.tsx` (NEW) | Plan & usage page: status, trial countdown, three meters (sends today / enrichments this month / prospects stored), and the plan ladder. Uncapped metrics show a count with no bar, since a progress bar against Infinity is meaningless. |
+| `app/(app)/settings/layout.tsx` | Nav entry — plus a fix for hardcoded dark-only colours that left the "Settings" heading near-invisible in light mode. |
+
+### Verification
+
+- 24 assertions: grandfathering (unknown/null plan key → unlimited), lapsed accounts (0 sends, 0 enrichments, data retained), plan pass-through, the three-way clamp between user limit / warmup ramp / plan ceiling in both directions, UTC month boundaries including a year roll, display formatting, a plan-ladder invariant (limits strictly increase with price), and a sanity check that Starter actually fits the live workload. ALL PASS.
+- **Live safety check against prod (migration not applied):** every company resolves `unmanaged=true`, all limits Infinity, and the effective daily cap is byte-identical before and after the plan clamp — SourceGent stays at **45 → 45 UNCHANGED**.
+- In-browser: the page shows "Unlimited — not on a billed plan", real usage (45/45 sends today at cap in red, 115 enrichments in August, 4,933 prospects), and the plan ladder. `tsc` clean; eslint unchanged from `main`.
+
+### Handoff / decisions for Eudon
+
+1. Apply `supabase/migrations/20260811000000_company_billing.sql` when convenient. Nothing changes on apply — every tenant stays unmanaged until a row is inserted deliberately.
+2. **The plan numbers are a starting point, not a decision.** Prices come from the spec's $99–299 target; limits were sized so Starter comfortably covers the current live workload (45 sends/day, 115 enrichments/month, 4,933 prospects). They live in one file and are meant to be tuned.
+3. Chunk 2 (Stripe checkout + webhooks) needs a Stripe account with products/prices and `STRIPE_SECRET_KEY` / webhook secret.

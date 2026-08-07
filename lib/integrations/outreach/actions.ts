@@ -23,6 +23,7 @@ import { generateFollowupTouch } from './followups'
 import { loadOfferProfile } from './offer-profile'
 import { fetchStoredContactNames, resolveContactName } from './contact-name'
 import { loadCampaigns } from './campaigns'
+import { effectiveLimits, loadBilling, planDailySendCap } from '@/lib/billing/billing'
 import { openStats, recentBounceStats } from './send/scan'
 import { getAccount } from '../accounts'
 import { undeliverableDomains } from './deliverability'
@@ -88,6 +89,27 @@ export async function ingestProspects(
   }
 
   const supabase = await createClient()
+
+  // Plan ceiling on stored prospects. Checked before the insert so the user
+  // gets a clear message instead of a silent partial add.
+  const billing = await loadBilling(supabase, companyId)
+  const { maxProspects } = effectiveLimits(billing)
+  if (Number.isFinite(maxProspects)) {
+    const { count: existing } = await supabase
+      .from('outreach_prospects')
+      .select('id', { count: 'exact', head: true })
+      .eq('company_id', companyId)
+    if ((existing ?? 0) + sendable.length > maxProspects) {
+      const room = Math.max(0, maxProspects - (existing ?? 0))
+      return {
+        ok: false,
+        error: room === 0
+          ? `Your plan holds ${maxProspects.toLocaleString('en-US')} prospects and you're at the limit. Delete some, or move up a plan.`
+          : `That would exceed your plan's ${maxProspects.toLocaleString('en-US')}-prospect limit — room for ${room.toLocaleString('en-US')} more.`,
+      }
+    }
+  }
+
   // Insert, ignoring rows that already exist (unique company_id+email).
   let { data, error } = await supabase
     .from('outreach_prospects')
@@ -349,7 +371,7 @@ export async function getOutreachSnapshot(companyId: string): Promise<OutreachSn
     active: settings.active,
     sender_email: settings.sender_email,
     pause_reason: settings.pause_reason,
-    effective_daily_cap: getEffectiveDailyCap(settings),
+    effective_daily_cap: getEffectiveDailyCap(settings, new Date(), await planDailySendCap(supabase, companyId)),
     daily_send_limit: settings.daily_send_limit,
     sent_today: sentToday ?? 0,
     warmup_day: warmupDayIndex(settings),

@@ -375,6 +375,40 @@ export interface Database {
         }
         Relationships: []
       }
+      company_billing: {
+        Row: {
+          company_id: string
+          plan_key: string
+          status: 'trialing' | 'active' | 'past_due' | 'canceled'
+          trial_ends_at: string | null
+          stripe_customer_id: string | null
+          stripe_subscription_id: string | null
+          current_period_end: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          company_id: string
+          plan_key?: string
+          status?: 'trialing' | 'active' | 'past_due' | 'canceled'
+          trial_ends_at?: string | null
+          stripe_customer_id?: string | null
+          stripe_subscription_id?: string | null
+          current_period_end?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          plan_key?: string
+          status?: 'trialing' | 'active' | 'past_due' | 'canceled'
+          trial_ends_at?: string | null
+          stripe_customer_id?: string | null
+          stripe_subscription_id?: string | null
+          current_period_end?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       outreach_campaigns: {
         Row: {
           id: string
