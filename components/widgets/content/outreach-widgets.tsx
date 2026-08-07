@@ -1228,6 +1228,20 @@ export function OutreachWorkspace() {
                   {selectedDraftIds.size === current.length ? 'Clear' : 'Select all'}
                 </button>
               )}
+              {filter === 'approved' && (() => {
+                // "Unqueued" mirrors what scheduleDraftSends would actually take:
+                // no send yet, or only a failed/canceled attempt.
+                const unqueued = current.filter((p) => p.draft && (!p.draft.send || p.draft.send.status === 'failed' || p.draft.send.status === 'canceled'))
+                return unqueued.length > 0 ? (
+                  <button
+                    onClick={() => { setConfirmBulkDelete(false); setSelectedDraftIds(new Set(unqueued.map((p) => p.draft!.id))) }}
+                    style={btnGhost()}
+                    title="Select only the drafts that aren't already queued or sent"
+                  >
+                    Select unqueued ({unqueued.length})
+                  </button>
+                ) : null
+              })()}
               {filter === 'approved' && selectedDraftIds.size > 0 && (
                 <button onClick={() => setScheduleDialogOpen(true)} style={btn(ACCENT)}>
                   Schedule ({selectedDraftIds.size})

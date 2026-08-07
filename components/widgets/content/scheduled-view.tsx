@@ -86,6 +86,19 @@ export function ScheduledView({ companyId, sends, onChanged }: { companyId: stri
     })
   }
 
+  /** Toggle a whole group (a day, or everything visible) in one click. */
+  function toggleMany(items: ScheduledSendView[], on: boolean) {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      for (const s of items) {
+        if (on) next.add(s.id)
+        else next.delete(s.id)
+      }
+      return next
+    })
+  }
+  const allVisibleSelected = visible.length > 0 && visible.every((s) => selected.has(s.id))
+
   async function act(fn: () => Promise<{ ok: boolean; error?: string }>) {
     setBusy(true)
     setError(null)
@@ -149,21 +162,33 @@ export function ScheduledView({ companyId, sends, onChanged }: { companyId: stri
 
       {/* Day-grouped list */}
       <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-        {selectedIds.length > 0 && (
+        {visible.length > 0 && (
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8, flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 11, color: TEXT2 }}>{selectedIds.length} selected</span>
-            <button disabled={busy} onClick={() => setDialogOpen(true)} style={btn(ACCENT)}>Reschedule…</button>
-            <button disabled={busy} onClick={() => act(() => cancelSends(companyId, selectedIds))} style={btnGhost('#b04545')}>Cancel sends</button>
+            {/* When a calendar day is picked, `visible` is that day only — so this
+                doubles as "select the whole day". */}
+            <button disabled={busy} onClick={() => toggleMany(visible, !allVisibleSelected)} style={btnGhost(TEXT2)}>
+              {allVisibleSelected ? 'Clear' : `Select all (${visible.length})`}
+            </button>
+            {selectedIds.length > 0 && (
+              <>
+                <span style={{ fontSize: 11, color: TEXT2 }}>{selectedIds.length} selected</span>
+                <button disabled={busy} onClick={() => setDialogOpen(true)} style={btn(ACCENT)}>Reschedule…</button>
+                <button disabled={busy} onClick={() => act(() => cancelSends(companyId, selectedIds))} style={btnGhost('#b04545')}>Cancel sends</button>
+              </>
+            )}
             {error && <span style={{ fontSize: 11, color: '#d98a8a' }}>{error}</span>}
           </div>
         )}
         <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', border: `1px solid ${BORDER}`, borderRadius: 8 }}>
           {visible.length === 0 && <div style={{ fontSize: 12, color: MUTED, padding: 14 }}>Nothing scheduled{selectedDay ? ' that day' : ' yet'}.</div>}
-          {grouped.map(([key, items]) => (
+          {grouped.map(([key, items]) => {
+            const dayAllSelected = items.every((s) => selected.has(s.id))
+            return (
             <div key={key}>
-              <div style={{ position: 'sticky', top: 0, background: CARD2, borderBottom: `1px solid ${BORDER}`, padding: '6px 12px', fontSize: 10, fontWeight: 600, color: MUTED, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                {fmtDayHeader(key)} <span style={{ color: ACCENT }}>{items.length}</span>
-              </div>
+              <label style={{ position: 'sticky', top: 0, zIndex: 1, display: 'flex', alignItems: 'center', gap: 8, background: CARD2, borderBottom: `1px solid ${BORDER}`, padding: '6px 12px', fontSize: 10, fontWeight: 600, color: MUTED, textTransform: 'uppercase', letterSpacing: 0.5, cursor: 'pointer' }} title="Select every send on this day">
+                <input type="checkbox" checked={dayAllSelected} onChange={() => toggleMany(items, !dayAllSelected)} />
+                <span>{fmtDayHeader(key)} <span style={{ color: ACCENT }}>{items.length}</span></span>
+              </label>
               {items.map((s) => (
                 <label key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderBottom: `1px solid ${BORDER}`, cursor: 'pointer', background: selected.has(s.id) ? CARD : 'transparent' }}>
                   <input type="checkbox" checked={selected.has(s.id)} onChange={() => toggle(s.id)} />
@@ -175,7 +200,8 @@ export function ScheduledView({ companyId, sends, onChanged }: { companyId: stri
                 </label>
               ))}
             </div>
-          ))}
+            )
+          })}
         </div>
       </div>
 

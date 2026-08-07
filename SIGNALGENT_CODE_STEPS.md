@@ -2014,3 +2014,22 @@ Three user-reported friction points: Settings had no way back to the app; templa
 - The 9 template drafts already sitting `pending` in the Templates tab predate this change and need one manual "Approve all"; nothing new will land in that tab, leaving it vestigial — candidate for removal in a later pass.
 - Auto-queue places templates at the earliest open slot at creation time. A personalized draft approved later gets a later `scheduled_at`; its priority is enforced at the worker (it sends first among due emails) and within any batch it is scheduled in — the daily cap / drip pacing itself is unchanged.
 - Templates now consume send capacity without a human in the loop: the cron's enrichment wave drafts them, approves them, and queues them. The Sending toggle is the kill switch — turning it off both stops the worker and makes `autoQueueDraftSend` a no-op.
+
+---
+
+## Session 30 — Outreach: bulk selection on the Scheduled calendar, "Select unqueued" on Ready to email
+
+Two selection gaps reported after Session 29 went live: the Scheduled view had no way to select a whole day (e.g. grab everything on a Saturday and move it), and Ready to email's "Select all" grabbed queued and unqueued drafts alike, when the useful set for scheduling is only the unqueued ones.
+
+### Changes
+
+| File | Change |
+| --- | --- |
+| `components/widgets/content/scheduled-view.tsx` | Persistent **"Select all (N)"** button above the day-grouped list (previously the action bar only appeared once something was hand-picked). It operates on `visible`, so with a calendar day selected it means "select that whole day". Each sticky day header is now a `<label>` with a **checkbox that toggles every send on that day** in one click. New `toggleMany` helper; Reschedule…/Cancel appear once anything is selected, as before. |
+| `components/widgets/content/outreach-widgets.tsx` | **"Select unqueued (N)"** button on the Ready to email tab, next to Select all. "Unqueued" mirrors what `scheduleDraftSends` would actually accept: no send row, or the latest attempt is `failed`/`canceled` (queued/sending/sent are skipped there as `alreadyQueued`). Hidden when every draft is already queued. |
+
+### Verification
+
+- `tsc --noEmit` clean; eslint findings identical to `main` (the two pre-existing `set-state-in-effect` errors, untouched code).
+- In-browser against live data: "Select all (135)" renders on the Scheduled tab; one click on the "Friday, Aug 7 · 45" header checkbox selected all 45 sends and surfaced Reschedule…/Cancel (not confirmed — selection is client-side only, nothing mutated). "Select unqueued" correctly hidden with all 135 ready drafts queued.
+- Incidentally confirmed Session 29 working on prod: Templates tab at 0, 135 auto-queued sends laid out at 45/day across Aug 7–9.
