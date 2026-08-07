@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { useCompany } from '@/contexts/company-context'
 import {
   approveDraft,
@@ -25,6 +26,7 @@ import type { Disposition, OutreachDraftView, OutreachSnapshot, OutreachProspect
 import { hygieneWarnings, replyRiskWarnings } from '@/lib/integrations/outreach/hygiene'
 import { SendingSettingsModal } from './sending-settings-modal'
 import { CampaignsModal, type CampaignStats } from './campaigns-modal'
+import { SetupChecklist } from './setup-checklist'
 import { TemplatesModal } from './templates-modal'
 import { ScheduledView } from './scheduled-view'
 import { ScheduleDialog } from './schedule-dialog'
@@ -889,6 +891,8 @@ export function OutreachWorkspace() {
   const [sendingModalOpen, setSendingModalOpen] = useState(false)
   const [templatesModalOpen, setTemplatesModalOpen] = useState(false)
   const [campaignsModalOpen, setCampaignsModalOpen] = useState(false)
+  // Bumped after anything the setup checklist measures changes, so it recomputes.
+  const [setupKey, setSetupKey] = useState(0)
   // 'all' = every prospect, 'none' = the campaign-less pool, else a campaign id.
   const [campaignFilter, setCampaignFilter] = useState<'all' | 'none' | string>('all')
   const [processing, setProcessing] = useState(false)
@@ -901,6 +905,8 @@ export function OutreachWorkspace() {
   const [listSortKey, setListSortKey] = useState<ListSortKey>('type')
   const [listSortDir, setListSortDir] = useState<'asc' | 'desc'>('asc')
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const rawInputRef = useRef<HTMLInputElement>(null)
+  const router = useRouter()
 
   const toggleListSort = (k: ListSortKey) => {
     if (k === listSortKey) setListSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
@@ -911,6 +917,7 @@ export function OutreachWorkspace() {
     if (!companyId) return
     const snap = await getOutreachSnapshot(companyId)
     setSnapshot(snap)
+    setSetupKey((k) => k + 1) // setup state rides on the same events as the snapshot
   }, [companyId])
 
   const loadScheduled = useCallback(async () => {
@@ -1190,6 +1197,20 @@ export function OutreachWorkspace() {
         }
       `}</style>
 
+      {/* First-run guidance. Hides itself once setup is complete. */}
+      {companyId && (
+        <SetupChecklist
+          companyId={companyId}
+          refreshKey={setupKey}
+          onAction={(action) => {
+            if (action === 'sending_settings') setSendingModalOpen(true)
+            else if (action === 'offer_profile') router.push('/settings/offer')
+            else if (action === 'connections') router.push('/settings/connections')
+            else if (action === 'add_prospects') rawInputRef.current?.focus()
+          }}
+        />
+      )}
+
       {/* Pipeline-stopping states. Each of these silently halts sends/scans, so
           they go first — above everything else, impossible to miss. */}
       {snapshot?.sending?.gmail && snapshot.sending.gmail.status !== 'connected' && (
@@ -1240,6 +1261,7 @@ export function OutreachWorkspace() {
         <input
           value={raw}
           onChange={(e) => setRaw(e.target.value)}
+          ref={rawInputRef}
           placeholder="Paste contact emails (any separator)…"
           style={{ flex: 1, minWidth: 220, background: 'var(--app-input)', border: `1px solid ${BORDER}`, borderRadius: 6, color: 'var(--app-text)', fontSize: 12, padding: '8px 10px' }}
         />

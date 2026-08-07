@@ -2267,3 +2267,38 @@ Live-checking the real SourceGent settings surfaced that its sender is **`thedve
 1. Sending is configured from **`thedvegroup@gmail.com`**. Cold outreach from a consumer Gmail address can't be authenticated (no SPF/DKIM/DMARC you can publish) and is heavily filtered under Google/Yahoo bulk-sender rules — the single biggest deliverability lever available, and plausibly a contributor to the 0-reply run.
 2. `NEXT_PUBLIC_APP_URL` still points at `*.vercel.app` (the standing residual), so tracking and unsubscribe links don't align with the sending domain.
 3. `send.sourcegent.io` authorizes Amazon SES in SPF, not Google — relevant if sending ever moves to that domain over Gmail.
+
+---
+
+## Session 38 — Phase 2 chunk 2: setup checklist + warmup reset on mailbox change
+
+A new user lands on a dense ten-tab workspace with no idea what order to do things in. This adds the six-step funnel that must be true before a first email can go out, shown at the top of the workspace until it's done.
+
+### The checklist
+
+Describe what you sell → Connect a mailbox → Set your sender details → Authenticate your domain → Add prospects → Turn on sending. Each incomplete step carries a one-line *why* (teach, don't just list) and a button to the surface that fixes it.
+
+Design choices:
+- **Non-blocking, not a modal wizard.** It's resumable, doubles as a health panel, and leaves the dense workspace available for people who know what they're doing.
+- **Cheap.** No DNS on page load — a handful of indexed reads. The one deliverability signal it derives for free is `isConsumerDomain` (a pure string check); the full SPF/DKIM/DMARC preflight stays behind its button in Sending settings. The `auth` step therefore never blocks completion on its own.
+- **Collapses when done** to a one-line summary (with the count of warnings worth a look), dismissible for the session. The user's expand/collapse choice overrides the default either way.
+
+### Warmup reset on mailbox change (`sending.ts`)
+
+`warmup_started_at` is per-company and was only ever set once. Switching to a different sending mailbox therefore inherited the old mailbox's fully-ramped cap — SourceGent's anchor is 2026-06-29, so a brand-new mailbox would have started at the full 45/day on day one, which is the fastest way to burn a fresh sender's reputation. Changing `sender_email` to a different address now re-anchors the ramp to now. Directly relevant to moving off the consumer Gmail address.
+
+### Changes
+
+| File | Change |
+| --- | --- |
+| `lib/integrations/outreach/setup-status.ts` (NEW) | `getSetupStatus(companyId)` → six typed steps with state / detail / why / action. |
+| `components/widgets/content/setup-checklist.tsx` (NEW) | The panel: expanded while work remains, one-line summary once complete, per-step action buttons. |
+| `components/widgets/content/outreach-widgets.tsx` | Renders the checklist above the pipeline banners; maps step actions to the right modal or route; recomputes on the same events as the snapshot. |
+| `lib/integrations/outreach/sending.ts` | Warmup re-anchor when the sender mailbox changes. |
+
+### Verification (live, both tenants)
+
+- **SourceGent (fully configured)**: renders the collapsed "Setup complete — 1 thing worth a look" line; Review expands to all six steps with the consumer-mailbox warning on `Authenticate your domain`; its action button opens Sending settings. Closed via backdrop — settings never saved.
+- **ABC Corp (partially configured)**: auto-expands to "Finish setting up outreach — 3 steps left", correctly marking dry-run mailbox and 1 prospect as done while flagging offer profile, sender details, and sending as todo.
+- **Bug caught in browser**: the complete-state "Review" button did nothing — `open` initialised to `true` meant the collapsed branch rendered while the expand handler set a value it already held. Reworked to a tri-state (`null` = follow the default, boolean = user's explicit choice).
+- `tsc` clean; eslint findings identical to `main`; no console errors.
