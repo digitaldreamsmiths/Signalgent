@@ -27,6 +27,7 @@ import { hygieneWarnings, replyRiskWarnings } from '@/lib/integrations/outreach/
 import { SendingSettingsModal } from './sending-settings-modal'
 import { CampaignsModal, type CampaignStats } from './campaigns-modal'
 import { SetupChecklist } from './setup-checklist'
+import { ReplyInbox, decodeEntities, gmailThreadUrl } from './reply-inbox'
 import { TemplatesModal } from './templates-modal'
 import { ScheduledView } from './scheduled-view'
 import { ScheduleDialog } from './schedule-dialog'
@@ -711,7 +712,7 @@ function TouchCard({ draft, companyId, onChanged }: { draft: OutreachDraftView; 
   )
 }
 
-function DraftDetail({ prospect, companyId, onChanged }: { prospect: OutreachProspectView; companyId: string; onChanged: () => void }) {
+function DraftDetail({ prospect, companyId, senderEmail, onChanged }: { prospect: OutreachProspectView; companyId: string; senderEmail: string | null; onChanged: () => void }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [manualName, setManualName] = useState('')
@@ -817,10 +818,23 @@ function DraftDetail({ prospect, companyId, onChanged }: { prospect: OutreachPro
             {prospect.disposition === 'bounced' ? 'Bounce notice' : prospect.disposition === 'unsubscribed' ? 'Opt-out message' : 'Reply received'}
             {prospect.disposition_at && ` · ${fmtWhen(prospect.disposition_at)}`}
           </div>
-          {prospect.reply_from && <div style={{ fontSize: 12, color: 'var(--app-text)' }}><span style={{ color: MUTED }}>From:</span> {prospect.reply_from}</div>}
-          {prospect.reply_subject && <div style={{ fontSize: 12, color: 'var(--app-text)', marginTop: 2 }}><span style={{ color: MUTED }}>Subject:</span> {prospect.reply_subject}</div>}
-          {prospect.reply_snippet && <div style={{ fontSize: 12, color: 'var(--app-text-2)', marginTop: 6, lineHeight: 1.5 }}>{prospect.reply_snippet}…</div>}
-          <div style={{ fontSize: 10, color: MUTED, marginTop: 8 }}>Preview only — open the thread in Gmail to read and reply in full.</div>
+          {/* Gmail hands us HTML-escaped text; decode for display (see decodeEntities). */}
+          {prospect.reply_from && <div style={{ fontSize: 12, color: 'var(--app-text)' }}><span style={{ color: MUTED }}>From:</span> {decodeEntities(prospect.reply_from)}</div>}
+          {prospect.reply_subject && <div style={{ fontSize: 12, color: 'var(--app-text)', marginTop: 2 }}><span style={{ color: MUTED }}>Subject:</span> {decodeEntities(prospect.reply_subject)}</div>}
+          {prospect.reply_snippet && <div style={{ fontSize: 12, color: 'var(--app-text-2)', marginTop: 6, lineHeight: 1.5 }}>{decodeEntities(prospect.reply_snippet)}…</div>}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 10, color: MUTED }}>Preview only — open the thread in Gmail to read and reply in full.</span>
+            {prospect.thread_id && (
+              <a
+                href={gmailThreadUrl(prospect.thread_id, senderEmail)}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ ...btnGhost(ACCENT), padding: '3px 10px', textDecoration: 'none' }}
+              >
+                Open in Gmail ↗
+              </a>
+            )}
+          </div>
         </div>
       )}
 
@@ -1441,6 +1455,13 @@ export function OutreachWorkspace() {
             )
           ) : filter === 'contacts' ? (
             <ContactsTable prospects={current} companyId={companyId} campaigns={campaigns} onChanged={refresh} />
+          ) : filter === 'replied' ? (
+            <ReplyInbox
+              prospects={current}
+              companyId={companyId}
+              senderEmail={snapshot?.sending?.sender_email ?? null}
+              onChanged={refresh}
+            />
           ) : (
           <div className="outreach-split" style={{ flex: 1, minHeight: 0, gap: 14 }}>
             {/* List */}
@@ -1526,7 +1547,7 @@ export function OutreachWorkspace() {
             {/* Detail */}
             <div style={{ border: `1px solid ${BORDER}`, borderRadius: 8, overflowY: 'auto', minHeight: 0, padding: 16 }}>
               {selected ? (
-                <DraftDetail key={selected.id} prospect={selected} companyId={companyId} onChanged={refresh} />
+                <DraftDetail key={selected.id} prospect={selected} companyId={companyId} senderEmail={snapshot?.sending?.sender_email ?? null} onChanged={refresh} />
               ) : (
                 <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>
                   <div>
