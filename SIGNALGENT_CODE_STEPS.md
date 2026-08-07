@@ -2473,3 +2473,39 @@ Weekend days are skipped, **except the day the user explicitly asked to start on
 ### Live queue — needs a decision, not applied
 
 An audit of prod found **90 already-queued sends on this weekend**: 45 on Sat Aug 8 and 45 on Sun Aug 9, with sending ON. The fix only governs *future* scheduling, so those remain as laid out. They can be moved in the UI — Schedule → tick the Saturday and Sunday day headers → Reschedule with a Monday start — or by request. Not touched here: rescheduling 90 live queued emails is an outward-facing change and belongs to Eudon.
+
+---
+
+## Session 44 — Phase 5 stage 2a: shared outreach provider
+
+The prerequisite for routes. A Next layout can't pass props to page children, so splitting the sections into routes needs the workspace data in context first — otherwise every route re-fetches the entire workspace on each navigation.
+
+### What moved
+
+`contexts/outreach-context.tsx` (NEW) now owns everything that is the same regardless of which section you are looking at:
+
+- snapshot + `loading` + `refresh`, and the ~2.5-minute visibility-aware poll
+- campaigns, `campaignStats`, and the campaign scope (`campaignFilter`)
+- `prospects` (already campaign-scoped) and `lists` (the per-view slices)
+- queued sends + `loadScheduled`
+- toasts, and `setupKey` (the setup-checklist invalidator)
+
+The view vocabulary — `Filter`, `Section`, `SECTIONS`, `SECTION_OF`, `FILTER_LABEL`, `CampaignStats` — moved here too, since the nav will live in the layout once routes land while the views stay in their own files.
+
+`OutreachWorkspace` keeps only what is genuinely view-local: its current filter, selection, sort, dialogs, and the action handlers. `app/(app)/outreach/layout.tsx` (NEW) hosts the provider.
+
+### Two design details
+
+- **The provider is keyed by company.** Switching workspaces remounts it and drops all its state at once, rather than resetting each piece by hand — campaign ids and prospect ids are per-company, and a remount is both simpler and harder to get wrong. It also removed the `setCampaignFilter('all')`-in-an-effect that lint had been flagging.
+- **This does not change how much data is fetched.** `getOutreachSnapshot` still loads every prospect (~4,900). That scale debt is tracked separately in the spec; the provider only stops routes from multiplying it. (Correcting a claim made in the previous session's summary.)
+
+### Verification
+
+- Walked every section against the live SourceGent workspace after the refactor: metrics, setup checklist, section nav and counts, Pipeline → Ready to email (sort bar, Personalized/Templates grouping, touch pills, bulk actions), Contacts (table, stage filters, campaign column), Inbox, Schedule (calendar + day list). All identical to pre-refactor.
+- **Company switch — the riskiest new behaviour:** switching to ABC Corp remounted the provider with its own data (1 prospect, 0 sent, its own 3-step setup checklist) and its own campaign list (`Pilot list (1)`), with no stale SourceGent data or campaign ids leaking through. Switched back cleanly.
+- Schedule calendar incidentally re-confirms the weekend fix and Eudon's reschedule: Aug 10–14 and 17–20 populated, Aug 15–16 empty.
+- `tsc` clean. eslint on the workspace file went **3 findings → 1** (the two `set-state-in-effect` errors are gone; only the pre-existing unused `setProgress` remains). No console errors.
+
+### Next: stage 2b
+
+Sidebar + one route per section (`/outreach/pipeline`, `/outreach/contacts`, `/outreach/inbox`, `/outreach/schedule`), with the shared chrome — banners, setup checklist, header, metrics, nav — moving into the layout. Now a mechanical move rather than a refactor, since the data is already shared.
