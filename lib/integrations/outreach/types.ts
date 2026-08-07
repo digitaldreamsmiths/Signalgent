@@ -175,6 +175,8 @@ export interface OutreachProspectView {
   contact_name: string | null
   /** True when contact_name is the stored override rather than the parse. */
   contact_name_manual: boolean
+  /** Campaign this prospect belongs to (null = the campaign-less pool). */
+  campaign_id: string | null
   resolution_confidence: number | null
   business_types: string[]
   location: string | null
@@ -197,6 +199,8 @@ export interface OutreachProspectView {
 
 export interface OutreachSnapshot {
   prospects: OutreachProspectView[]
+  /** The company's campaigns, active first ([] before the migration). */
+  campaigns: import('./campaigns').OutreachCampaign[]
   counts: {
     total: number
     new: number

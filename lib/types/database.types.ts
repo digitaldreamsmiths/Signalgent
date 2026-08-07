@@ -248,6 +248,7 @@ export interface Database {
           recipient_id: string | null
           uei: string | null
           contact_name: string | null
+          campaign_id: string | null
           resolution_confidence: number | null
           resolution_method: 'heuristic' | 'ai_judge' | null
           business_types: string[] | null
@@ -274,6 +275,7 @@ export interface Database {
           recipient_id?: string | null
           uei?: string | null
           contact_name?: string | null
+          campaign_id?: string | null
           resolution_confidence?: number | null
           resolution_method?: 'heuristic' | 'ai_judge' | null
           business_types?: string[] | null
@@ -298,6 +300,7 @@ export interface Database {
           recipient_id?: string | null
           uei?: string | null
           contact_name?: string | null
+          campaign_id?: string | null
           resolution_confidence?: number | null
           resolution_method?: 'heuristic' | 'ai_judge' | null
           business_types?: string[] | null
@@ -368,6 +371,39 @@ export interface Database {
           template_id?: string | null
           reviewer_notes?: string | null
           reviewed_at?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      outreach_campaigns: {
+        Row: {
+          id: string
+          company_id: string
+          name: string
+          status: 'active' | 'archived'
+          followup_enabled: boolean | null
+          followup_wait_days: number | null
+          followup_max_touches: number | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          company_id: string
+          name: string
+          status?: 'active' | 'archived'
+          followup_enabled?: boolean | null
+          followup_wait_days?: number | null
+          followup_max_touches?: number | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          name?: string
+          status?: 'active' | 'archived'
+          followup_enabled?: boolean | null
+          followup_wait_days?: number | null
+          followup_max_touches?: number | null
           updated_at?: string
         }
         Relationships: []
