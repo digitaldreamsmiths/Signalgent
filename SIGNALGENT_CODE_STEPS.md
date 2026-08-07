@@ -2063,12 +2063,50 @@ First build phase of the govcon productization plan (`docs/specs/signalgent-govc
 - In-browser: Settings → Offer profile renders with the SourceGent defaults loaded through the fallback loader (table doesn't exist yet); Save correctly reports "The offer-profile migration hasn't been applied to the database yet." No console errors.
 - Prompt-shape check: with `DEFAULT_OFFER_PROFILE` the rendered register matches the original except the added "What it does" sentence.
 
-### Handoff (not applied)
+### Handoff
 
-1. Apply `supabase/migrations/20260807000000_outreach_offer_profile.sql` (remote-only, out-of-band). Until then the pipeline runs on defaults and the settings form can read but not save — everything else is unaffected.
+1. ~~Apply `supabase/migrations/20260807000000_outreach_offer_profile.sql`~~ — **DONE 2026-08-06**, verified live: Settings → Offer profile saves ("Saved. New drafts and sends use this profile."), so the SourceGent row now exists with the default values.
 
 ### Residuals / next in Phase 0
 
 - Contact-name enrichment (emails still open "Hi,") — next chunk.
 - The template editor's five starters still render from the DEFAULT profile on the client; they should read the tenant profile once a second tenant exists (small wiring, noted for the Phase 2 onboarding pass, which will generate starters from the profile anyway).
 - Built-in follow-up copy changed slightly for the live tenant (two lines genericized); openers are unaffected in prod because SourceGent's active user templates win the rotation.
+
+---
+
+## Session 32 — Productization Phase 0: contact-name enrichment (no more bare "Hi,")
+
+Second Phase 0 chunk. The pipeline only ever knew email → domain → company, never a person, so every email opened "Hi," — flagged in the Session 28 postmortem as likely the largest remaining drag on reply rate. Now a precision-tuned localpart parse (`bob.smith@acme.com` → "Bob Smith") supplies a greeting name, with an optional per-prospect manual override, and drafts are stored with the greeting baked in ("Hi Robert,") so the review queue shows exactly what sends.
+
+### Design
+
+- **Parse over storage**: the baseline is a pure function with no DB dependency, so it works before (and without) any migration. Only the manual override needs the new `contact_name` column, and every read of it is tolerant — a query error means "no overrides yet", never a stopped pipeline.
+- **Precision over recall**: only separator-delimited shapes (`first.last`, `first_last`, `first-last`, optional middle token) with an alphabetic 2+-char first token that isn't one of ~100 role words (info, sales, front, desk, estimating, proposals…). Single-token localparts (`mike@`, `dvegroup@`), initial-first shapes (`j.smith@`), and glued names (`carlmckittrick@`) all return null — "Hi Meridian," reads worse than "Hi,".
+- **Greeting baked at draft creation**: `applyGreeting` rewrites only a leading bare greeting line ("Hi," → "Hi Robert,"), is idempotent, and never touches an already-named greeting ("Hi Acme,").
+
+### Changes
+
+| File | Change |
+| --- | --- |
+| `lib/integrations/outreach/contact-name.ts` (NEW) | `parseContactName`, `firstNameOf`, `resolveContactName` (stored override beats parse; blank falls back), `applyGreeting`, and the tolerant `fetchStoredContactNames`. Client-safe (type-only imports). |
+| `supabase/migrations/20260808000000_outreach_contact_name.sql` (NEW) | `outreach_prospects.contact_name` (manual override; comment distinguishes it from `recipient_name`, the COMPANY). Remote-only as usual. |
+| `lib/types/database.types.ts` | `contact_name` on prospects Row/Insert/Update. |
+| `lib/integrations/outreach/enrich-run.ts` | Batch runners fetch stored overrides once per batch and pass resolved names into `persistOutcome`, which applies the greeting to both personalized and template drafts; `backfillTemplateDrafts` does the same. |
+| `lib/integrations/outreach/actions.ts` | `generateFollowup` and `resolveManual` resolve + apply the name; new `setContactName` server action (empty clears the override) with a specific migration-pending error. Snapshot exposes `contact_name` (resolved) + `contact_name_manual` on the prospect view. |
+| `components/widgets/content/outreach-widgets.tsx` | Contact editor in the draft detail header: the input holds only the manual override, a parsed name shows as the placeholder ("Robert Caviness (from email)") so clearing falls back to the parse, and a hint shows the exact greeting new drafts get. |
+
+### Verification
+
+- 22-case parse test + greeting behavior suite (idempotency, named-greeting no-op, null no-op, override precedence, blank-override fallback): ALL PASS. One real gap caught and fixed by the tests (`front.desk@` parsed as a person before 'front'/'desk' joined the role words).
+- `tsc --noEmit` clean; eslint findings identical to `main`.
+- In-browser: `carlmckittrick@` shows "no name — greets 'Hi,'"; `robert.caviness@aleutfederal.com` shows "Robert Caviness (from email)" + 'new drafts greet "Hi Robert,"'; Save before the migration reports the specific pending-migration error.
+
+### Handoff (not applied)
+
+1. Apply `supabase/migrations/20260808000000_outreach_contact_name.sql` (remote-only, out-of-band). Until then the parse carries the feature alone; only manual overrides are blocked.
+
+### Behavior notes
+
+- Existing drafts keep their bare "Hi," — greetings bake in at draft creation, so the change applies to new drafts (including auto-generated template drafts and follow-ups) from the next enrichment wave on.
+- The 135 queued sends predate this change and will go out with "Hi,". Rewriting them in place would need a requeue-style pass (see Session 28); not done here.
