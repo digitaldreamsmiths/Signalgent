@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react'
 import { getSendSettings, saveSendSettings } from '@/lib/integrations/outreach/sending'
+import { checkDeliverability } from '@/lib/integrations/outreach/dns-actions'
+import type { DomainCheck, Verdict } from '@/lib/integrations/outreach/dns-check'
 import type { SendSettings } from '@/lib/integrations/outreach/types'
 
 const BORDER = 'var(--app-border)'
@@ -27,6 +29,83 @@ const sectionLabel: React.CSSProperties = { fontSize: 11, fontWeight: 700, color
 
 const labelStyle: React.CSSProperties = { fontSize: 10, fontWeight: 600, color: MUTED, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4, display: 'block' }
 const inputStyle: React.CSSProperties = { width: '100%', background: INPUT, border: `1px solid ${BORDER}`, borderRadius: 6, color: TEXT, fontSize: 12, padding: '7px 9px' }
+
+const VERDICT_META: Record<Verdict, { color: string; mark: string; word: string }> = {
+  pass: { color: '#1D9E75', mark: '✓', word: 'Pass' },
+  warn: { color: '#e0a060', mark: '!', word: 'Warning' },
+  fail: { color: '#b04545', mark: '✕', word: 'Fail' },
+  unknown: { color: MUTED, mark: '?', word: 'Unknown' },
+}
+
+/** DNS preflight panel: SPF / DKIM / DMARC / MX / tracking-domain alignment,
+ * each with the fix spelled out. Read-only — it never changes settings. */
+function DeliverabilityPanel({ companyId, senderEmail }: { companyId: string; senderEmail: string | null }) {
+  const [check, setCheck] = useState<DomainCheck | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const domain = senderEmail?.trim().split('@')[1]?.trim() || null
+
+  const run = async () => {
+    setBusy(true)
+    setError(null)
+    const r = await checkDeliverability(companyId)
+    setBusy(false)
+    if (!r.ok) {
+      setCheck(null)
+      return setError(r.error)
+    }
+    setCheck(r.data)
+  }
+
+  return (
+    <div style={sectionStyle}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <span style={sectionLabel}>Deliverability</span>
+        {check && (
+          <span style={{ fontSize: 10, fontWeight: 700, color: VERDICT_META[check.overall].color, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+            {VERDICT_META[check.overall].mark} {check.overall === 'pass' ? 'All clear' : VERDICT_META[check.overall].word}
+          </span>
+        )}
+        <button
+          onClick={run}
+          disabled={busy || !domain}
+          style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 600, color: 'var(--app-text-2)', background: 'transparent', border: `1px solid ${BORDER}`, borderRadius: 6, padding: '5px 10px', cursor: domain ? 'pointer' : 'not-allowed' }}
+        >
+          {busy ? 'Checking…' : check ? 'Re-check' : 'Check now'}
+        </button>
+      </div>
+      <div style={{ fontSize: 10, color: MUTED, marginTop: -4 }}>
+        {domain
+          ? <>Checks the DNS records receivers use to decide whether your mail is real, for <span style={{ fontFamily: 'var(--font-mono)' }}>{domain}</span>. Nothing here changes your settings.</>
+          : 'Set a sender email above (and save) to check its domain.'}
+      </div>
+
+      {error && <div style={{ fontSize: 11, color: '#d98a8a' }}>{error}</div>}
+
+      {check && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {check.results.map((r) => {
+            const meta = VERDICT_META[r.verdict]
+            return (
+              <div key={r.key} style={{ border: `1px solid ${BORDER}`, borderLeft: `3px solid ${meta.color}`, borderRadius: 6, padding: '7px 9px' }}>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'baseline' }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: meta.color }}>{meta.mark}</span>
+                  <span style={{ fontSize: 11, fontWeight: 600, color: TEXT }}>{r.label}</span>
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--app-text-2)', marginTop: 3, lineHeight: 1.45 }}>{r.detail}</div>
+                {r.fix && <div style={{ fontSize: 10, color: MUTED, marginTop: 4, lineHeight: 1.45 }}>Fix: {r.fix}</div>}
+              </div>
+            )
+          })}
+          <div style={{ fontSize: 9, color: MUTED }}>
+            DNS changes can take a while to propagate — re-check after updating your records.
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
 
 export function SendingSettingsModal({ companyId, onClose, onSaved }: { companyId: string; onClose: () => void; onSaved: () => void }) {
   const [form, setForm] = useState<SendSettings | null>(null)
@@ -114,6 +193,8 @@ export function SendingSettingsModal({ companyId, onClose, onSaved }: { companyI
 
             <div><label style={labelStyle}>Physical address (CAN-SPAM)</label><textarea value={form.physical_address ?? ''} onChange={(e) => set('physical_address', e.target.value)} rows={2} style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit' }} placeholder="123 Main St, City, ST 00000" /></div>
             <div><label style={labelStyle}>Unsubscribe line</label><input value={form.unsubscribe_line ?? ''} onChange={(e) => set('unsubscribe_line', e.target.value)} style={inputStyle} placeholder="Reply STOP to opt out." /></div>
+
+            <DeliverabilityPanel companyId={companyId} senderEmail={form.sender_email} />
 
             {/* Warmup ramp */}
             <div style={sectionStyle}>
