@@ -19,6 +19,7 @@ const DEFAULTS: SendSettings = {
   provider: 'dry_run', active: false, pause_reason: null,
   warmup_enabled: true, warmup_start_per_day: 10, warmup_increment_per_day: 5, warmup_started_at: null,
   bounce_pause_enabled: true, bounce_pause_threshold: 0.05, bounce_pause_window_days: 7, bounce_pause_min_sends: 20,
+  followup_enabled: false, followup_wait_days: 4, followup_max_touches: 3,
 }
 
 const sectionStyle: React.CSSProperties = { borderTop: `1px solid ${BORDER}`, paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }
@@ -145,6 +146,26 @@ export function SendingSettingsModal({ companyId, onClose, onSaved }: { companyI
                   <div><label style={labelStyle}>Threshold %</label><input type="number" value={Math.round(form.bounce_pause_threshold * 100)} onChange={(e) => set('bounce_pause_threshold', Math.max(1, parseInt(e.target.value) || 1) / 100)} style={inputStyle} /></div>
                   <div><label style={labelStyle}>Window (days)</label><input type="number" value={form.bounce_pause_window_days} onChange={(e) => set('bounce_pause_window_days', Math.max(1, parseInt(e.target.value) || 1))} style={inputStyle} /></div>
                   <div><label style={labelStyle}>Min sends</label><input type="number" value={form.bounce_pause_min_sends} onChange={(e) => set('bounce_pause_min_sends', Math.max(1, parseInt(e.target.value) || 1))} style={inputStyle} /></div>
+                </div>
+              )}
+            </div>
+
+            {/* Automatic follow-up sequences */}
+            <div style={sectionStyle}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: TEXT }}>
+                <input type="checkbox" checked={form.followup_enabled} onChange={(e) => set('followup_enabled', e.target.checked)} />
+                <span style={sectionLabel}>Automatic follow-ups</span>
+              </label>
+              <div style={{ fontSize: 10, color: MUTED, marginTop: -4 }}>
+                When a sent email gets no reply, the next touch is drafted and queued automatically after the wait.
+                Template nudges and clean personalized drafts go straight to the queue; anything the fact-check flags
+                waits in “To review”. Replies, bounces, and opt-outs always stop a sequence. Threads older than ~45
+                days are left alone.
+              </div>
+              {form.followup_enabled && (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                  <div><label style={labelStyle}>Wait (business days)</label><input type="number" value={form.followup_wait_days} onChange={(e) => set('followup_wait_days', Math.max(1, parseInt(e.target.value) || 1))} style={inputStyle} /></div>
+                  <div><label style={labelStyle}>Max touches (incl. opener)</label><input type="number" value={form.followup_max_touches} onChange={(e) => set('followup_max_touches', Math.max(1, parseInt(e.target.value) || 1))} style={inputStyle} /></div>
                 </div>
               )}
             </div>

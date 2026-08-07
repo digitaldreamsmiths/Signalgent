@@ -146,6 +146,12 @@ export interface SendSettings {
   bounce_pause_threshold: number
   bounce_pause_window_days: number
   bounce_pause_min_sends: number
+  // Automatic follow-up sequences: the cron generates + queues the next touch
+  // when the last one has gone followup_wait_days business days without a
+  // reply, up to followup_max_touches total touches per prospect.
+  followup_enabled: boolean
+  followup_wait_days: number
+  followup_max_touches: number
 }
 
 /** Outcome of the whole conversation. A non-`open` disposition closes the

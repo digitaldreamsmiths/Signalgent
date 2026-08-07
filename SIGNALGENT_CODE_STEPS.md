@@ -2136,3 +2136,40 @@ The 135 queued sends and their 135 unsent drafts predated the change and opened 
 - In-browser: Industry dropdown now renders on top of the Add company modal, options clickable ("Healthcare" selected into the trigger); website field accepts bare domains with no validation block. Modal closed without creating data.
 - `normalizeWebsiteUrl` unit cases (bare, www, path, both schemes, uppercase scheme, empty/whitespace): ALL PASS.
 - `tsc --noEmit` + eslint clean.
+
+---
+
+## Session 34 — Phase 1 chunk 1: automatic follow-up sequences
+
+The largest functional gap vs every competitor: follow-ups existed but were generated one prospect at a time by hand. Now the cron drafts and queues the next touch automatically when a sent email goes unanswered. Per-company settings for now; the campaigns table (next chunk) will carry per-campaign overrides with these as the fallback.
+
+### The rule
+
+For every prospect with **all touches sent**, **no reply** (disposition still open), **fewer than `followup_max_touches` total touches**, and the **last send ≥ `followup_wait_days` business days ago**: generate the next touch and queue it. Hard guards: threads older than ~45 days are left alone (a nudge on a months-old cold email reads as spam — also prevents enabling the toggle from blasting follow-ups at the entire 389-send history); at most 15 follow-ups per company per tick (bounds LLM cost); a rejected/pending/approved-but-unsent touch stalls the sequence (it's either mid-flight or parked on a human decision); replies, bounces, and opt-outs stop it cold (the sweep runs AFTER the reply scan in the cron, and disposition is re-checked at generation time).
+
+### Auto-approval semantics
+
+Template follow-ups are pre-approved copy → approved + queued (as since Session 29). Personalized follow-ups are LLM output: **clean ones (drift check passed) auto-approve and queue** — the opener's facts were already human-approved and the drift check re-verifies them — while a **drifted draft lands in "To review"** and pauses that prospect's sequence until a human decides. The manual "Generate follow-up" button keeps its old semantics (personalized always goes to review).
+
+### Changes
+
+| File | Change |
+| --- | --- |
+| `supabase/migrations/20260809000000_outreach_followups.sql` (NEW) | `followup_enabled` (default FALSE — enabling is an explicit choice), `followup_wait_days` (4), `followup_max_touches` (3) on outreach_settings. Remote-only as usual. |
+| `lib/integrations/outreach/followups.ts` (NEW) | `generateFollowupTouch` — the touch generator moved out of actions.ts into a plain module (cron-callable), with the `auto` flag selecting sweep vs manual approval semantics. `runFollowupSweep` — the cron pass: paged reads of drafts + sent sends (1,000-row-cap safe), pure `selectFollowupCandidates` filter (unit-tested), capped generation loop. `businessDaysSince` (UTC weekdays). |
+| `lib/integrations/outreach/actions.ts` | `generateFollowup` is now a thin auth wrapper over the shared core (−100 lines). |
+| `app/api/outreach/cron/route.ts` | Sweep wired in after `scanReplies`; response reports `followupsQueued` / `followupsReview`. |
+| `lib/integrations/outreach/send/worker.ts`, `types.ts`, `lib/types/database.types.ts` | New settings threaded through defaults + loader (`??` defaults pre-migration). |
+| `lib/integrations/outreach/sending.ts` | `saveSendSettings` retries without the follow-up keys if their columns don't exist yet — this save is also the sending kill switch and must never be blocked by a pending migration. |
+| `components/widgets/content/sending-settings-modal.tsx` | "Automatic follow-ups" section: toggle + wait (business days) + max touches, with the semantics spelled out in the hint text. |
+
+### Verification
+
+- Unit suite: `businessDaysSince` (Mon→Fri = 4, Fri→Mon = 1, same-day/reversed = 0) and `selectFollowupCandidates` (due / too-recent / at-max / in-flight / no-drafts / stale-thread / never-sent): ALL PASS.
+- In-browser: the new section renders in Sending settings, toggle reveals the two fields with correct defaults; canceled without saving. No console errors.
+- `tsc --noEmit` clean; eslint findings identical to `main`.
+
+### Handoff (not applied)
+
+1. Apply `supabase/migrations/20260809000000_outreach_followups.sql`. Until then: the sweep no-ops (loader defaults `followup_enabled` to false), and saving Sending settings silently skips the three new fields (fallback path).
+2. To turn sequences on for SourceGent: Sending settings → check "Automatic follow-ups" → Save. First activation will follow up prospects whose last send is within the 45-day window, 15 per tick.
