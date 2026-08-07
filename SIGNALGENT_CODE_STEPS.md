@@ -2102,11 +2102,37 @@ Second Phase 0 chunk. The pipeline only ever knew email → domain → company, 
 - `tsc --noEmit` clean; eslint findings identical to `main`.
 - In-browser: `carlmckittrick@` shows "no name — greets 'Hi,'"; `robert.caviness@aleutfederal.com` shows "Robert Caviness (from email)" + 'new drafts greet "Hi Robert,"'; Save before the migration reports the specific pending-migration error.
 
-### Handoff (not applied)
+### Handoff
 
-1. Apply `supabase/migrations/20260808000000_outreach_contact_name.sql` (remote-only, out-of-band). Until then the parse carries the feature alone; only manual overrides are blocked.
+1. ~~Apply `supabase/migrations/20260808000000_outreach_contact_name.sql`~~ — **DONE 2026-08-06**.
+
+### Out-of-band data pass (prod, applied 2026-08-06)
+
+The 135 queued sends and their 135 unsent drafts predated the change and opened "Hi,". A one-off script (run and then deleted — deliberately NOT a requeue: bodies were never recomposed, so no tokens were minted and `NEXT_PUBLIC_APP_URL` was never involved, sidestepping the Session 28 localhost-link trap entirely) applied `applyGreeting` in place: **21 queued sends + their 21 drafts** rewritten ("Hi," → "Hi Darrin," etc.), the other 114 unparseable (role/glued localparts — the precision gate working as designed). Send updates guarded on `status='queued'`; subjects, schedules, tokens, signatures, footers untouched.
+
+- **Bug caught in dry run:** the script's first version read ALL 4,933 prospects unpaginated — PostgREST's silent 1,000-row cap (the Session 26 bug) stranded 12 of 21 drafts as "prospect missing" while sends slipped through on their own `recipient_email` fallback. The 21-vs-9 asymmetry in the dry-run counts exposed it before anything was written; fixed by fetching only referenced prospect ids.
+- **Post-apply audit:** re-run reports 0 remaining (idempotent); all 21 named bodies verified to keep their own `unsub_token` and a well-formed `Hi {First},` first line.
 
 ### Behavior notes
 
-- Existing drafts keep their bare "Hi," — greetings bake in at draft creation, so the change applies to new drafts (including auto-generated template drafts and follow-ups) from the next enrichment wave on.
-- The 135 queued sends predate this change and will go out with "Hi,". Rewriting them in place would need a requeue-style pass (see Session 28); not done here.
+- Greetings bake in at draft creation, so everything from the next enrichment wave on is named automatically when the localpart parses; already-SENT emails are history and unchanged.
+
+---
+
+## Session 33 — Phase 0 acceptance test PASSED + company-form fixes it surfaced
+
+**Phase 0 is closed.** Eudon ran the acceptance test on the dev server: created a second company ("ABC Corp."), configured it, and sent an email — a different tenant producing credible outreach with zero code changes, which was the phase's exit criterion. The test surfaced two bugs in the add-company flow, fixed here.
+
+### Changes
+
+| File | Change |
+| --- | --- |
+| `components/ui/select.tsx` | Select dropdowns portal at `z-50`, but the add-company modal overlay sits at `zIndex 100` — so the Industry dropdown opened BEHIND the popup. Bumped the Positioner + Popup to `z-[150]` (global: an open select should beat any overlay; nothing legitimately stacks above an open dropdown). |
+| `lib/utils.ts` | `normalizeWebsiteUrl`: "www.url.com" / "acme.com/about" → prepend `https://`; existing schemes pass through; empty → null. |
+| `components/layout/add-company-modal.tsx`, `app/onboarding/page.tsx` | Website inputs switch `type="url"` → `type="text"` + `inputMode="url"` — browser url validation rejects the bare domains people actually type — and both submit paths store the normalized URL. Placeholders now show a bare domain. |
+
+### Verification
+
+- In-browser: Industry dropdown now renders on top of the Add company modal, options clickable ("Healthcare" selected into the trigger); website field accepts bare domains with no validation block. Modal closed without creating data.
+- `normalizeWebsiteUrl` unit cases (bare, www, path, both schemes, uppercase scheme, empty/whitespace): ALL PASS.
+- `tsc --noEmit` + eslint clean.
