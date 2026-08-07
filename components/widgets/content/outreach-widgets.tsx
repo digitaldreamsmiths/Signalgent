@@ -159,17 +159,20 @@ function Metric({ label, value, accent, hint }: { label: string; value: string |
 }
 
 /** Contextual empty-state copy per filter tab. */
+/** Contextual empty-state copy per filter tab. Each one says what the tab is
+ * FOR and what fills it, so a new user learns the pipeline by walking the tabs
+ * rather than guessing which of ten is broken. */
 const EMPTY_MSG: Record<Filter, string> = {
-  contacts: 'No contacts yet — paste or upload emails above.',
-  review: 'Nothing waiting for review.',
-  templates: 'No template drafts waiting — templates are auto-approved and go straight to “Ready to email”.',
-  needs_review: 'Nothing needs a manual match.',
-  approved: 'Nothing ready to email yet — approve drafts from “To review” (templates land here automatically).',
-  exported: 'Nothing sent yet.',
-  replied: 'No replies recorded yet.',
-  bounced: 'No bounces or unsubscribes.',
-  scheduled: 'Nothing scheduled yet.',
-  all: 'No drafts yet.',
+  contacts: 'No contacts yet — paste or upload a list of email addresses above. Everything else follows from this.',
+  review: 'Nothing waiting for review. Personalized drafts land here after enrichment, for you to approve before they can send.',
+  templates: 'No template drafts waiting — templates are pre-approved copy, so they skip review and go straight to “Ready to email”.',
+  needs_review: 'Nothing needs a manual match. Prospects appear here when the resolver finds a company but isn’t confident enough to use it.',
+  approved: 'Nothing ready to email yet. Approve drafts from “To review”, and templates land here on their own.',
+  exported: 'Nothing sent yet. Emails move here once they actually go out.',
+  replied: 'No replies recorded yet. “Scan replies” checks your mailbox and files responses here automatically.',
+  bounced: 'No bounces or unsubscribes. Anyone who lands here is suppressed from all future sending.',
+  scheduled: 'Nothing scheduled yet. Approved drafts get a send time from the drip schedule and queue up here.',
+  all: 'No drafts yet. Add contacts, then run an enrichment wave to generate the first emails.',
 }
 
 // ── List ──────────────────────────────────────────────────────────────────────
@@ -1294,6 +1297,25 @@ export function OutreachWorkspace() {
           <Metric label="Prospects" value={c.total} />
           <Metric label="Sent" value={c.sent} accent="#378ADD" />
           <Metric label="Queued" value={c.queued} accent={c.queued > 0 ? ACCENT : undefined} />
+          {/* Today against the cap. The warmup ramp used to be invisible math:
+              the queue would go quiet mid-morning with nothing explaining why. */}
+          {snapshot?.sending && (
+            <Metric
+              label="Today"
+              value={`${snapshot.sending.sent_today}/${snapshot.sending.effective_daily_cap}`}
+              accent={snapshot.sending.sent_today >= snapshot.sending.effective_daily_cap ? '#e0a060' : undefined}
+              // Kept short: the tile ellipsizes its hint (full text on hover).
+              hint={
+                !snapshot.sending.active
+                  ? 'sending is off'
+                  : snapshot.sending.sent_today >= snapshot.sending.effective_daily_cap
+                    ? 'resumes tomorrow'
+                    : snapshot.sending.warmup_day
+                      ? `warmup day ${snapshot.sending.warmup_day} → ${snapshot.sending.daily_send_limit}`
+                      : 'daily limit'
+              }
+            />
+          )}
           <Metric label="Replied" value={c.replied} accent="#1D9E75" />
           <Metric label="Reply rate" value={fmtPct(snapshot?.reply_rate ?? 0, c.sent)} />
           {/* Denominator is tracked sends, not all sends: emails sent before
@@ -1322,10 +1344,19 @@ export function OutreachWorkspace() {
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, color: MUTED }}>Loading…</div>
       )}
       {!loading && prospects.length === 0 && (
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>
-          <div>
-            <div style={{ fontSize: 14, color: 'var(--app-text-2)', marginBottom: 4 }}>No prospects yet</div>
-            <div style={{ fontSize: 12, color: MUTED }}>Paste a contact list above, then run enrichment to generate drafts.</div>
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: 16 }}>
+          <div style={{ maxWidth: 460 }}>
+            <div style={{ fontSize: 14, color: 'var(--app-text-2)', marginBottom: 6 }}>
+              {campaignFilter === 'all' ? 'No prospects yet' : 'No prospects in this campaign yet'}
+            </div>
+            <div style={{ fontSize: 12, color: MUTED, lineHeight: 1.6 }}>
+              Paste or upload contact emails above{campaignFilter !== 'all' && campaignFilter !== 'none' ? ' — they’ll join this campaign' : ''}.
+              Enrichment then researches each company’s federal awards, writes a personalized email, and fact-checks it
+              against what it found. Anything it can’t personalize gets one of your templates instead.
+            </div>
+            <div style={{ fontSize: 11, color: MUTED, marginTop: 10, lineHeight: 1.6 }}>
+              You approve the personalized drafts; nothing sends until you turn sending on.
+            </div>
           </div>
         </div>
       )}

@@ -18,7 +18,7 @@ import type { Database } from '@/lib/types/database.types'
 import { extractDomain } from '../usaspending/resolve'
 import { runPipelineFromName } from './pipeline'
 import { persistOutcome, recordUsage, runEnrichmentBatch, runEnrichmentBatchForIds, enrichToBuffer, RUN_BATCH } from './enrich-run'
-import { loadSettings, getEffectiveDailyCap } from './send/worker'
+import { loadSettings, getEffectiveDailyCap, todayBounds, warmupDayIndex } from './send/worker'
 import { generateFollowupTouch } from './followups'
 import { loadOfferProfile } from './offer-profile'
 import { fetchStoredContactNames, resolveContactName } from './contact-name'
@@ -328,10 +328,24 @@ export async function getOutreachSnapshot(companyId: string): Promise<OutreachSn
       ? { status: account.status, last_error: account.last_error }
       : { status: 'not_connected', last_error: null }
   }
+  // Today's send count, measured over the same timezone-local day the cap is,
+  // so "12 / 25" always reconciles with why the queue did or didn't move.
+  const { startIso, endIso } = todayBounds(settings)
+  const { count: sentToday } = await supabase
+    .from('outreach_sends')
+    .select('id', { count: 'exact', head: true })
+    .eq('company_id', companyId)
+    .eq('status', 'sent')
+    .gte('sent_at', startIso)
+    .lt('sent_at', endIso)
+
   const sending = {
     active: settings.active,
     pause_reason: settings.pause_reason,
     effective_daily_cap: getEffectiveDailyCap(settings),
+    daily_send_limit: settings.daily_send_limit,
+    sent_today: sentToday ?? 0,
+    warmup_day: warmupDayIndex(settings),
     bounce_rate_7d,
     provider: settings.provider,
     gmail,

@@ -2302,3 +2302,35 @@ Design choices:
 - **ABC Corp (partially configured)**: auto-expands to "Finish setting up outreach — 3 steps left", correctly marking dry-run mailbox and 1 prospect as done while flagging offer profile, sender details, and sending as todo.
 - **Bug caught in browser**: the complete-state "Review" button did nothing — `open` initialised to `true` meant the collapsed branch rendered while the expand handler set a value it already held. Reworked to a tri-state (`null` = follow the default, boolean = user's explicit choice).
 - `tsc` clean; eslint findings identical to `main`; no console errors.
+
+---
+
+## Session 39 — Phase 2 chunk 3: warmup ramp made visible + teach-first empty states
+
+**Phase 2 is complete** with this chunk.
+
+### The warmup ramp was invisible math
+
+`effective_daily_cap` had been computed and carried on the snapshot since Session 23 — and displayed *nowhere*. The queue would go quiet mid-morning with nothing on screen explaining why, exactly the kind of silence that makes a new user assume the product is broken.
+
+New **Today** metric: `sent_today / effective_daily_cap`, amber once the cap is hit, with a hint that adapts — `sending is off`, `resumes tomorrow`, `warmup day N → 45`, or `daily limit`. On the live SourceGent workspace it immediately read **45/45 · resumes tomorrow**, explaining a 369-email queue that isn't moving.
+
+| File | Change |
+| --- | --- |
+| `lib/integrations/outreach/send/worker.ts` | Exported `todayBounds(settings, now)` (UTC instants bounding the timezone-local day the cap is measured over) and `warmupDayIndex(settings, now)` (1-based sending-weekday index, null once ramped or disabled). Both reuse the existing private tz helpers rather than duplicating the maths. |
+| `lib/integrations/outreach/actions.ts`, `types.ts` | Snapshot's `sending` gains `daily_send_limit`, `sent_today` (counted over the same local day as the cap, so the ratio always reconciles), and `warmup_day`. |
+| `components/widgets/content/outreach-widgets.tsx` | The Today tile, plus rewritten empty states. |
+
+### Teach-first empty states
+
+Every tab's empty message now says what the tab is *for* and what fills it ("Prospects appear here when the resolver finds a company but isn't confident enough to use it"), so a newcomer learns the pipeline by walking the tabs instead of guessing which of ten is broken. The no-prospects state explains the enrichment → draft → fact-check → approve flow in three lines and is campaign-aware.
+
+### Verification
+
+- 15-assertion unit suite on the new time helpers: ramp values across days 1/2/5, weekends not advancing the ramp, clamping at the configured limit, `warmupDayIndex` nulling when ramped or disabled, and `todayBounds` landing on local midnight (04:00Z under EDT), spanning exactly 24h, straddling local midnight correctly in both directions, and honoring a different timezone. ALL PASS.
+- In-browser on the live workspace: Today reads 45/45 amber with `resumes tomorrow`; new empty-state copy renders. The hint was shortened after the first render ellipsized it inside the tile. No console errors.
+- `tsc` clean; eslint identical to `main`.
+
+### Phase 2 complete — design-partner readiness
+
+Setup checklist, deliverability preflight, warmup visibility, and teach-first empty states are all in. Per the spec that closes Phase 2; next is **Phase 3, reply triage** (show the reply thread in-app with quick triage, deep-linking to Gmail to answer).
