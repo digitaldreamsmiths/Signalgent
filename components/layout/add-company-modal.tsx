@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { normalizeWebsiteUrl } from '@/lib/utils'
 import { useCompany } from '@/contexts/company-context'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -97,7 +98,7 @@ export function AddCompanyModal({ open, onClose }: AddCompanyModalProps) {
         name: name.trim(),
         slug,
         industry: industry || null,
-        website: website || null,
+        website: normalizeWebsiteUrl(website),
       })
       .select()
       .single()
@@ -230,12 +231,16 @@ export function AddCompanyModal({ open, onClose }: AddCompanyModalProps) {
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             <Label htmlFor="website" style={{ fontSize: 11, color: '#888' }}>Website</Label>
+            {/* type="text", not "url": browser url validation rejects bare
+                domains ("www.acme.com"), which is what people actually type.
+                normalizeWebsiteUrl prepends https:// at submit. */}
             <Input
               id="website"
-              type="url"
+              type="text"
+              inputMode="url"
               value={website}
               onChange={(e) => setWebsite(e.target.value)}
-              placeholder="https://yoursite.com"
+              placeholder="yoursite.com"
             />
           </div>
 

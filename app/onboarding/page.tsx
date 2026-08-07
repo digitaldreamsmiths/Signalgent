@@ -13,6 +13,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Card, CardContent } from '@/components/ui/card'
+import { normalizeWebsiteUrl } from '@/lib/utils'
 
 const INDUSTRIES = [
   'Technology',
@@ -74,7 +75,7 @@ export default function OnboardingPage() {
           workspaceSlug,
           companyName,
           industry: industry || null,
-          website: website || null,
+          website: normalizeWebsiteUrl(website),
         }),
       })
 
@@ -205,12 +206,15 @@ export default function OnboardingPage() {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="website">Website (optional)</Label>
+                {/* type="text", not "url": browser url validation rejects bare
+                    domains ("www.acme.com"). normalizeWebsiteUrl adds https://. */}
                 <Input
                   id="website"
-                  type="url"
+                  type="text"
+                  inputMode="url"
                   value={website}
                   onChange={(e) => setWebsite(e.target.value)}
-                  placeholder="https://example.com"
+                  placeholder="example.com"
                 />
               </div>
               <div className="flex gap-3">
