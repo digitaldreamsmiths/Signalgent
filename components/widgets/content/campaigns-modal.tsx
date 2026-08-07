@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { createCampaign, updateCampaign } from '@/lib/integrations/outreach/campaign-actions'
 import type { OutreachCampaign } from '@/lib/integrations/outreach/campaigns'
+import type { CampaignStats } from '@/contexts/outreach-context'
 
 const BORDER = 'var(--app-border)'
 const CARD = 'var(--app-card)'
@@ -10,14 +11,6 @@ const INPUT = 'var(--app-input)'
 const TEXT = 'var(--app-text)'
 const MUTED = 'var(--app-muted)'
 const ACCENT = '#D85A30'
-
-/** Client-derived funnel numbers for one campaign (built by the workspace). */
-export interface CampaignStats {
-  prospects: number
-  sent: number
-  replied: number
-  opened: number
-}
 
 const labelStyle: React.CSSProperties = { fontSize: 10, fontWeight: 600, color: MUTED, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4, display: 'block' }
 const inputStyle: React.CSSProperties = { width: '100%', background: INPUT, border: `1px solid ${BORDER}`, borderRadius: 6, color: TEXT, fontSize: 12, padding: '7px 9px' }

@@ -2,14 +2,20 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { useCompany } from '@/contexts/company-context'
+import {
+  useOutreach,
+  FILTER_LABEL,
+  SECTIONS,
+  SECTION_OF,
+  type Filter,
+  type Section,
+} from '@/contexts/outreach-context'
 import {
   approveDraft,
   approveDrafts,
   deleteProspects,
   editDraft,
   generateFollowup,
-  getOutreachSnapshot,
   ingestProspects,
   markExported,
   processProspects,
@@ -19,13 +25,13 @@ import {
   setContactName,
   setDisposition,
 } from '@/lib/integrations/outreach/actions'
-import { queueDraftSend, cancelSend, processSendQueue, scheduleDraftSends, getScheduledSends, scanRepliesNow } from '@/lib/integrations/outreach/sending'
+import { queueDraftSend, cancelSend, processSendQueue, scheduleDraftSends, scanRepliesNow } from '@/lib/integrations/outreach/sending'
 import { assignProspectsToCampaign } from '@/lib/integrations/outreach/campaign-actions'
 import type { OutreachCampaign } from '@/lib/integrations/outreach/campaigns'
-import type { Disposition, OutreachDraftView, OutreachSnapshot, OutreachProspectView, ScheduledSendView } from '@/lib/integrations/outreach/types'
+import type { Disposition, OutreachDraftView, OutreachProspectView } from '@/lib/integrations/outreach/types'
 import { hygieneWarnings, replyRiskWarnings } from '@/lib/integrations/outreach/hygiene'
 import { SendingSettingsModal } from './sending-settings-modal'
-import { CampaignsModal, type CampaignStats } from './campaigns-modal'
+import { CampaignsModal } from './campaigns-modal'
 import { SetupChecklist } from './setup-checklist'
 import { ReplyInbox, decodeEntities, gmailThreadUrl } from './reply-inbox'
 import { TemplatesModal } from './templates-modal'
@@ -37,48 +43,10 @@ const BORDER = 'var(--app-border)'
 const CARD = 'var(--app-card)'
 const MUTED = 'var(--app-muted)'
 
-type Filter = 'contacts' | 'review' | 'templates' | 'needs_review' | 'approved' | 'exported' | 'replied' | 'bounced' | 'scheduled' | 'all'
-
 /** Sort keys for the draft lists (Ready to email / Sent / All). 'type' is the
  * default and keeps the grouped Personalized/Templates sections; the rest
  * flatten the list. */
 type ListSortKey = 'type' | 'name' | 'email' | 'status'
-
-/**
- * Phase 5 IA — the ten flat tabs regroup into four sections that match how the
- * work actually flows (docs/specs/signalgent-govcon-v1.md). Sections are the
- * vocabulary the sidebar + routes will use in the next chunk; keeping one page
- * and one snapshot for now means the grouping can be proven without splitting
- * a 1,600-line stateful component across routes.
- */
-type Section = 'pipeline' | 'contacts' | 'inbox' | 'schedule'
-
-const SECTIONS: { key: Section; label: string; filters: Filter[] }[] = [
-  // Order matters: the first filter is the section's landing tab.
-  { key: 'pipeline', label: 'Pipeline', filters: ['review', 'templates', 'needs_review', 'approved', 'exported', 'all'] },
-  { key: 'contacts', label: 'Contacts', filters: ['contacts'] },
-  { key: 'inbox', label: 'Inbox', filters: ['replied', 'bounced'] },
-  { key: 'schedule', label: 'Schedule', filters: ['scheduled'] },
-]
-
-const SECTION_OF: Record<Filter, Section> = SECTIONS.reduce((acc, s) => {
-  for (const f of s.filters) acc[f] = s.key
-  return acc
-}, {} as Record<Filter, Section>)
-
-/** Sub-tab labels, split out so the section bar and the tab row agree. */
-const FILTER_LABEL: Record<Filter, string> = {
-  contacts: 'Contacts',
-  review: 'To review',
-  templates: 'Templates',
-  needs_review: 'Needs review',
-  approved: 'Ready to email',
-  exported: 'Sent',
-  replied: 'Replied',
-  bounced: 'Bounced / opt-out',
-  scheduled: 'Scheduled',
-  all: 'All',
-}
 
 const DISPO_META: Record<Disposition, { label: string; color: string }> = {
   open: { label: 'open', color: 'var(--app-muted)' },
@@ -925,18 +893,20 @@ function DraftDetail({ prospect, companyId, senderEmail, onChanged }: { prospect
 
 // ── Workspace ─────────────────────────────────────────────────────────────────
 
-/** Action feedback. Info toasts auto-dismiss; errors stay until dismissed. */
-type Toast = { id: number; text: string; kind: 'info' | 'error' }
-
 export function OutreachWorkspace() {
-  const { activeCompany } = useCompany()
-  const companyId = activeCompany?.id ?? null
+  // Shared across every section (and, once the routes land, across every
+  // route): the snapshot, campaign scope, queued sends, toasts, and the poll.
+  const {
+    companyId, snapshot, loading, refresh,
+    prospects, lists,
+    campaigns, campaignStats, campaignFilter, setCampaignFilter,
+    scheduledSends, loadScheduled,
+    toasts, pushToast, dismissToast,
+    setupKey,
+  } = useOutreach()
 
-  const [snapshot, setSnapshot] = useState<OutreachSnapshot | null>(null)
-  const [loading, setLoading] = useState(true)
+  // View-local state — this is what will move into each route.
   const [raw, setRaw] = useState('')
-  const [toasts, setToasts] = useState<Toast[]>([])
-  const toastSeq = useRef(0)
   const [running, setRunning] = useState(false)
   const [progress, setProgress] = useState<{ processed: number; total: number; drafted: number; skipped: number; cost: number } | null>(null)
   const [filter, setFilter] = useState<Filter>('review')
@@ -944,16 +914,11 @@ export function OutreachWorkspace() {
   const [sendingModalOpen, setSendingModalOpen] = useState(false)
   const [templatesModalOpen, setTemplatesModalOpen] = useState(false)
   const [campaignsModalOpen, setCampaignsModalOpen] = useState(false)
-  // Bumped after anything the setup checklist measures changes, so it recomputes.
-  const [setupKey, setSetupKey] = useState(0)
-  // 'all' = every prospect, 'none' = the campaign-less pool, else a campaign id.
-  const [campaignFilter, setCampaignFilter] = useState<'all' | 'none' | string>('all')
   const [processing, setProcessing] = useState(false)
   const [scanning, setScanning] = useState(false)
   const [selectedDraftIds, setSelectedDraftIds] = useState<Set<string>>(new Set())
   const [scheduleDialogOpen, setScheduleDialogOpen] = useState(false)
   const [scheduling, setScheduling] = useState(false)
-  const [scheduledSends, setScheduledSends] = useState<ScheduledSendView[]>([])
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(false)
   const [listSortKey, setListSortKey] = useState<ListSortKey>('type')
   const [listSortDir, setListSortDir] = useState<'asc' | 'desc'>('asc')
@@ -965,64 +930,6 @@ export function OutreachWorkspace() {
     if (k === listSortKey) setListSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
     else { setListSortKey(k); setListSortDir('asc') }
   }
-
-  const refresh = useCallback(async () => {
-    if (!companyId) return
-    const snap = await getOutreachSnapshot(companyId)
-    setSnapshot(snap)
-    setSetupKey((k) => k + 1) // setup state rides on the same events as the snapshot
-  }, [companyId])
-
-  const loadScheduled = useCallback(async () => {
-    if (!companyId) return
-    setScheduledSends(await getScheduledSends(companyId))
-  }, [companyId])
-
-  const dismissToast = useCallback((id: number) => {
-    setToasts((prev) => prev.filter((t) => t.id !== id))
-  }, [])
-
-  const pushToast = useCallback(
-    (text: string, kind: Toast['kind'] = 'info') => {
-      const id = ++toastSeq.current
-      setToasts((prev) => [...prev, { id, text, kind }])
-      if (kind !== 'error') setTimeout(() => dismissToast(id), 4000)
-    },
-    [dismissToast],
-  )
-
-  useEffect(() => {
-    if (!companyId) return
-    let active = true
-    setCampaignFilter('all') // campaign ids are per-company
-    ;(async () => {
-      const snap = await getOutreachSnapshot(companyId)
-      if (!active) return
-      setSnapshot(snap)
-      setLoading(false)
-    })()
-    return () => {
-      active = false
-    }
-  }, [companyId])
-
-  // The Vercel cron mutates send/reply state every ~5 minutes; poll while the
-  // tab is visible (and refetch as soon as it becomes visible again) so counts
-  // and statuses stay current without a manual reload.
-  useEffect(() => {
-    if (!companyId) return
-    const tick = () => {
-      if (document.visibilityState !== 'visible') return
-      refresh()
-      if (filter === 'scheduled') loadScheduled()
-    }
-    const interval = setInterval(tick, 150_000)
-    document.addEventListener('visibilitychange', tick)
-    return () => {
-      clearInterval(interval)
-      document.removeEventListener('visibilitychange', tick)
-    }
-  }, [companyId, filter, refresh, loadScheduled])
 
   useEffect(() => {
     if (filter === 'scheduled') loadScheduled()
@@ -1112,41 +1019,10 @@ export function OutreachWorkspace() {
 
   if (!companyId) return <div style={{ fontSize: 12, color: MUTED }}>Select a company to start outreach.</div>
 
-  const allProspects = snapshot?.prospects ?? []
-  const campaigns = snapshot?.campaigns ?? []
-  // Per-campaign funnel, derived client-side from the snapshot the workspace
-  // already holds. Opens are per-send (`opened_at`), so `opened` undercounts
-  // for pre-tracking sends — same caveat as the company-wide open rate.
-  const campaignStats = new Map<string, CampaignStats>()
-  for (const p of allProspects) {
-    if (!p.campaign_id) continue
-    const s = campaignStats.get(p.campaign_id) ?? { prospects: 0, sent: 0, replied: 0, opened: 0 }
-    s.prospects += 1
-    if (p.drafts.some((d) => d.status === 'exported' || d.send?.status === 'sent')) s.sent += 1
-    if (p.disposition === 'replied' || p.disposition === 'interested' || p.disposition === 'not_interested') s.replied += 1
-    if (p.drafts.some((d) => d.send?.opened_at)) s.opened += 1
-    campaignStats.set(p.campaign_id, s)
-  }
-  // The campaign filter scopes every tab and list; the metrics bar stays
-  // company-wide (queue, caps, and cost are company-level infrastructure).
-  const prospects =
-    campaignFilter === 'all'
-      ? allProspects
-      : allProspects.filter((p) => (campaignFilter === 'none' ? !p.campaign_id : p.campaign_id === campaignFilter))
+  // allProspects / prospects / lists / campaigns / campaignStats now come from
+  // the provider — the campaign scope is applied there, so every view (and
+  // every future route) sees the same filtered set.
   const c = snapshot?.counts
-  const withDraft = prospects.filter((p) => p.draft)
-  const lists: Record<Filter, OutreachProspectView[]> = {
-    contacts: prospects,
-    review: withDraft.filter((p) => !p.draft!.is_template && p.draft!.status === 'pending'),
-    templates: withDraft.filter((p) => p.draft!.is_template && p.draft!.status === 'pending' && !p.needs_review),
-    needs_review: prospects.filter((p) => p.needs_review),
-    approved: withDraft.filter((p) => p.draft!.status === 'approved' || p.draft!.status === 'edited'),
-    exported: withDraft.filter((p) => p.draft!.status === 'exported'),
-    replied: prospects.filter((p) => p.disposition === 'replied' || p.disposition === 'interested' || p.disposition === 'not_interested'),
-    bounced: prospects.filter((p) => p.disposition === 'bounced' || p.disposition === 'unsubscribed'),
-    scheduled: [], // the Scheduled tab renders ScheduledView from scheduledSends, not this list
-    all: withDraft,
-  }
   const current = lists[filter]
   const selected = current.find((p) => p.id === selectedId) ?? current[0] ?? null
 
