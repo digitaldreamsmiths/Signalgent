@@ -22,6 +22,7 @@ import { persistOutcome, recordUsage, runEnrichmentBatch, runEnrichmentBatchForI
 import { loadSettings, getEffectiveDailyCap } from './send/worker'
 import { autoQueueDraftSend } from './send/queue'
 import { loadOfferProfile } from './offer-profile'
+import { applyGreeting, fetchStoredContactNames, resolveContactName } from './contact-name'
 import { openStats, recentBounceStats } from './send/scan'
 import { getAccount } from '../accounts'
 import { draftEmail } from './draft'
@@ -250,6 +251,10 @@ export async function getOutreachSnapshot(companyId: string): Promise<OutreachSn
       skip_stage: p.skip_stage,
       skip_reason: p.skip_reason,
       recipient_name: p.recipient_name,
+      // select('*') returns contact_name only once its migration is applied;
+      // until then the localpart parse carries the feature alone.
+      contact_name: resolveContactName(p.contact_name ?? null, p.email),
+      contact_name_manual: !!(p.contact_name ?? null)?.trim(),
       resolution_confidence: p.resolution_confidence,
       business_types: p.business_types ?? [],
       location: p.location,
@@ -348,6 +353,29 @@ export async function setDisposition(
   return { ok: true, data: undefined }
 }
 
+/** Set (or clear, with an empty string) the person-name override used in
+ * greetings. Applies to NEW drafts — existing drafts keep their baked greeting. */
+export async function setContactName(companyId: string, prospectId: string, name: string): Promise<ActionResult> {
+  try {
+    await requireCompanyAccess(companyId)
+  } catch (err) {
+    if (err instanceof IntegrationAuthError) return { ok: false, error: AUTH_ERROR }
+    throw err
+  }
+  const supabase = await createClient()
+  const { error } = await supabase
+    .from('outreach_prospects')
+    .update({ contact_name: name.trim() || null })
+    .eq('id', prospectId)
+    .eq('company_id', companyId)
+  if (error) {
+    const missing = /contact_name/.test(error.message) && /(not exist|not find|schema cache)/i.test(error.message)
+    return { ok: false, error: missing ? 'The contact-name migration hasn’t been applied to the database yet.' : 'Could not save the contact name.' }
+  }
+  revalidatePath('/outreach')
+  return { ok: true, data: undefined }
+}
+
 /** Permanently delete prospects (cascades to their drafts + sends). */
 export async function deleteProspects(
   companyId: string,
@@ -393,7 +421,7 @@ export async function generateFollowup(companyId: string, prospectId: string): P
   const supabase = await createClient()
   const { data: p } = await supabase
     .from('outreach_prospects')
-    .select('id, recipient_name, disposition')
+    .select('id, recipient_name, email, disposition')
     .eq('id', prospectId)
     .eq('company_id', companyId)
     .single()
@@ -418,6 +446,8 @@ export async function generateFollowup(companyId: string, prospectId: string): P
   const personalized = existing.find((d) => asStringArray(d.facts_for_draft).length > 0)
 
   const profile = await loadOfferProfile(supabase, companyId)
+  const storedNames = await fetchStoredContactNames(supabase, companyId, [prospectId])
+  const contactName = resolveContactName(storedNames.get(prospectId), p.email)
   const usage: LLMUsage[] = []
   let row: {
     subject: string
@@ -443,7 +473,7 @@ export async function generateFollowup(companyId: string, prospectId: string): P
     if (!review) return { ok: false, error: 'Could not draft a follow-up. Try again.' }
     row = {
       subject: review.draft.subject,
-      body: review.draft.body,
+      body: applyGreeting(review.draft.body, contactName),
       angle: personalized.angle,
       synthesis_confidence: personalized.synthesis_confidence,
       facts_for_draft: facts,
@@ -457,7 +487,7 @@ export async function generateFollowup(companyId: string, prospectId: string): P
     const tmpl = buildTemplateFollowup(p.recipient_name ?? null, prospectId, profile)
     row = {
       subject: tmpl.subject,
-      body: tmpl.body,
+      body: applyGreeting(tmpl.body, contactName),
       angle: null,
       synthesis_confidence: null,
       facts_for_draft: [],
@@ -590,9 +620,10 @@ export async function resolveManual(
   if (!prospect) return { ok: false, error: 'Prospect not found.' }
 
   const profile = await loadOfferProfile(supabase, companyId)
+  const storedNames = await fetchStoredContactNames(supabase, companyId, [prospectId])
   const usage: LLMUsage[] = []
   const outcome = await runPipelineFromName(prospect.email, name, usage, profile)
-  await persistOutcome(supabase, companyId, prospectId, outcome, profile)
+  await persistOutcome(supabase, companyId, prospectId, outcome, profile, resolveContactName(storedNames.get(prospectId), prospect.email))
   await recordUsage(supabase, companyId, access.userId, usage)
   revalidatePath('/outreach')
   return { ok: true, data: { status: outcome.status } }

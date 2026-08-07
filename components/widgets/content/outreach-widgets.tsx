@@ -15,6 +15,7 @@ import {
   rejectDraft,
   resolveManual,
   enrichWaveNow,
+  setContactName,
   setDisposition,
 } from '@/lib/integrations/outreach/actions'
 import { queueDraftSend, cancelSend, processSendQueue, scheduleDraftSends, getScheduledSends, scanRepliesNow } from '@/lib/integrations/outreach/sending'
@@ -672,6 +673,12 @@ function DraftDetail({ prospect, companyId, onChanged }: { prospect: OutreachPro
   const [error, setError] = useState<string | null>(null)
   const [manualName, setManualName] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(false)
+  // Contact-name editor. The input holds only the MANUAL override; a derived
+  // (parsed-from-email) name shows as the placeholder so clearing the field
+  // falls back to the parse rather than deleting knowledge.
+  const [contactInput, setContactInput] = useState(prospect.contact_name_manual ? prospect.contact_name ?? '' : '')
+  const contactDirty = contactInput.trim() !== (prospect.contact_name_manual ? (prospect.contact_name ?? '').trim() : '')
+  const parsedContact = !prospect.contact_name_manual ? prospect.contact_name : null
 
   const act = useCallback(
     async (fn: () => Promise<{ ok: boolean; error?: string }>, after?: () => void) => {
@@ -697,6 +704,24 @@ function DraftDetail({ prospect, companyId, onChanged }: { prospect: OutreachPro
             {prospect.business_types.length > 0 && ` · ${prospect.business_types.includes('service_disabled_veteran_owned_business') ? 'SDVOSB' : prospect.business_types.includes('small_business') ? 'Small business' : prospect.business_types[0]}`}
             {prospect.location && ` · ${prospect.location}`}
             {prospect.footprint && ` · ${prospect.footprint.award_count} awards / $${Math.round(prospect.footprint.sampled_total).toLocaleString('en-US')}`}
+          </div>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 6, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 11, color: MUTED }}>Contact:</span>
+            <input
+              value={contactInput}
+              onChange={(e) => setContactInput(e.target.value)}
+              placeholder={parsedContact ? `${parsedContact} (from email)` : 'no name — greets “Hi,”'}
+              title="Person name used in the greeting of NEW drafts. Blank = derive from the email address."
+              style={{ fontSize: 11, background: 'var(--app-input)', border: `1px solid ${BORDER}`, borderRadius: 5, color: 'var(--app-text)', padding: '3px 7px', width: 190, minHeight: 'auto' }}
+            />
+            {contactDirty && (
+              <button disabled={busy} onClick={() => act(() => setContactName(companyId, prospect.id, contactInput))} style={{ ...btnGhost(), padding: '3px 10px' }}>
+                Save
+              </button>
+            )}
+            {prospect.contact_name && (
+              <span style={{ fontSize: 10, color: MUTED }}>new drafts greet “Hi {prospect.contact_name.split(' ')[0]},”</span>
+            )}
           </div>
         </div>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>

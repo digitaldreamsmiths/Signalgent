@@ -247,6 +247,7 @@ export interface Database {
           recipient_name: string | null
           recipient_id: string | null
           uei: string | null
+          contact_name: string | null
           resolution_confidence: number | null
           resolution_method: 'heuristic' | 'ai_judge' | null
           business_types: string[] | null
@@ -272,6 +273,7 @@ export interface Database {
           recipient_name?: string | null
           recipient_id?: string | null
           uei?: string | null
+          contact_name?: string | null
           resolution_confidence?: number | null
           resolution_method?: 'heuristic' | 'ai_judge' | null
           business_types?: string[] | null
@@ -295,6 +297,7 @@ export interface Database {
           recipient_name?: string | null
           recipient_id?: string | null
           uei?: string | null
+          contact_name?: string | null
           resolution_confidence?: number | null
           resolution_method?: 'heuristic' | 'ai_judge' | null
           business_types?: string[] | null

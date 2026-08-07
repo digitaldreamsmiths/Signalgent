@@ -164,6 +164,11 @@ export interface OutreachProspectView {
   skip_stage: string | null
   skip_reason: string | null
   recipient_name: string | null
+  /** Person name for the greeting: the stored manual override when set, else
+   * derived from the email localpart, else null. recipient_name is the company. */
+  contact_name: string | null
+  /** True when contact_name is the stored override rather than the parse. */
+  contact_name_manual: boolean
   resolution_confidence: number | null
   business_types: string[]
   location: string | null

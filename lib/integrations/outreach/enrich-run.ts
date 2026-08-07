@@ -15,6 +15,7 @@ import type { Database, Json } from '@/lib/types/database.types'
 import { runPipeline, type PipelineOutcome } from './pipeline'
 import { fetchAllPages } from './fetch-all'
 import { loadOfferProfile, DEFAULT_OFFER_PROFILE, type OfferProfile } from './offer-profile'
+import { applyGreeting, fetchStoredContactNames, resolveContactName } from './contact-name'
 import { autoQueueDraftSend } from './send/queue'
 import { buildTemplateDraft, renderTemplate } from './template'
 import type { DraftResult } from './types'
@@ -90,13 +91,16 @@ async function pickTemplateDraft(
   return { draft: renderTemplate(chosen, recipientName), template_id: chosen.id }
 }
 
-/** Persist a pipeline outcome for a prospect (shared by run + manual resolve). */
+/** Persist a pipeline outcome for a prospect (shared by run + manual resolve).
+ * `contactName` (resolved override-or-parse) bakes the "Hi {first}," greeting
+ * into the stored draft, so the review queue shows exactly what sends. */
 export async function persistOutcome(
   supabase: DB,
   companyId: string,
   prospectId: string,
   outcome: PipelineOutcome,
   profile: OfferProfile = DEFAULT_OFFER_PROFILE,
+  contactName: string | null = null,
 ): Promise<void> {
   const enriched = 'enriched' in outcome ? outcome.enriched : undefined
   const prospectUpdate: ProspectUpdate = { enriched_at: new Date().toISOString() }
@@ -121,7 +125,7 @@ export async function persistOutcome(
         prospect_id: prospectId,
         company_id: companyId,
         subject: outcome.review.draft.subject,
-        body: outcome.review.draft.body,
+        body: applyGreeting(outcome.review.draft.body, contactName),
         angle: outcome.synthesis.angle,
         synthesis_confidence: outcome.synthesis.confidence,
         facts_for_draft: outcome.synthesis.facts_for_draft,
@@ -153,7 +157,7 @@ export async function persistOutcome(
           prospect_id: prospectId,
           company_id: companyId,
           subject: tmpl.subject,
-          body: tmpl.body,
+          body: applyGreeting(tmpl.body, contactName),
           angle: null,
           synthesis_confidence: null,
           facts_for_draft: [],
@@ -184,7 +188,7 @@ export async function backfillTemplateDrafts(supabase: DB, companyId: string): P
   const skipped = await fetchAllPages((from, to) =>
     supabase
       .from('outreach_prospects')
-      .select('id, recipient_name')
+      .select('id, recipient_name, email')
       .eq('company_id', companyId)
       .eq('status', 'skipped')
       .order('id')
@@ -202,6 +206,7 @@ export async function backfillTemplateDrafts(supabase: DB, companyId: string): P
 
   // Rotate independently per prospect so the fallback pool is spread across the list.
   const profile = await loadOfferProfile(supabase, companyId)
+  const storedNames = await fetchStoredContactNames(supabase, companyId, missing.map((p) => p.id))
   const rows = []
   for (const p of missing) {
     const { draft: tmpl, template_id } = await pickTemplateDraft(supabase, companyId, p.recipient_name ?? null, p.id, profile)
@@ -209,7 +214,7 @@ export async function backfillTemplateDrafts(supabase: DB, companyId: string): P
       prospect_id: p.id,
       company_id: companyId,
       subject: tmpl.subject,
-      body: tmpl.body,
+      body: applyGreeting(tmpl.body, resolveContactName(storedNames.get(p.id), p.email)),
       angle: null,
       synthesis_confidence: null,
       facts_for_draft: [],
@@ -255,12 +260,13 @@ export async function runEnrichmentBatch(supabase: DB, companyId: string, limit:
   }
 
   const profile = await loadOfferProfile(supabase, companyId)
+  const storedNames = await fetchStoredContactNames(supabase, companyId, pending.map((p) => p.id))
   const usage: LLMUsage[] = []
   let drafted = 0
   let skipped = 0
   for (const p of pending) {
     const outcome = await runPipeline(p.email, usage, profile)
-    await persistOutcome(supabase, companyId, p.id, outcome, profile)
+    await persistOutcome(supabase, companyId, p.id, outcome, profile, resolveContactName(storedNames.get(p.id), p.email))
     if (outcome.status === 'drafted') drafted += 1
     else skipped += 1
   }
@@ -307,13 +313,14 @@ export async function runEnrichmentBatchForIds(
   }
 
   const profile = await loadOfferProfile(supabase, companyId)
+  const storedNames = await fetchStoredContactNames(supabase, companyId, pending.map((p) => p.id))
   const usage: LLMUsage[] = []
   let drafted = 0
   let skipped = 0
   const processedIds: string[] = []
   for (const p of pending) {
     const outcome = await runPipeline(p.email, usage, profile)
-    await persistOutcome(supabase, companyId, p.id, outcome, profile)
+    await persistOutcome(supabase, companyId, p.id, outcome, profile, resolveContactName(storedNames.get(p.id), p.email))
     processedIds.push(p.id)
     if (outcome.status === 'drafted') drafted += 1
     else skipped += 1
