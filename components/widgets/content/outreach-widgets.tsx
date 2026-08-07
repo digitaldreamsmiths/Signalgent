@@ -44,6 +44,42 @@ type Filter = 'contacts' | 'review' | 'templates' | 'needs_review' | 'approved' 
  * flatten the list. */
 type ListSortKey = 'type' | 'name' | 'email' | 'status'
 
+/**
+ * Phase 5 IA — the ten flat tabs regroup into four sections that match how the
+ * work actually flows (docs/specs/signalgent-govcon-v1.md). Sections are the
+ * vocabulary the sidebar + routes will use in the next chunk; keeping one page
+ * and one snapshot for now means the grouping can be proven without splitting
+ * a 1,600-line stateful component across routes.
+ */
+type Section = 'pipeline' | 'contacts' | 'inbox' | 'schedule'
+
+const SECTIONS: { key: Section; label: string; filters: Filter[] }[] = [
+  // Order matters: the first filter is the section's landing tab.
+  { key: 'pipeline', label: 'Pipeline', filters: ['review', 'templates', 'needs_review', 'approved', 'exported', 'all'] },
+  { key: 'contacts', label: 'Contacts', filters: ['contacts'] },
+  { key: 'inbox', label: 'Inbox', filters: ['replied', 'bounced'] },
+  { key: 'schedule', label: 'Schedule', filters: ['scheduled'] },
+]
+
+const SECTION_OF: Record<Filter, Section> = SECTIONS.reduce((acc, s) => {
+  for (const f of s.filters) acc[f] = s.key
+  return acc
+}, {} as Record<Filter, Section>)
+
+/** Sub-tab labels, split out so the section bar and the tab row agree. */
+const FILTER_LABEL: Record<Filter, string> = {
+  contacts: 'Contacts',
+  review: 'To review',
+  templates: 'Templates',
+  needs_review: 'Needs review',
+  approved: 'Ready to email',
+  exported: 'Sent',
+  replied: 'Replied',
+  bounced: 'Bounced / opt-out',
+  scheduled: 'Scheduled',
+  all: 'All',
+}
+
 const DISPO_META: Record<Disposition, { label: string; color: string }> = {
   open: { label: 'open', color: 'var(--app-muted)' },
   replied: { label: 'replied', color: '#378ADD' },
@@ -1194,6 +1230,21 @@ export function OutreachWorkspace() {
     </button>
   )
 
+  // ── Section nav (Phase 5 IA) ──
+  const countFor = (f: Filter): number => (f === 'scheduled' ? c?.queued ?? 0 : lists[f].length)
+  const activeSection = SECTION_OF[filter]
+  const activeSubTabs = SECTIONS.find((s) => s.key === activeSection)?.filters ?? []
+  /** A section's badge is the number that actually wants attention, not the sum
+   * of everything it contains — "Pipeline 4,933" would be noise. */
+  const sectionBadge = (key: Section): number => {
+    switch (key) {
+      case 'pipeline': return lists.review.length + lists.needs_review.length
+      case 'inbox': return lists.replied.filter((p) => p.disposition === 'replied').length
+      case 'schedule': return c?.queued ?? 0
+      case 'contacts': return lists.contacts.length
+    }
+  }
+
   return (
     <div className="outreach-ws" style={{ height: '100%', display: 'flex', flexDirection: 'column', gap: 12, minHeight: 0 }}>
       {/* Inline styles can't express media queries, so the responsive bits live
@@ -1377,18 +1428,33 @@ export function OutreachWorkspace() {
 
       {prospects.length > 0 && (
         <>
-          <div style={{ display: 'flex', alignItems: 'center', borderBottom: `1px solid ${BORDER}` }}>
+          {/* Primary sections. Ten flat tabs read as ten unrelated things to
+              check; four sections read as a workflow. */}
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+            {SECTIONS.map((s) => {
+              const on = activeSection === s.key
+              const badge = sectionBadge(s.key)
+              return (
+                <button
+                  key={s.key}
+                  onClick={() => { setFilter(s.filters[0]); setSelectedId(null); setSelectedDraftIds(new Set()) }}
+                  style={{
+                    fontSize: 12, fontWeight: 600, borderRadius: 999, padding: '5px 14px', cursor: 'pointer',
+                    color: on ? '#fff' : 'var(--app-text-2)',
+                    background: on ? ACCENT : 'transparent',
+                    border: `1px solid ${on ? ACCENT : BORDER}`,
+                  }}
+                >
+                  {s.label}{badge > 0 ? ` ${badge.toLocaleString('en-US')}` : ''}
+                </button>
+              )
+            })}
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', borderBottom: `1px solid ${BORDER}`, marginTop: -4 }}>
+            {/* Sub-tabs, only where a section has more than one view. */}
             <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-              {tab('contacts', 'Contacts', lists.contacts.length)}
-              {tab('review', 'To review', lists.review.length)}
-              {tab('templates', 'Templates', lists.templates.length)}
-              {tab('needs_review', 'Needs review', lists.needs_review.length)}
-              {tab('approved', 'Ready to email', lists.approved.length)}
-              {tab('exported', 'Sent', lists.exported.length)}
-              {tab('replied', 'Replied', lists.replied.length)}
-              {tab('bounced', 'Bounced / opt-out', lists.bounced.length)}
-              {tab('scheduled', 'Scheduled', c?.queued ?? 0)}
-              {tab('all', 'All', lists.all.length)}
+              {activeSubTabs.length > 1 && activeSubTabs.map((f) => tab(f, FILTER_LABEL[f], countFor(f)))}
             </div>
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, paddingBottom: 4, alignItems: 'center' }}>
               {filter === 'templates' && (
