@@ -2169,7 +2169,38 @@ Template follow-ups are pre-approved copy → approved + queued (as since Sessio
 - In-browser: the new section renders in Sending settings, toggle reveals the two fields with correct defaults; canceled without saving. No console errors.
 - `tsc --noEmit` clean; eslint findings identical to `main`.
 
+### Handoff
+
+1. ~~Apply `supabase/migrations/20260809000000_outreach_followups.sql`~~ — **DONE 2026-08-06**. (Note: the PR itself was still open on GitHub when the next session started — merged then via API; main history shows it as merge `2e62abd`.)
+2. To turn sequences on for SourceGent: Sending settings → check "Automatic follow-ups" → Save. First activation will follow up prospects whose last send is within the 45-day window, 15 per tick.
+
+---
+
+## Session 35 — Phase 1 chunk 2: campaigns
+
+Until now every prospect lived in one global per-company pool — no way to run two efforts at once, compare results, or give one list different sequencing. A campaign is a named slice of the pool: prospects join at ingest, the whole workspace filters by campaign, and the follow-up sweep resolves its config per prospect (campaign override ?? company setting).
+
+### Changes
+
+| File | Change |
+| --- | --- |
+| `supabase/migrations/20260810000000_outreach_campaigns.sql` (NEW) | `outreach_campaigns` (name, active/archived, three nullable follow-up overrides; full RLS incl. delete) + `outreach_prospects.campaign_id` (FK, ON DELETE SET NULL — deleting a campaign returns prospects to the pool) + index. Remote-only as usual. |
+| `lib/integrations/outreach/campaigns.ts` (NEW) | `OutreachCampaign` / `FollowupConfig` types, `resolveFollowupConfig` (campaign field ?? company field — an override can enable sequences even when the company toggle is off, and vice versa), tolerant `loadCampaigns` ([] pre-migration) and chunked `fetchProspectCampaignIds`. |
+| `lib/integrations/outreach/campaign-actions.ts` (NEW) | `listCampaigns`, `createCampaign`, `updateCampaign` (rename / archive / overrides), `assignProspectsToCampaign` — all with specific migration-pending errors. |
+| `lib/integrations/outreach/followups.ts` | Sweep resolves config per prospect: only possibly-due prospects get their campaign looked up; `selectFollowupCandidates` now takes a `configFor(prospectId)` callback. An **archived campaign always stops its sequences** — archiving IS the "this effort is over" signal. The sweep runs when follow-ups are enabled company-wide OR on any active campaign. |
+| `lib/integrations/outreach/actions.ts` | `ingestProspects` gains an optional `campaignId` (with a strip-and-retry fallback pre-migration so adds are never blocked); the snapshot loads campaigns in the same `Promise.all` and exposes `campaign_id` per prospect. |
+| `components/widgets/content/outreach-widgets.tsx` | Campaign selector next to the Outreach title: All campaigns / each active (with prospect count) / archived / No campaign / Manage campaigns…. The filter scopes every tab and list (metrics bar stays company-wide — queue, caps, and cost are company-level); new prospects join the selected campaign; switching filter clears selection state; filter resets on company switch. |
+| `components/widgets/content/campaigns-modal.tsx` (NEW) | Create + per-campaign rows: inline rename (save on blur), Archive/Restore, and the three follow-up overrides (Inherit/On/Off select; blank number = inherit). |
+
+### Verification
+
+- Unit suite: `resolveFollowupConfig` (inherit-all, override-off-beats-company-on, override-on-beats-company-off, partial override, null campaign) + per-prospect `selectFollowupCandidates` (due vs campaign-disabled vs longer-wait campaign): ALL PASS.
+- In-browser: selector renders ("All campaigns" + "Manage…" in the pre-migration state), Manage opens the modal, Create correctly reports "The campaigns migration hasn't been applied to the database yet." No console errors. `tsc` clean; eslint identical to `main`.
+
 ### Handoff (not applied)
 
-1. Apply `supabase/migrations/20260809000000_outreach_followups.sql`. Until then: the sweep no-ops (loader defaults `followup_enabled` to false), and saving Sending settings silently skips the three new fields (fallback path).
-2. To turn sequences on for SourceGent: Sending settings → check "Automatic follow-ups" → Save. First activation will follow up prospects whose last send is within the 45-day window, 15 per tick.
+1. Apply `supabase/migrations/20260810000000_outreach_campaigns.sql`. Until then: no campaigns exist, every read resolves to the campaign-less pool, ingest strips the campaign id, and create/update report the specific pending-migration error.
+
+### Not in this chunk (per spec, later)
+
+Per-campaign stats/detail page, per-campaign template sets and offer profiles, bulk "move selected prospects to campaign" UI (the `assignProspectsToCampaign` action exists, unwired), campaign scoping for the enrichment wave.

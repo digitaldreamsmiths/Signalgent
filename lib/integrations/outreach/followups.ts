@@ -34,6 +34,7 @@ import { autoQueueDraftSend } from './send/queue'
 import { loadSettings } from './send/worker'
 import { fetchAllPages } from './fetch-all'
 import { recordUsage } from './enrich-run'
+import { fetchProspectCampaignIds, loadCampaigns, resolveFollowupConfig, type FollowupConfig } from './campaigns'
 import type { SynthesisResult } from './types'
 import type { LLMUsage } from '../../llm/client'
 
@@ -192,22 +193,25 @@ interface ProspectTouchState {
 
 /**
  * Pure candidate filter, split out for unit testing: which prospects are due a
- * follow-up given their touch state and last-send timestamp.
+ * follow-up given their touch state, last-send timestamp, and per-prospect
+ * follow-up config (campaign override ?? company setting).
  */
 export function selectFollowupCandidates(
   touchState: Map<string, ProspectTouchState>,
   lastSentAt: Map<string, string>,
-  opts: { waitDays: number; maxTouches: number; now: Date },
+  opts: { now: Date; configFor: (prospectId: string) => FollowupConfig },
 ): string[] {
   const out: string[] = []
   for (const [prospectId, st] of touchState) {
-    if (!st.allSent || st.count === 0 || st.count >= opts.maxTouches) continue
+    const cfg = opts.configFor(prospectId)
+    if (!cfg.enabled) continue
+    if (!st.allSent || st.count === 0 || st.count >= cfg.maxTouches) continue
     const sentIso = lastSentAt.get(prospectId)
     if (!sentIso) continue
     const sent = new Date(sentIso)
     const elapsed = businessDaysSince(sent, opts.now)
     const ageDays = (opts.now.getTime() - sent.getTime()) / 86_400_000
-    if (elapsed >= opts.waitDays && ageDays <= MAX_AGE_DAYS) out.push(prospectId)
+    if (elapsed >= cfg.waitDays && ageDays <= MAX_AGE_DAYS) out.push(prospectId)
   }
   return out
 }
@@ -220,11 +224,18 @@ export interface SweepResult {
   skipped?: string
 }
 
-/** One cron pass over a company. No-ops unless sending AND follow-ups are on. */
+/** One cron pass over a company. No-ops unless sending is on and follow-ups
+ * are enabled somewhere — company-wide, or explicitly on an active campaign
+ * (a campaign override can enable sequences even when the company default is
+ * off, and vice versa). */
 export async function runFollowupSweep(supabase: DB, companyId: string): Promise<SweepResult> {
   const settings = await loadSettings(supabase, companyId)
   if (!settings.active) return { candidates: 0, queued: 0, review: 0, errors: 0, skipped: 'sending off' }
-  if (!settings.followup_enabled) return { candidates: 0, queued: 0, review: 0, errors: 0, skipped: 'follow-ups off' }
+
+  const campaigns = await loadCampaigns(supabase, companyId)
+  const campaignById = new Map(campaigns.map((c) => [c.id, c]))
+  const anyEnabled = settings.followup_enabled || campaigns.some((c) => c.status === 'active' && c.followup_enabled === true)
+  if (!anyEnabled) return { candidates: 0, queued: 0, review: 0, errors: 0, skipped: 'follow-ups off' }
 
   // Touch state per prospect. Paged: drafts outgrow the silent 1,000-row cap.
   const drafts = await fetchAllPages((from, to) =>
@@ -263,11 +274,20 @@ export async function runFollowupSweep(supabase: DB, companyId: string): Promise
     if (!cur || (s.sent_at as string) > cur) lastSentAt.set(s.prospect_id, s.sent_at as string)
   }
 
-  const due = selectFollowupCandidates(touchState, lastSentAt, {
-    waitDays: settings.followup_wait_days,
-    maxTouches: settings.followup_max_touches,
-    now: new Date(),
-  })
+  // Per-prospect config: campaign override ?? company setting. Only prospects
+  // that could possibly be due (all touches sent) need their campaign looked
+  // up. An archived campaign always stops its sequences — archiving IS the
+  // "this effort is over" signal.
+  const possible = [...touchState.entries()].filter(([, st]) => st.allSent && st.count > 0).map(([id]) => id)
+  const campaignIdByProspect = await fetchProspectCampaignIds(supabase, companyId, possible)
+  const configFor = (prospectId: string): FollowupConfig => {
+    const cid = campaignIdByProspect.get(prospectId)
+    const campaign = cid ? campaignById.get(cid) ?? null : null
+    if (campaign?.status === 'archived') return { enabled: false, waitDays: 1, maxTouches: 0 }
+    return resolveFollowupConfig(campaign, settings)
+  }
+
+  const due = selectFollowupCandidates(touchState, lastSentAt, { now: new Date(), configFor })
   if (due.length === 0) return { candidates: 0, queued: 0, review: 0, errors: 0 }
 
   // Suppression re-check happens inside generateFollowupTouch (disposition must

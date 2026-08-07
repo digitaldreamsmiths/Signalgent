@@ -22,6 +22,7 @@ import { queueDraftSend, cancelSend, processSendQueue, scheduleDraftSends, getSc
 import type { Disposition, OutreachDraftView, OutreachSnapshot, OutreachProspectView, ScheduledSendView } from '@/lib/integrations/outreach/types'
 import { hygieneWarnings, replyRiskWarnings } from '@/lib/integrations/outreach/hygiene'
 import { SendingSettingsModal } from './sending-settings-modal'
+import { CampaignsModal } from './campaigns-modal'
 import { TemplatesModal } from './templates-modal'
 import { ScheduledView } from './scheduled-view'
 import { ScheduleDialog } from './schedule-dialog'
@@ -850,6 +851,9 @@ export function OutreachWorkspace() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [sendingModalOpen, setSendingModalOpen] = useState(false)
   const [templatesModalOpen, setTemplatesModalOpen] = useState(false)
+  const [campaignsModalOpen, setCampaignsModalOpen] = useState(false)
+  // 'all' = every prospect, 'none' = the campaign-less pool, else a campaign id.
+  const [campaignFilter, setCampaignFilter] = useState<'all' | 'none' | string>('all')
   const [processing, setProcessing] = useState(false)
   const [scanning, setScanning] = useState(false)
   const [selectedDraftIds, setSelectedDraftIds] = useState<Set<string>>(new Set())
@@ -893,6 +897,7 @@ export function OutreachWorkspace() {
   useEffect(() => {
     if (!companyId) return
     let active = true
+    setCampaignFilter('all') // campaign ids are per-company
     ;(async () => {
       const snap = await getOutreachSnapshot(companyId)
       if (!active) return
@@ -932,7 +937,9 @@ export function OutreachWorkspace() {
   const ingest = useCallback(
     async (text: string, onSuccess?: () => void) => {
       if (!companyId || !text.trim()) return
-      const r = await ingestProspects(companyId, text)
+      // New prospects join the currently selected campaign ('all'/'none' → pool).
+      const target = campaignFilter !== 'all' && campaignFilter !== 'none' ? campaignFilter : null
+      const r = await ingestProspects(companyId, text, target)
       if (!r.ok) return pushToast(r.error, 'error')
       onSuccess?.()
       pushToast(
@@ -942,7 +949,7 @@ export function OutreachWorkspace() {
       )
       refresh()
     },
-    [companyId, refresh, pushToast],
+    [companyId, campaignFilter, refresh, pushToast],
   )
 
   const handleIngest = useCallback(() => ingest(raw, () => setRaw('')), [ingest, raw])
@@ -1008,7 +1015,18 @@ export function OutreachWorkspace() {
 
   if (!companyId) return <div style={{ fontSize: 12, color: MUTED }}>Select a company to start outreach.</div>
 
-  const prospects = snapshot?.prospects ?? []
+  const allProspects = snapshot?.prospects ?? []
+  const campaigns = snapshot?.campaigns ?? []
+  const countByCampaign = new Map<string, number>()
+  for (const p of allProspects) {
+    if (p.campaign_id) countByCampaign.set(p.campaign_id, (countByCampaign.get(p.campaign_id) ?? 0) + 1)
+  }
+  // The campaign filter scopes every tab and list; the metrics bar stays
+  // company-wide (queue, caps, and cost are company-level infrastructure).
+  const prospects =
+    campaignFilter === 'all'
+      ? allProspects
+      : allProspects.filter((p) => (campaignFilter === 'none' ? !p.campaign_id : p.campaign_id === campaignFilter))
   const c = snapshot?.counts
   const withDraft = prospects.filter((p) => p.draft)
   const lists: Record<Filter, OutreachProspectView[]> = {
@@ -1148,6 +1166,31 @@ export function OutreachWorkspace() {
       {/* Header: title + intake */}
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <h1 style={{ fontSize: 16, fontWeight: 700, color: 'var(--app-text)', margin: 0, marginRight: 4, letterSpacing: 0.2 }}>Outreach</h1>
+        <select
+          value={campaignFilter}
+          onChange={(e) => {
+            const v = e.target.value
+            if (v === '__manage') {
+              setCampaignsModalOpen(true)
+              return // don't change the filter; the controlled value snaps back
+            }
+            setCampaignFilter(v)
+            setSelectedId(null)
+            setSelectedDraftIds(new Set())
+          }}
+          title="Scope the workspace to one campaign. New prospects join the selected campaign."
+          style={{ background: 'var(--app-input)', border: `1px solid ${BORDER}`, borderRadius: 6, color: 'var(--app-text)', fontSize: 12, padding: '7px 8px', maxWidth: 180 }}
+        >
+          <option value="all">All campaigns</option>
+          {campaigns.filter((cm) => cm.status === 'active').map((cm) => (
+            <option key={cm.id} value={cm.id}>{cm.name} ({countByCampaign.get(cm.id) ?? 0})</option>
+          ))}
+          {campaigns.filter((cm) => cm.status === 'archived').map((cm) => (
+            <option key={cm.id} value={cm.id}>{cm.name} (archived)</option>
+          ))}
+          {campaigns.length > 0 && <option value="none">No campaign</option>}
+          <option value="__manage">Manage campaigns…</option>
+        </select>
         <input
           value={raw}
           onChange={(e) => setRaw(e.target.value)}
@@ -1405,6 +1448,16 @@ export function OutreachWorkspace() {
 
       {templatesModalOpen && companyId && (
         <TemplatesModal companyId={companyId} prospects={prospects} onClose={() => setTemplatesModalOpen(false)} onChanged={refresh} />
+      )}
+
+      {campaignsModalOpen && companyId && (
+        <CampaignsModal
+          companyId={companyId}
+          campaigns={campaigns}
+          countByCampaign={countByCampaign}
+          onClose={() => setCampaignsModalOpen(false)}
+          onChanged={refresh}
+        />
       )}
 
       {scheduleDialogOpen && (

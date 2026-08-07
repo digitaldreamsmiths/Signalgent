@@ -22,6 +22,7 @@ import { loadSettings, getEffectiveDailyCap } from './send/worker'
 import { generateFollowupTouch } from './followups'
 import { loadOfferProfile } from './offer-profile'
 import { fetchStoredContactNames, resolveContactName } from './contact-name'
+import { loadCampaigns } from './campaigns'
 import { openStats, recentBounceStats } from './send/scan'
 import { getAccount } from '../accounts'
 import { undeliverableDomains } from './deliverability'
@@ -46,6 +47,8 @@ const EMAIL_RE = /[^\s,;<>"']+@[^\s,;<>"']+\.[^\s,;<>"']+/g
 export async function ingestProspects(
   companyId: string,
   raw: string,
+  /** Campaign the new prospects join. Omit/null = the campaign-less pool. */
+  campaignId?: string | null,
 ): Promise<ActionResult<{ added: number; duplicates: number; invalid: number; undeliverable: number }>> {
   try {
     await requireCompanyAccess(companyId)
@@ -56,7 +59,7 @@ export async function ingestProspects(
 
   const matches = raw.match(EMAIL_RE) ?? []
   const seen = new Set<string>()
-  const rows: { company_id: string; email: string; domain: string | null; status: 'new' }[] = []
+  const rows: { company_id: string; email: string; domain: string | null; status: 'new'; campaign_id?: string }[] = []
   let invalid = 0
   for (const m of matches) {
     const email = m.trim().toLowerCase()
@@ -67,7 +70,7 @@ export async function ingestProspects(
       invalid += 1
       continue
     }
-    rows.push({ company_id: companyId, email, domain, status: 'new' })
+    rows.push({ company_id: companyId, email, domain, status: 'new', ...(campaignId ? { campaign_id: campaignId } : {}) })
   }
 
   if (rows.length === 0) {
@@ -86,10 +89,21 @@ export async function ingestProspects(
 
   const supabase = await createClient()
   // Insert, ignoring rows that already exist (unique company_id+email).
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from('outreach_prospects')
     .upsert(sendable, { onConflict: 'company_id,email', ignoreDuplicates: true })
     .select('id')
+
+  // campaign_id arrives via an out-of-band migration; until it's applied,
+  // retry the ingest without it rather than blocking adds entirely.
+  if (error && campaignId && /campaign_id/.test(error.message)) {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const stripped = sendable.map(({ campaign_id, ...rest }) => rest)
+    ;({ data, error } = await supabase
+      .from('outreach_prospects')
+      .upsert(stripped, { onConflict: 'company_id,email', ignoreDuplicates: true })
+      .select('id'))
+  }
 
   if (error) return { ok: false, error: 'Could not save prospects. Try again.' }
 
@@ -183,7 +197,7 @@ export async function getOutreachSnapshot(companyId: string): Promise<OutreachSn
   // personalized draft). Secondary .order('id') breaks created_at ties — bulk
   // ingests give thousands of rows the same timestamp, which would otherwise
   // make page boundaries skip/duplicate rows.
-  const [prospects, drafts, usageRows, sends] = await Promise.all([
+  const [prospects, drafts, usageRows, sends, campaigns] = await Promise.all([
     fetchAllPages((from, to) =>
       supabase.from('outreach_prospects').select('*').eq('company_id', companyId)
         .order('created_at', { ascending: false }).order('id').range(from, to)),
@@ -196,6 +210,7 @@ export async function getOutreachSnapshot(companyId: string): Promise<OutreachSn
     fetchAllPages((from, to) =>
       supabase.from('outreach_sends').select('id, draft_id, status, scheduled_at, sent_at, error').eq('company_id', companyId)
         .order('created_at', { ascending: false }).order('id').range(from, to)),
+    loadCampaigns(supabase, companyId),
   ])
 
   const cost_usd_total = (usageRows ?? []).reduce((s, r) => s + (r.cost_usd ?? 0), 0)
@@ -252,6 +267,7 @@ export async function getOutreachSnapshot(companyId: string): Promise<OutreachSn
       // until then the localpart parse carries the feature alone.
       contact_name: resolveContactName(p.contact_name ?? null, p.email),
       contact_name_manual: !!(p.contact_name ?? null)?.trim(),
+      campaign_id: p.campaign_id ?? null,
       resolution_confidence: p.resolution_confidence,
       business_types: p.business_types ?? [],
       location: p.location,
@@ -321,7 +337,7 @@ export async function getOutreachSnapshot(companyId: string): Promise<OutreachSn
     gmail,
   }
 
-  return { prospects: views, counts, reply_rate, opens, cost_usd_total, sending }
+  return { prospects: views, counts, reply_rate, opens, cost_usd_total, sending, campaigns }
 }
 
 // ── Outcomes ──────────────────────────────────────────────────────────────────
