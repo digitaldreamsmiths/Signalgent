@@ -6,7 +6,6 @@ import {
   useOutreach,
   FILTER_LABEL,
   SECTIONS,
-  SECTION_OF,
   type Filter,
   type Section,
 } from '@/contexts/outreach-context'
@@ -893,7 +892,12 @@ function DraftDetail({ prospect, companyId, senderEmail, onChanged }: { prospect
 
 // ── Workspace ─────────────────────────────────────────────────────────────────
 
-export function OutreachWorkspace() {
+/**
+ * The workspace body for one section. The section itself is the route (Phase 5
+ * stage 2b) — the rail lives in the layout, so this renders the shared chrome
+ * plus whichever views the given section contains.
+ */
+export function OutreachWorkspace({ section }: { section: Section }) {
   // Shared across every section (and, once the routes land, across every
   // route): the snapshot, campaign scope, queued sends, toasts, and the poll.
   const {
@@ -909,7 +913,8 @@ export function OutreachWorkspace() {
   const [raw, setRaw] = useState('')
   const [running, setRunning] = useState(false)
   const [progress, setProgress] = useState<{ processed: number; total: number; drafted: number; skipped: number; cost: number } | null>(null)
-  const [filter, setFilter] = useState<Filter>('review')
+  const sectionFilters = SECTIONS.find((sec) => sec.key === section)!.filters
+  const [filter, setFilter] = useState<Filter>(sectionFilters[0])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [sendingModalOpen, setSendingModalOpen] = useState(false)
   const [templatesModalOpen, setTemplatesModalOpen] = useState(false)
@@ -1106,20 +1111,8 @@ export function OutreachWorkspace() {
     </button>
   )
 
-  // ── Section nav (Phase 5 IA) ──
+  // Sub-tab counts. The section rail (in the layout) owns section badges.
   const countFor = (f: Filter): number => (f === 'scheduled' ? c?.queued ?? 0 : lists[f].length)
-  const activeSection = SECTION_OF[filter]
-  const activeSubTabs = SECTIONS.find((s) => s.key === activeSection)?.filters ?? []
-  /** A section's badge is the number that actually wants attention, not the sum
-   * of everything it contains — "Pipeline 4,933" would be noise. */
-  const sectionBadge = (key: Section): number => {
-    switch (key) {
-      case 'pipeline': return lists.review.length + lists.needs_review.length
-      case 'inbox': return lists.replied.filter((p) => p.disposition === 'replied').length
-      case 'schedule': return c?.queued ?? 0
-      case 'contacts': return lists.contacts.length
-    }
-  }
 
   return (
     <div className="outreach-ws" style={{ height: '100%', display: 'flex', flexDirection: 'column', gap: 12, minHeight: 0 }}>
@@ -1304,33 +1297,10 @@ export function OutreachWorkspace() {
 
       {prospects.length > 0 && (
         <>
-          {/* Primary sections. Ten flat tabs read as ten unrelated things to
-              check; four sections read as a workflow. */}
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-            {SECTIONS.map((s) => {
-              const on = activeSection === s.key
-              const badge = sectionBadge(s.key)
-              return (
-                <button
-                  key={s.key}
-                  onClick={() => { setFilter(s.filters[0]); setSelectedId(null); setSelectedDraftIds(new Set()) }}
-                  style={{
-                    fontSize: 12, fontWeight: 600, borderRadius: 999, padding: '5px 14px', cursor: 'pointer',
-                    color: on ? '#fff' : 'var(--app-text-2)',
-                    background: on ? ACCENT : 'transparent',
-                    border: `1px solid ${on ? ACCENT : BORDER}`,
-                  }}
-                >
-                  {s.label}{badge > 0 ? ` ${badge.toLocaleString('en-US')}` : ''}
-                </button>
-              )
-            })}
-          </div>
-
-          <div style={{ display: 'flex', alignItems: 'center', borderBottom: `1px solid ${BORDER}`, marginTop: -4 }}>
+          <div style={{ display: 'flex', alignItems: 'center', borderBottom: `1px solid ${BORDER}` }}>
             {/* Sub-tabs, only where a section has more than one view. */}
             <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-              {activeSubTabs.length > 1 && activeSubTabs.map((f) => tab(f, FILTER_LABEL[f], countFor(f)))}
+              {sectionFilters.length > 1 && sectionFilters.map((f) => tab(f, FILTER_LABEL[f], countFor(f)))}
             </div>
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, paddingBottom: 4, alignItems: 'center' }}>
               {filter === 'templates' && (

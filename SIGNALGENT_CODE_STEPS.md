@@ -2509,3 +2509,37 @@ The view vocabulary — `Filter`, `Section`, `SECTIONS`, `SECTION_OF`, `FILTER_L
 ### Next: stage 2b
 
 Sidebar + one route per section (`/outreach/pipeline`, `/outreach/contacts`, `/outreach/inbox`, `/outreach/schedule`), with the shared chrome — banners, setup checklist, header, metrics, nav — moving into the layout. Now a mechanical move rather than a refactor, since the data is already shared.
+
+---
+
+## Session 45 — Phase 5 stage 2b: sections become routes
+
+Each section is now a real route, so views are linkable and the browser's back button works through the workspace.
+
+| Route | View |
+| --- | --- |
+| `/outreach` | redirects to `/outreach/pipeline` |
+| `/outreach/pipeline` | To review · Templates · Needs review · Ready to email · Sent · All |
+| `/outreach/contacts` | the contacts table |
+| `/outreach/inbox` | Replied · Bounced / opt-out |
+| `/outreach/schedule` | the send calendar |
+
+- `components/widgets/content/outreach-nav.tsx` (NEW) — the section rail, driven by `usePathname`. A left rail on desktop, wrapping pills under 700px, since the app has no sidebar elsewhere and a fixed rail would eat most of a phone's width. Badges still show what wants attention, not totals.
+- `app/(app)/outreach/layout.tsx` — provider + rail + `{children}`, with the responsive CSS.
+- `OutreachWorkspace` takes a `section` prop instead of owning section state; the sub-tab row is derived from it.
+- `/outreach` keeps working as an entry point (the topbar wordmark and command palette both point there) by redirecting.
+
+### Two deliberate choices
+
+- **Sub-views stay component state, not URL.** Per this Next version's `useSearchParams` docs, reading search params client-side forces client rendering up to the nearest Suspense boundary and wants an explicit boundary. The section is the meaningful unit to link to; sub-tabs are transient filters within it. Easy to promote later if it earns its keep.
+- **The chrome (header, metrics, banners, checklist, modals, toasts) stays inside the workspace** rather than moving to the layout. It remounts on navigation, but the provider already holds the snapshot, so that costs a re-render and no refetch. Hoisting it is worthwhile polish — it would preserve the paste box across navigation — but it is a much larger move and not needed for routes to work.
+
+### Verification
+
+- `/outreach` redirects to `/outreach/pipeline`; each rail link navigates and renders the right view (Inbox shows its two sub-tabs, Schedule shows the calendar and `Select all (369)`); browser **back** walks back through sections; a cold deep-link straight to `/outreach/contacts` renders the full 4,933-row table.
+- Desktop left rail and the sub-700px pill layout both checked.
+- `tsc` clean; eslint on the workspace file still at its single pre-existing warning.
+
+### A console error chased down and cleared
+
+`TypeError: Cannot read properties of undefined (reading 'filters')` appeared on initial load and looked like the new `SECTIONS.find(...)!.filters`. It wasn't: instrumenting that line showed `SECTIONS` is always the full four-element array and `section` always a valid key, client-side navigation produced zero errors, and — decisively — **stashing every change reproduced the identical error on `main`**. It arrives with Next's HMR WebSocket failures and a `node_modules/next/dist/compiled` frame, i.e. dev tooling rather than application code. Pre-existing, not introduced here.
