@@ -202,10 +202,46 @@ export interface OutreachProspectView {
   needs_review: boolean
 }
 
+/** Per-campaign funnel. Always measured over ALL prospects, never the current
+ * campaign scope — it is what the campaign picker and the campaigns modal show. */
+export interface CampaignStats {
+  prospects: number
+  sent: number
+  replied: number
+  opened: number
+}
+
+/** Per-template performance, keyed by template id. Fallback drafts carry
+ * `template_id`; the outcome comes from the prospect's disposition once sent. */
+export interface TemplateStat {
+  assigned: number
+  sent: number
+  replied: number
+  bounced: number
+  optout: number
+}
+
+/**
+ * Everything the workspace shows that ISN'T a row: metrics, per-view counts,
+ * health, campaigns. Fixed size — it does not grow with the prospect list.
+ *
+ * `counts` stays measured over the whole company (that is what the metrics bar
+ * has always shown); `views`, `contact_buckets` and `inbox_untriaged` are
+ * measured within the ACTIVE CAMPAIGN SCOPE, because they label the lists.
+ */
 export interface OutreachSnapshot {
-  prospects: OutreachProspectView[]
   /** The company's campaigns, active first ([] before the migration). */
   campaigns: import('./campaigns').OutreachCampaign[]
+  /** Row count per view, within the current campaign scope. Replaces counting
+   * the client-side lists, which required every prospect in the browser. */
+  views: Record<import('./views').Filter, number>
+  /** Replies still awaiting triage (neutral `replied`), campaign-scoped —
+   * the Inbox badge. */
+  inbox_untriaged: number
+  /** Contacts-table status-chip counts, campaign-scoped. */
+  contact_buckets: Record<import('./views').StageBucket, number>
+  campaign_stats: Record<string, CampaignStats>
+  template_stats: Record<string, TemplateStat>
   counts: {
     total: number
     new: number
@@ -263,4 +299,33 @@ export interface OutreachSnapshot {
       last_error: string | null
     } | null
   }
+}
+
+/** What page of which view the workspace wants. Everything here is applied
+ * server-side; the browser only ever receives `limit` rows. */
+export interface ProspectQuery {
+  view: import('./views').Filter
+  /** 'all' | 'none' | campaign id. */
+  campaignId: string
+  sort: import('./views').ProspectSort
+  dir: 'asc' | 'desc'
+  /** Contacts-table status chip. Omitted / 'all' = no stage filter. */
+  stage?: import('./views').StageBucket | 'all'
+  offset: number
+  limit: number
+}
+
+export interface ProspectPage {
+  rows: OutreachProspectView[]
+  /** Rows matching the query in full, so the UI can say "100 of 4,933". */
+  total: number
+  offset: number
+}
+
+/** One round trip for the whole workspace: the fixed-size snapshot plus one
+ * page of the active view. Both come from a single pass over the data, so a
+ * refresh costs one query set rather than two. */
+export interface OutreachWorkspaceData {
+  snapshot: OutreachSnapshot
+  page: ProspectPage
 }

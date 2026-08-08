@@ -8,6 +8,8 @@ import {
   type Filter,
   type Section,
 } from '@/contexts/outreach-context'
+import { contactStage, isUnqueued } from '@/lib/integrations/outreach/stage'
+import { PROSPECT_MAX_LOADED, STAGE_BUCKETS, type ProspectSort, type StageBucket } from '@/lib/integrations/outreach/views'
 import {
   approveDraft,
   approveDrafts,
@@ -32,10 +34,16 @@ import { ScheduledView } from './scheduled-view'
 import { ScheduleDialog } from './schedule-dialog'
 
 
-/** Sort keys for the draft lists (Ready to email / Sent / All). 'type' is the
+/** Sort keys the draft lists (Ready to email / Sent / All) offer. 'type' is the
  * default and keeps the grouped Personalized/Templates sections; the rest
- * flatten the list. */
-type ListSortKey = 'type' | 'name' | 'email' | 'status'
+ * flatten the list. Sorting runs server-side now — the browser only holds the
+ * loaded page, so sorting it here would only reorder the first 100 rows. */
+const LIST_SORTS: { key: ProspectSort; label: string }[] = [
+  { key: 'type', label: 'Type' },
+  { key: 'name', label: 'Name' },
+  { key: 'email', label: 'Email' },
+  { key: 'status', label: 'Status' },
+]
 
 const DISPO_META: Record<Disposition, { label: string; color: string }> = {
   open: { label: 'open', color: 'var(--app-muted)' },
@@ -130,16 +138,28 @@ const EMPTY_MSG: Record<Filter, string> = {
 
 // ── List ──────────────────────────────────────────────────────────────────────
 
-function displayName(p: OutreachProspectView): string {
-  return p.recipient_name ?? p.domain ?? p.email
-}
-const byName = (a: OutreachProspectView, b: OutreachProspectView) =>
-  displayName(a).localeCompare(displayName(b))
-
-/** Row state for the Status sort — the send status once queued, else the draft
- * status, so queued rows group together ahead of the un-scheduled ones. */
-function rowStage(p: OutreachProspectView): string {
-  return p.draft?.send?.status ?? p.draft?.status ?? ''
+/** The footer under a paged list: how much of the view is on screen, and the
+ * button that pulls the next page. Shown in every list so a count in a label
+ * is never mistaken for the size of the whole view. */
+function LoadMore({ loaded, total, busy, onMore }: { loaded: number; total: number; busy: boolean; onMore: () => void }) {
+  if (total === 0) return null
+  const more = loaded < total
+  // Past the ceiling the answer is a narrower scope, not a bigger window: every
+  // loaded row carries its drafts' full copy, and the poll re-reads the lot.
+  const capped = more && loaded >= PROSPECT_MAX_LOADED
+  return (
+    <div style={{ display: 'flex', gap: 10, alignItems: 'center', justifyContent: 'center', padding: '10px 12px', borderTop: `1px solid ${BORDER}`, flexWrap: 'wrap' }}>
+      <span style={{ fontSize: 11, color: MUTED }}>
+        {more ? `${loaded.toLocaleString('en-US')} of ${total.toLocaleString('en-US')}` : `All ${total.toLocaleString('en-US')}`}
+        {capped && ' — pick a campaign or a status to narrow it down'}
+      </span>
+      {more && !capped && (
+        <button disabled={busy} onClick={onMore} style={btnGhost(ACCENT)}>
+          {busy ? 'Loading…' : 'Load more'}
+        </button>
+      )}
+    </div>
+  )
 }
 
 /** Sticky section divider inside the scrolling list. */
@@ -179,8 +199,6 @@ function ProspectRow({ p, selected, onSelect, checked, onToggle }: { p: Outreach
 
 // ── Contacts table ──────────────────────────────────────────────────────────
 
-type ContactSortKey = 'email' | 'name' | 'domain' | 'status' | 'campaign' | 'added'
-type StageBucket = 'new' | 'review' | 'ready' | 'emailed' | 'replied' | 'other'
 type ContactFilter = 'all' | StageBucket
 
 /** Free / consumer webmail domains — these get no website link in the Domain
@@ -198,68 +216,32 @@ function isFreeProvider(domain: string | null): boolean {
   return !!domain && FREE_PROVIDERS.has(domain.toLowerCase())
 }
 
-/** Collapse a prospect's full lifecycle — enrichment status + latest draft +
- * send + disposition — into a single badge for the Contacts list. More advanced /
- * terminal states win, so a row reads as the furthest point it has reached. */
-function contactStage(p: OutreachProspectView): { label: string; color: string } {
-  if (p.disposition === 'bounced') return { label: 'Bounced', color: '#b04545' }
-  if (p.disposition === 'unsubscribed') return { label: 'Opt-out ✋', color: '#b04545' }
-  if (p.disposition === 'replied' || p.disposition === 'interested' || p.disposition === 'not_interested') return { label: 'Replied', color: '#378ADD' }
-  if (p.needs_review) return { label: 'Needs review', color: '#e0a060' }
-
-  // Emailed = any touch actually sent or marked exported to the sending tool.
-  if (p.drafts.some((d) => d.status === 'exported' || d.send?.status === 'sent')) return { label: 'Emailed', color: '#378ADD' }
-
-  const send = p.draft?.send
-  if (send?.status === 'sending') return { label: 'Sending', color: ACCENT }
-  if (send?.status === 'queued') return { label: 'Queued', color: ACCENT }
-
-  const ds = p.draft?.status
-  if (ds === 'approved' || ds === 'edited') return { label: 'Ready to email', color: '#1D9E75' }
-  if (ds === 'rejected') return { label: 'Rejected', color: '#BA7517' }
-  if (ds === 'pending') return p.draft!.is_template ? { label: 'Template', color: MUTED } : { label: 'In review', color: '#1D9E75' }
-
-  switch (p.status) {
-    case 'skipped': return { label: 'Skipped', color: '#BA7517' }
-    case 'error': return { label: 'Error', color: '#b04545' }
-    case 'enriched': return { label: 'Enriched', color: '#378ADD' }
-    case 'drafted': return { label: 'Drafted', color: '#1D9E75' }
-    default: return { label: 'New', color: MUTED }
-  }
-}
-
-/** Coarse bucket for the Contacts status filter (the label from contactStage is
- * finer-grained than the filter needs). */
-function stageBucket(p: OutreachProspectView): StageBucket {
-  if (p.disposition === 'replied' || p.disposition === 'interested' || p.disposition === 'not_interested') return 'replied'
-  if (p.disposition === 'bounced' || p.disposition === 'unsubscribed') return 'other'
-  if (p.needs_review) return 'review'
-  if (p.drafts.some((d) => d.status === 'exported' || d.send?.status === 'sent')) return 'emailed'
-  const send = p.draft?.send
-  if (send?.status === 'queued' || send?.status === 'sending') return 'ready'
-  const ds = p.draft?.status
-  if (ds === 'approved' || ds === 'edited') return 'ready'
-  if (ds === 'pending') return p.draft!.is_template ? 'other' : 'review'
-  if (p.status === 'new') return 'new'
-  return 'other'
+const BUCKET_LABEL: Record<StageBucket, string> = {
+  new: 'New',
+  review: 'In review',
+  ready: 'Ready',
+  emailed: 'Emailed',
+  replied: 'Replied',
+  other: 'Other',
 }
 
 const CONTACT_FILTERS: { key: ContactFilter; label: string }[] = [
   { key: 'all', label: 'All' },
-  { key: 'new', label: 'New' },
-  { key: 'review', label: 'In review' },
-  { key: 'ready', label: 'Ready' },
-  { key: 'emailed', label: 'Emailed' },
-  { key: 'replied', label: 'Replied' },
-  { key: 'other', label: 'Other' },
+  ...STAGE_BUCKETS.map((k) => ({ key: k as ContactFilter, label: BUCKET_LABEL[k] })),
 ]
 
 /** Master list of every ingested email — visible before enrichment, sortable by
  * any column, with per-row and bulk delete. This is the only place raw `new`
- * prospects (no draft yet) surface, since the workflow tabs all require a draft. */
+ * prospects (no draft yet) surface, since the workflow tabs all require a draft.
+ *
+ * `prospects` is one loaded page of the contact list, not the whole thing:
+ * sorting, the status filter and the chip counts all come from the server, and
+ * the bulk actions act on the rows actually loaded. */
 function ContactsTable({ prospects, companyId, campaigns, onChanged }: { prospects: OutreachProspectView[]; companyId: string; campaigns: OutreachCampaign[]; onChanged: () => void }) {
-  const [sortKey, setSortKey] = useState<ContactSortKey>('added')
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+  const {
+    snapshot, sort: sortKey, dir: sortDir, toggleSort,
+    stage, setStage, total, rowsLoading, loadMore,
+  } = useOutreach()
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [confirmId, setConfirmId] = useState<string | null>(null)
   const [confirmBulk, setConfirmBulk] = useState(false)
@@ -267,7 +249,6 @@ function ContactsTable({ prospects, companyId, campaigns, onChanged }: { prospec
   const [proc, setProc] = useState<{ done: number; total: number; drafted: number; skipped: number } | null>(null)
   const [procError, setProcError] = useState<string | null>(null)
   const cancelProc = useRef(false)
-  const [stageF, setStageF] = useState<ContactFilter>('all')
 
   // Only `new` prospects can be enriched; already-processed rows in the selection
   // are silently ignored so a "select all → Process" does the right thing.
@@ -277,32 +258,13 @@ function ContactsTable({ prospects, companyId, campaigns, onChanged }: { prospec
   const campaignNameById = new Map(campaigns.map((c) => [c.id, c.name]))
   const campaignName = (p: OutreachProspectView) => (p.campaign_id ? campaignNameById.get(p.campaign_id) ?? '' : '')
 
-  const dir = sortDir === 'asc' ? 1 : -1
-  const cmp = (a: OutreachProspectView, b: OutreachProspectView): number => {
-    switch (sortKey) {
-      case 'email': return a.email.localeCompare(b.email)
-      case 'name': return (a.recipient_name ?? '').localeCompare(b.recipient_name ?? '')
-      case 'domain': return (a.domain ?? '').localeCompare(b.domain ?? '')
-      case 'status': return contactStage(a).label.localeCompare(contactStage(b).label)
-      case 'campaign': return campaignName(a).localeCompare(campaignName(b))
-      case 'added': return a.created_at.localeCompare(b.created_at)
-    }
-  }
-  const sorted = [...prospects].sort((a, b) => cmp(a, b) * dir)
-  const visible = stageF === 'all' ? sorted : sorted.filter((p) => stageBucket(p) === stageF)
+  // Server-counted over the whole (campaign-scoped) contact list, so the chips
+  // still say how many contacts are in each stage rather than how many are
+  // loaded. Empty buckets stay hidden, except All/New.
+  const countFor = (k: ContactFilter): number =>
+    k === 'all' ? snapshot?.views.contacts ?? 0 : snapshot?.contact_buckets[k] ?? 0
 
-  // Count per bucket for the filter chips (drop empty ones except All/New).
-  const bucketCounts = prospects.reduce<Record<StageBucket, number>>(
-    (acc, p) => { acc[stageBucket(p)] += 1; return acc },
-    { new: 0, review: 0, ready: 0, emailed: 0, replied: 0, other: 0 },
-  )
-  const countFor = (k: ContactFilter): number => (k === 'all' ? prospects.length : bucketCounts[k])
-
-  const toggleSort = (k: ContactSortKey) => {
-    if (k === sortKey) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
-    else { setSortKey(k); setSortDir(k === 'added' ? 'desc' : 'asc') }
-  }
-
+  const visible = prospects
   const allChecked = visible.length > 0 && visible.every((p) => selected.has(p.id))
   const toggleAll = () => {
     setConfirmBulk(false)
@@ -366,17 +328,17 @@ function ContactsTable({ prospects, companyId, campaigns, onChanged }: { prospec
 
   const th: React.CSSProperties = { textAlign: 'left', fontSize: 9, fontWeight: 600, color: MUTED, textTransform: 'uppercase', letterSpacing: 0.6, padding: '8px 12px', cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }
   const td: React.CSSProperties = { fontSize: 12, color: 'var(--app-text)', padding: '8px 12px', borderTop: `1px solid ${BORDER}` }
-  const caret = (k: ContactSortKey) => (sortKey === k ? (sortDir === 'asc' ? ' ▲' : ' ▼') : '')
+  const caret = (k: ProspectSort) => (sortKey === k ? (sortDir === 'asc' ? ' ▲' : ' ▼') : '')
 
   return (
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', border: `1px solid ${BORDER}`, borderRadius: 8, overflow: 'hidden' }}>
       <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', padding: '6px 10px', borderBottom: `1px solid ${BORDER}`, background: 'var(--app-card-2)' }}>
         {CONTACT_FILTERS.filter((f) => f.key === 'all' || f.key === 'new' || countFor(f.key) > 0).map((f) => {
-          const on = stageF === f.key
+          const on = stage === f.key
           return (
             <button
               key={f.key}
-              onClick={() => setStageF(f.key)}
+              onClick={() => { setSelected(new Set()); setStage(f.key) }}
               style={{ fontSize: 11, fontWeight: 600, color: on ? '#fff' : 'var(--app-text-2)', background: on ? ACCENT : 'transparent', border: `1px solid ${on ? ACCENT : BORDER}`, borderRadius: 999, padding: '3px 10px', cursor: 'pointer' }}
             >
               {f.label} {countFor(f.key)}
@@ -460,7 +422,9 @@ function ContactsTable({ prospects, companyId, campaigns, onChanged }: { prospec
           </thead>
           <tbody>
             {visible.length === 0 && (
-              <tr><td colSpan={campaigns.length > 0 ? 8 : 7} style={{ ...td, color: MUTED, textAlign: 'center', padding: 20 }}>No contacts in this view.</td></tr>
+              <tr><td colSpan={campaigns.length > 0 ? 8 : 7} style={{ ...td, color: MUTED, textAlign: 'center', padding: 20 }}>
+                {rowsLoading ? 'Loading…' : 'No contacts in this view.'}
+              </td></tr>
             )}
             {visible.map((p) => {
               const stage = contactStage(p)
@@ -500,6 +464,7 @@ function ContactsTable({ prospects, companyId, campaigns, onChanged }: { prospec
             })}
           </tbody>
         </table>
+        <LoadMore loaded={visible.length} total={total} busy={rowsLoading} onMore={loadMore} />
       </div>
     </div>
   )
@@ -849,23 +814,23 @@ function DraftDetail({ prospect, companyId, senderEmail, onChanged }: { prospect
 export function OutreachWorkspace({ section }: { section: Section }) {
   // The chrome (header, metrics, banners, modals, toasts) lives in the layout
   // now; this component renders only the section's own views.
-  const { companyId, snapshot, refresh, lists, campaigns, scheduledSends, loadScheduled, pushToast } = useOutreach()
+  //
+  // The active view, its sort and its loaded rows come from the provider: they
+  // decide what the server fetches, so they can't be local state any more.
+  const {
+    companyId, snapshot, refresh, campaigns, scheduledSends, loadScheduled, pushToast,
+    view: filter, setView: setFilter,
+    rows: current, total, rowsLoading, loadMore,
+    sort: listSortKey, dir: listSortDir, toggleSort: toggleListSort,
+  } = useOutreach()
 
   // View-local state.
   const sectionFilters = SECTIONS.find((sec) => sec.key === section)!.filters
-  const [filter, setFilter] = useState<Filter>(sectionFilters[0])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [selectedDraftIds, setSelectedDraftIds] = useState<Set<string>>(new Set())
   const [scheduleDialogOpen, setScheduleDialogOpen] = useState(false)
   const [scheduling, setScheduling] = useState(false)
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(false)
-  const [listSortKey, setListSortKey] = useState<ListSortKey>('type')
-  const [listSortDir, setListSortDir] = useState<'asc' | 'desc'>('asc')
-
-  const toggleListSort = (k: ListSortKey) => {
-    if (k === listSortKey) setListSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
-    else { setListSortKey(k); setListSortDir('asc') }
-  }
 
   useEffect(() => {
     if (filter === 'scheduled') loadScheduled()
@@ -903,9 +868,12 @@ export function OutreachWorkspace({ section }: { section: Section }) {
   // allProspects / prospects / lists / campaigns / campaignStats now come from
   // the provider — the campaign scope is applied there, so every view (and
   // every future route) sees the same filtered set.
-  const c = snapshot?.counts
-  const current = lists[filter]
   const selected = current.find((p) => p.id === selectedId) ?? current[0] ?? null
+  // Bulk actions act on the rows that are actually loaded, so a label has to say
+  // so whenever the view runs past the loaded window — "Approve all (100)" on a
+  // 1,200-draft queue would be a lie. Load more first to widen the reach.
+  const partial = current.length < total
+  const scopeNote = partial ? ` of ${total.toLocaleString('en-US')} — load more to include the rest` : ''
 
   const toggleDraft = (id: string) => {
     setConfirmBulkDelete(false)
@@ -953,8 +921,9 @@ export function OutreachWorkspace({ section }: { section: Section }) {
     </button>
   )
 
-  // Sub-tab counts. The section rail (in the layout) owns section badges.
-  const countFor = (f: Filter): number => (f === 'scheduled' ? c?.queued ?? 0 : lists[f].length)
+  // Sub-tab counts — server-side, campaign-scoped, over the WHOLE view. The
+  // browser holds one page, so these can't be row lengths any more.
+  const countFor = (f: Filter): number => snapshot?.views[f] ?? 0
 
   return (
     <>
@@ -965,27 +934,32 @@ export function OutreachWorkspace({ section }: { section: Section }) {
             </div>
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, paddingBottom: 4, alignItems: 'center' }}>
               {(filter === 'review' || filter === 'templates') && current.length > 0 && (
-                <button onClick={() => handleApproveAll(current.map((p) => p.draft!.id))} style={btn('#1D9E75')}>
-                  Approve all ({current.length})
+                <button
+                  onClick={() => handleApproveAll(current.map((p) => p.draft!.id))}
+                  style={btn('#1D9E75')}
+                  title={`Approve the ${current.length} draft(s) loaded${scopeNote}`}
+                >
+                  {partial ? 'Approve loaded' : 'Approve all'} ({current.length})
                 </button>
               )}
               {filter === 'approved' && current.length > 0 && (
                 <button
                   onClick={() => { setConfirmBulkDelete(false); setSelectedDraftIds((prev) => prev.size === current.length ? new Set() : new Set(current.map((p) => p.draft!.id))) }}
                   style={btnGhost()}
+                  title={`Select the ${current.length} draft(s) loaded${scopeNote}`}
                 >
-                  {selectedDraftIds.size === current.length ? 'Clear' : 'Select all'}
+                  {selectedDraftIds.size === current.length ? 'Clear' : partial ? `Select loaded (${current.length})` : 'Select all'}
                 </button>
               )}
               {filter === 'approved' && (() => {
                 // "Unqueued" mirrors what scheduleDraftSends would actually take:
                 // no send yet, or only a failed/canceled attempt.
-                const unqueued = current.filter((p) => p.draft && (!p.draft.send || p.draft.send.status === 'failed' || p.draft.send.status === 'canceled'))
+                const unqueued = current.filter((p) => isUnqueued(p.draft))
                 return unqueued.length > 0 ? (
                   <button
                     onClick={() => { setConfirmBulkDelete(false); setSelectedDraftIds(new Set(unqueued.map((p) => p.draft!.id))) }}
                     style={btnGhost()}
-                    title="Select only the drafts that aren't already queued or sent"
+                    title={`Select only the loaded drafts that aren't already queued or sent${scopeNote}`}
                   >
                     Select unqueued ({unqueued.length})
                   </button>
@@ -1010,8 +984,12 @@ export function OutreachWorkspace({ section }: { section: Section }) {
                 </button>
               )}
               {filter !== 'scheduled' && current.length > 0 && (
-                <button onClick={() => handleExport(current, filter)} style={btnGhost(ACCENT)}>
-                  Export CSV ({current.length})
+                <button
+                  onClick={() => handleExport(current, filter)}
+                  style={btnGhost(ACCENT)}
+                  title={`Export the ${current.length} row(s) loaded${scopeNote}`}
+                >
+                  Export CSV ({current.length}{partial ? ` of ${total.toLocaleString('en-US')}` : ''})
                 </button>
               )}
             </div>
@@ -1024,21 +1002,27 @@ export function OutreachWorkspace({ section }: { section: Section }) {
           ) : filter === 'contacts' ? (
             <ContactsTable prospects={current} companyId={companyId} campaigns={campaigns} onChanged={refresh} />
           ) : filter === 'replied' ? (
-            <ReplyInbox
-              prospects={current}
-              companyId={companyId}
-              senderEmail={snapshot?.sending?.sender_email ?? null}
-              onChanged={refresh}
-            />
+            <>
+              <ReplyInbox
+                prospects={current}
+                companyId={companyId}
+                senderEmail={snapshot?.sending?.sender_email ?? null}
+                onChanged={refresh}
+              />
+              <LoadMore loaded={current.length} total={total} busy={rowsLoading} onMore={loadMore} />
+            </>
           ) : (
           <div className="outreach-split" style={{ flex: 1, minHeight: 0, gap: 14 }}>
             {/* List */}
             <div style={{ border: `1px solid ${BORDER}`, borderRadius: 8, overflowY: 'auto', overflowX: 'hidden', minHeight: 0 }}>
-              {current.length === 0 && <div style={{ fontSize: 12, color: MUTED, padding: 14 }}>{EMPTY_MSG[filter]}</div>}
+              {current.length === 0 && (
+                <div style={{ fontSize: 12, color: MUTED, padding: 14 }}>{rowsLoading ? 'Loading…' : EMPTY_MSG[filter]}</div>
+              )}
               {current.length > 0 && (filter === 'approved' || filter === 'exported' || filter === 'all') ? (
                 // Sortable list. Default ('type' asc) keeps the classic grouped
                 // view — Personalized then Templates, each by name; the other
-                // keys flatten the list and sort it.
+                // keys flatten the list. The server does the ordering, so the
+                // rows arrive already grouped and this only draws the dividers.
                 (() => {
                   const selectable = filter === 'approved'
                   const rowOf = (p: OutreachProspectView) => (
@@ -1051,27 +1035,25 @@ export function OutreachWorkspace({ section }: { section: Section }) {
                       onToggle={selectable && p.draft ? () => toggleDraft(p.draft!.id) : undefined}
                     />
                   )
-                  const sortBtn = (k: ListSortKey, label: string) => (
-                    <button
-                      key={k}
-                      onClick={() => toggleListSort(k)}
-                      style={{ fontSize: 9, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.6, color: listSortKey === k ? ACCENT : MUTED, background: 'transparent', border: 'none', padding: '2px 5px', cursor: 'pointer', minHeight: 'auto' }}
-                    >
-                      {label}{listSortKey === k ? (listSortDir === 'asc' ? ' ▲' : ' ▼') : ''}
-                    </button>
-                  )
                   const sortBar = (
                     <div style={{ display: 'flex', gap: 2, alignItems: 'center', padding: '3px 8px', borderBottom: `1px solid ${BORDER}` }}>
                       <span style={{ fontSize: 9, fontWeight: 600, color: MUTED, textTransform: 'uppercase', letterSpacing: 0.6, marginRight: 2 }}>Sort</span>
-                      {sortBtn('type', 'Type')}
-                      {sortBtn('name', 'Name')}
-                      {sortBtn('email', 'Email')}
-                      {sortBtn('status', 'Status')}
+                      {LIST_SORTS.map(({ key, label }) => (
+                        <button
+                          key={key}
+                          onClick={() => toggleListSort(key)}
+                          style={{ fontSize: 9, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.6, color: listSortKey === key ? ACCENT : MUTED, background: 'transparent', border: 'none', padding: '2px 5px', cursor: 'pointer', minHeight: 'auto' }}
+                        >
+                          {label}{listSortKey === key ? (listSortDir === 'asc' ? ' ▲' : ' ▼') : ''}
+                        </button>
+                      ))}
                     </div>
                   )
                   if (listSortKey === 'type') {
-                    const personalized = current.filter((p) => p.draft && !p.draft.is_template).sort(byName)
-                    const templates = current.filter((p) => p.draft && p.draft.is_template).sort(byName)
+                    // Counts are of the LOADED rows, matching what the dividers
+                    // actually separate; the view's real totals are in the tabs.
+                    const personalized = current.filter((p) => p.draft && !p.draft.is_template)
+                    const templates = current.filter((p) => p.draft && p.draft.is_template)
                     const sections: [string, OutreachProspectView[]][] = listSortDir === 'asc'
                       ? [['Personalized', personalized], ['Templates', templates]]
                       : [['Templates', templates], ['Personalized', personalized]]
@@ -1089,19 +1071,10 @@ export function OutreachWorkspace({ section }: { section: Section }) {
                       </>
                     )
                   }
-                  const dir = listSortDir === 'asc' ? 1 : -1
-                  const cmp = (a: OutreachProspectView, b: OutreachProspectView): number => {
-                    switch (listSortKey) {
-                      case 'name': return byName(a, b)
-                      case 'email': return a.email.localeCompare(b.email)
-                      case 'status': return rowStage(a).localeCompare(rowStage(b)) || byName(a, b)
-                      default: return 0
-                    }
-                  }
                   return (
                     <>
                       {sortBar}
-                      {[...current].sort((a, b) => cmp(a, b) * dir).map(rowOf)}
+                      {current.map(rowOf)}
                     </>
                   )
                 })()
@@ -1110,6 +1083,7 @@ export function OutreachWorkspace({ section }: { section: Section }) {
                   <ProspectRow key={p.id} p={p} selected={selected?.id === p.id} onSelect={() => setSelectedId(p.id)} />
                 ))
               )}
+              <LoadMore loaded={current.length} total={total} busy={rowsLoading} onMore={loadMore} />
             </div>
 
             {/* Detail */}

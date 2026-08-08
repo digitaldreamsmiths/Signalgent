@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { listTemplates, createTemplate, updateTemplate, deleteTemplate } from '@/lib/integrations/outreach/template-actions'
 import { TEMPLATE_LIBRARY } from '@/lib/integrations/outreach/template-library'
 import { replyRiskWarnings } from '@/lib/integrations/outreach/hygiene'
-import type { OutreachTemplate, OutreachProspectView } from '@/lib/integrations/outreach/types'
+import type { OutreachTemplate, TemplateStat } from '@/lib/integrations/outreach/types'
 
 const BORDER = 'var(--app-border)'
 const CARD = 'var(--app-card)'
@@ -15,7 +15,7 @@ const TEXT2 = 'var(--app-text-2)'
 const MUTED = 'var(--app-muted)'
 const ACCENT = '#D85A30'
 
-type Stat = { assigned: number; sent: number; replied: number; bounced: number; optout: number }
+
 type FormState = { id: string | null; name: string; subject: string; body: string; weight: number; active: boolean }
 
 const EMPTY_FORM: FormState = { id: null, name: '', subject: '', body: '', weight: 1, active: true }
@@ -34,12 +34,15 @@ function pct(n: number, d: number): string {
 
 export function TemplatesModal({
   companyId,
-  prospects,
+  stats,
   onClose,
   onChanged,
 }: {
   companyId: string
-  prospects: OutreachProspectView[]
+  /** Per-template performance, keyed by template id. Computed server-side with
+   * the rest of the snapshot — this used to walk every prospect in the browser,
+   * which is exactly what paging removed from the client. */
+  stats: Record<string, TemplateStat>
   onClose: () => void
   onChanged: () => void
 }) {
@@ -52,31 +55,6 @@ export function TemplatesModal({
 
   const load = async () => setTemplates(await listTemplates(companyId))
   useEffect(() => { load() }, [companyId]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Per-template performance from the current snapshot (fallback drafts carry
-  // template_id; outcome comes from the prospect's disposition once sent).
-  const stats = useMemo(() => {
-    const m = new Map<string, Stat>()
-    const get = (id: string) => {
-      let s = m.get(id)
-      if (!s) { s = { assigned: 0, sent: 0, replied: 0, bounced: 0, optout: 0 }; m.set(id, s) }
-      return s
-    }
-    for (const p of prospects) {
-      for (const d of p.drafts) {
-        if (!d.template_id) continue
-        const s = get(d.template_id)
-        s.assigned += 1
-        const sent = d.status === 'exported' || d.send?.status === 'sent'
-        if (!sent) continue
-        s.sent += 1
-        if (p.disposition === 'replied' || p.disposition === 'interested' || p.disposition === 'not_interested') s.replied += 1
-        else if (p.disposition === 'bounced') s.bounced += 1
-        else if (p.disposition === 'unsubscribed') s.optout += 1
-      }
-    }
-    return m
-  }, [prospects])
 
   function set<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((f) => (f ? { ...f, [key]: value } : f))
@@ -180,7 +158,7 @@ export function TemplatesModal({
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
             {templates.map((t) => {
-              const s = stats.get(t.id)
+              const s = stats[t.id]
               return (
                 <div key={t.id} style={{ border: `1px solid ${BORDER}`, borderRadius: 8, padding: 10, background: t.active ? CARD2 : 'transparent', opacity: t.active ? 1 : 0.6 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>

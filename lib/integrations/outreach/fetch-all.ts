@@ -19,16 +19,30 @@ const PAGE_SIZE = 1000
 export async function fetchAllPages<T>(
   page: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
 ): Promise<T[]> {
+  return (await fetchAllPagesResult(page)).rows
+}
+
+/**
+ * Same walk, but hands back the first error instead of only logging it.
+ *
+ * Callers that select an EXPLICIT column list need this: a column that hasn't
+ * been migrated yet fails the very first page, and `fetchAllPages` would report
+ * that as an empty table — silently emptying the whole workspace. Seeing the
+ * error lets the caller retry with a tolerant `select('*')`.
+ */
+export async function fetchAllPagesResult<T>(
+  page: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
+): Promise<{ rows: T[]; error: { message: string } | null }> {
   const all: T[] = []
   for (let from = 0; ; from += PAGE_SIZE) {
     const { data, error } = await page(from, from + PAGE_SIZE - 1)
     if (error) {
       console.error(`[outreach] paged fetch failed at offset ${from}: ${error.message}`)
-      break
+      return { rows: all, error }
     }
     if (!data || data.length === 0) break
     all.push(...data)
     if (data.length < PAGE_SIZE) break
   }
-  return all
+  return { rows: all, error: null }
 }
