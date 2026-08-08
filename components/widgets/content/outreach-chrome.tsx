@@ -28,7 +28,6 @@ import { TemplatesModal } from './templates-modal'
 export function OutreachChrome({ children }: { children: React.ReactNode }) {
   const {
     companyId, snapshot, loading, refresh,
-    prospects, lists,
     campaigns, campaignStats, campaignFilter, setCampaignFilter,
     toasts, pushToast, dismissToast, setupKey,
   } = useOutreach()
@@ -45,6 +44,9 @@ export function OutreachChrome({ children }: { children: React.ReactNode }) {
   const router = useRouter()
 
   const c = snapshot?.counts
+  // Prospects in the current campaign scope. Server-counted — the browser only
+  // holds one page of rows, so this can't come from a list length any more.
+  const scoped = snapshot?.views.contacts ?? 0
 
   // Shared ingest core: takes any text blob (pasted or read from a file), hands
   // it to the server action (which regex-extracts emails regardless of
@@ -243,7 +245,7 @@ export function OutreachChrome({ children }: { children: React.ReactNode }) {
       {/* Status bar */}
       {c && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 8 }}>
-          <Metric label="To review" value={lists.review.length} accent={ACCENT} />
+          <Metric label="To review" value={snapshot?.views.review ?? 0} accent={ACCENT} />
           <Metric label="Prospects" value={c.total} />
           <Metric label="Sent" value={c.sent} accent="#378ADD" />
           <Metric label="Queued" value={c.queued} accent={c.queued > 0 ? ACCENT : undefined} />
@@ -282,7 +284,7 @@ export function OutreachChrome({ children }: { children: React.ReactNode }) {
       {loading && !snapshot && (
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, color: MUTED }}>Loading…</div>
       )}
-      {!loading && prospects.length === 0 && (
+      {!loading && scoped === 0 && (
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: 16 }}>
           <div style={{ maxWidth: 460 }}>
             <div style={{ fontSize: 14, color: 'var(--app-text-2)', marginBottom: 6 }}>
@@ -300,14 +302,14 @@ export function OutreachChrome({ children }: { children: React.ReactNode }) {
         </div>
       )}
 
-      {prospects.length > 0 && children}
+      {scoped > 0 && children}
 
       {sendingModalOpen && (
         <SendingSettingsModal companyId={companyId} onClose={() => setSendingModalOpen(false)} onSaved={refresh} />
       )}
 
       {templatesModalOpen && (
-        <TemplatesModal companyId={companyId} prospects={prospects} onClose={() => setTemplatesModalOpen(false)} onChanged={refresh} />
+        <TemplatesModal companyId={companyId} stats={snapshot?.template_stats ?? {}} onClose={() => setTemplatesModalOpen(false)} onChanged={refresh} />
       )}
 
       {campaignsModalOpen && (

@@ -2,17 +2,12 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { SECTIONS, useOutreach, type Section } from '@/contexts/outreach-context'
+import { SECTIONS, SECTION_HREF, useOutreach, type Section } from '@/contexts/outreach-context'
 
 const BORDER = 'var(--app-border)'
 const ACCENT = '#D85A30'
 
-export const SECTION_HREF: Record<Section, string> = {
-  pipeline: '/outreach/pipeline',
-  contacts: '/outreach/contacts',
-  inbox: '/outreach/inbox',
-  schedule: '/outreach/schedule',
-}
+export { SECTION_HREF }
 
 /**
  * Section rail — Phase 5 stage 2b. Each section is a real route, so views are
@@ -23,16 +18,20 @@ export const SECTION_HREF: Record<Section, string> = {
  */
 export function OutreachNav() {
   const pathname = usePathname()
-  const { lists, snapshot } = useOutreach()
+  const { snapshot } = useOutreach()
 
   /** The badge is what wants attention, not the section's total — "Pipeline
-   * 4,933" would be noise. Zero badges are hidden. */
+   * 4,933" would be noise. Zero badges are hidden.
+   *
+   * Server-counted (campaign-scoped) rather than measured from loaded rows:
+   * the browser only holds one page now, so a row count would read "100". */
   const badge = (key: Section): number => {
+    if (!snapshot) return 0
     switch (key) {
-      case 'pipeline': return lists.review.length + lists.needs_review.length
-      case 'inbox': return lists.replied.filter((p) => p.disposition === 'replied').length
-      case 'schedule': return snapshot?.counts.queued ?? 0
-      case 'contacts': return lists.contacts.length
+      case 'pipeline': return snapshot.views.review + snapshot.views.needs_review
+      case 'inbox': return snapshot.inbox_untriaged
+      case 'schedule': return snapshot.counts.queued
+      case 'contacts': return snapshot.views.contacts
     }
   }
 

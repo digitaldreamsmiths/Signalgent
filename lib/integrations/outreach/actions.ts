@@ -14,7 +14,6 @@
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { IntegrationAuthError, requireCompanyAccess } from '@/lib/integrations/auth'
-import type { Database } from '@/lib/types/database.types'
 import { extractDomain } from '../usaspending/resolve'
 import { runPipelineFromName } from './pipeline'
 import { persistOutcome, recordUsage, runEnrichmentBatch, runEnrichmentBatchForIds, enrichToBuffer, RUN_BATCH } from './enrich-run'
@@ -28,14 +27,24 @@ import { openStats, recentBounceStats } from './send/scan'
 import { getAccount } from '../accounts'
 import { undeliverableDomains } from './deliverability'
 import { fetchAllPages } from './fetch-all'
+import {
+  campaignStats,
+  companyCounts,
+  countStageBuckets,
+  countUntriaged,
+  countViews,
+  hydrateProspects,
+  loadOutreachIndex,
+  selectPage,
+  templateStats,
+} from './query'
 import type { LLMUsage } from '../../llm/client'
 import type {
   ActionResult,
   Disposition,
-  OutreachDraftView,
-  OutreachProspectView,
-  OutreachSendView,
   OutreachSnapshot,
+  OutreachWorkspaceData,
+  ProspectQuery,
 } from './types'
 
 const AUTH_ERROR = 'You don’t have access to this workspace.'
@@ -199,13 +208,25 @@ export async function enrichWaveNow(
   return { ok: true, data }
 }
 
-// ── Snapshot read ─────────────────────────────────────────────────────────────
+// ── Workspace read ────────────────────────────────────────────────────────────
 
-function asStringArray(v: unknown): string[] {
-  return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []
-}
-
-export async function getOutreachSnapshot(companyId: string): Promise<OutreachSnapshot | null> {
+/**
+ * The whole outreach workspace: fixed-size metrics + counts, plus ONE PAGE of
+ * the requested view.
+ *
+ * This used to be `getOutreachSnapshot`, which returned every prospect, touch
+ * and send — ~4,900 prospects on SourceGent — on mount and again on the ~150s
+ * poll, leaving the browser to filter, count and sort all of it. Filtering,
+ * counting and sorting now happen here (see `query.ts`); the response carries
+ * `query.limit` rows.
+ *
+ * Snapshot and page come from one index pass, so a refresh is one query set
+ * rather than two.
+ */
+export async function getOutreachWorkspace(
+  companyId: string,
+  query: ProspectQuery,
+): Promise<OutreachWorkspaceData | null> {
   try {
     await requireCompanyAccess(companyId)
   } catch (err) {
@@ -214,135 +235,22 @@ export async function getOutreachSnapshot(companyId: string): Promise<OutreachSn
   }
 
   const supabase = await createClient()
-  // Paged: these tables outgrow PostgREST's silent 1,000-row cap (a 4,900-email
-  // ingest made the snapshot show an arbitrary 1,000 prospects and hide every
-  // personalized draft). Secondary .order('id') breaks created_at ties — bulk
-  // ingests give thousands of rows the same timestamp, which would otherwise
-  // make page boundaries skip/duplicate rows.
-  const [prospects, drafts, usageRows, sends, campaigns] = await Promise.all([
-    fetchAllPages((from, to) =>
-      supabase.from('outreach_prospects').select('*').eq('company_id', companyId)
-        .order('created_at', { ascending: false }).order('id').range(from, to)),
-    fetchAllPages((from, to) =>
-      supabase.from('outreach_drafts').select('*').eq('company_id', companyId)
-        .order('id').range(from, to)),
+  const [index, usageRows, campaigns] = await Promise.all([
+    loadOutreachIndex(supabase, companyId),
     fetchAllPages((from, to) =>
       supabase.from('api_usage').select('cost_usd').eq('company_id', companyId).like('feature', 'outreach:%')
         .order('id').range(from, to)),
-    fetchAllPages((from, to) =>
-      supabase.from('outreach_sends').select('id, draft_id, prospect_id, status, scheduled_at, sent_at, opened_at, thread_id, error').eq('company_id', companyId)
-        .order('created_at', { ascending: false }).order('id').range(from, to)),
     loadCampaigns(supabase, companyId),
   ])
 
   const cost_usd_total = (usageRows ?? []).reduce((s, r) => s + (r.cost_usd ?? 0), 0)
 
-  // Latest send per draft (rows arrive newest-first, so first seen wins).
-  const sendByDraft = new Map<string, OutreachSendView>()
-  // Gmail thread per prospect, for the "open the conversation" deep link.
-  // Follow-ups thread under the opener, so any send's thread id reaches the
-  // same conversation; newest-first ordering makes this the most recent one.
-  const threadByProspect = new Map<string, string>()
-  let queued = 0
-  for (const s of sends ?? []) {
-    if (s.status === 'queued') queued += 1
-    if (s.thread_id && !threadByProspect.has(s.prospect_id)) threadByProspect.set(s.prospect_id, s.thread_id)
-    if (!sendByDraft.has(s.draft_id)) {
-      sendByDraft.set(s.draft_id, { id: s.id, status: s.status, scheduled_at: s.scheduled_at, sent_at: s.sent_at, opened_at: s.opened_at ?? null, error: s.error })
-    }
-  }
+  const counts = companyCounts(index.rows, index.queued)
+  const reply_rate = counts.sent > 0 ? counts.replied / counts.sent : 0
 
-  const draftsByProspect = new Map<string, OutreachDraftView[]>()
-  for (const d of drafts ?? []) {
-    const facts = asStringArray(d.facts_for_draft)
-    const view: OutreachDraftView = {
-      id: d.id,
-      subject: d.subject,
-      body: d.body,
-      angle: d.angle,
-      synthesis_confidence: d.synthesis_confidence,
-      clean: d.clean,
-      drifted_facts: asStringArray(d.drifted_facts),
-      facts_for_draft: facts,
-      facts_used: asStringArray(d.facts_used),
-      status: d.status,
-      step: d.step,
-      is_template: facts.length === 0,
-      template_id: d.template_id,
-      send: sendByDraft.get(d.id) ?? null,
-    }
-    const arr = draftsByProspect.get(d.prospect_id)
-    if (arr) arr.push(view)
-    else draftsByProspect.set(d.prospect_id, [view])
-  }
-  // Order each prospect's touches by step (1 = initial email).
-  for (const arr of draftsByProspect.values()) arr.sort((a, b) => a.step - b.step)
-
-  const views: OutreachProspectView[] = (prospects ?? []).map((p) => {
-    const fp = p.footprint as { award_count?: number; sampled_total?: number } | null
-    const prospectDrafts = draftsByProspect.get(p.id) ?? []
-    return {
-      id: p.id,
-      email: p.email,
-      domain: p.domain,
-      created_at: p.created_at,
-      status: p.status,
-      skip_stage: p.skip_stage,
-      skip_reason: p.skip_reason,
-      recipient_name: p.recipient_name,
-      // select('*') returns contact_name only once its migration is applied;
-      // until then the localpart parse carries the feature alone.
-      contact_name: resolveContactName(p.contact_name ?? null, p.email),
-      contact_name_manual: !!(p.contact_name ?? null)?.trim(),
-      campaign_id: p.campaign_id ?? null,
-      resolution_confidence: p.resolution_confidence,
-      business_types: p.business_types ?? [],
-      location: p.location,
-      footprint: fp && typeof fp.award_count === 'number'
-        ? { award_count: fp.award_count, sampled_total: fp.sampled_total ?? 0 }
-        : null,
-      drafts: prospectDrafts,
-      draft: prospectDrafts.at(-1) ?? null,
-      disposition: p.disposition,
-      disposition_at: p.disposition_at,
-      reply_from: p.reply_from,
-      reply_subject: p.reply_subject,
-      reply_snippet: p.reply_snippet,
-      thread_id: threadByProspect.get(p.id) ?? null,
-      // A plausible-but-uncertain resolver result (low confidence) — surfaced
-      // for manual disambiguation rather than left as a silent skip. Only while
-      // it still awaits a decision: approving/editing/sending a draft anyway
-      // (or the prospect closing) is a decision, so the flag clears instead of
-      // nagging forever. The detail pane keys its re-resolve box off the raw
-      // skip fields, so an uncertain match can still be fixed afterwards.
-      needs_review:
-        p.status === 'skipped' &&
-        p.skip_stage === 'enrich' &&
-        (p.skip_reason ?? '').startsWith('low_confidence') &&
-        p.disposition === 'open' &&
-        prospectDrafts.every((d) => d.status === 'pending'),
-    }
-  })
-
-  const sent = views.filter((v) => v.drafts.some((d) => d.status === 'exported')).length
-  // Any inbound response counts toward reply rate: the auto-detected neutral
-  // 'replied' state plus the manually-triaged interested/not_interested.
-  const replied = views.filter((v) => v.disposition === 'replied' || v.disposition === 'interested' || v.disposition === 'not_interested').length
-  const counts = {
-    total: views.length,
-    new: views.filter((v) => v.status === 'new').length,
-    personalized: views.filter((v) => v.draft && !v.draft.is_template).length,
-    templates: views.filter((v) => v.draft && v.draft.is_template).length,
-    approved: views.filter((v) => v.draft?.status === 'approved').length,
-    exported: views.filter((v) => v.draft?.status === 'exported').length,
-    needs_review: views.filter((v) => v.needs_review).length,
-    sent,
-    replied,
-    bounced: views.filter((v) => v.disposition === 'bounced').length,
-    unsubscribed: views.filter((v) => v.disposition === 'unsubscribed').length,
-    queued,
-  }
-  const reply_rate = sent > 0 ? replied / sent : 0
+  const campaignNames = new Map(campaigns.map((c) => [c.id, c.name]))
+  const { page, total } = selectPage(index.rows, query, campaignNames)
+  const rows = await hydrateProspects(supabase, companyId, page)
 
   const settings = await loadSettings(supabase, companyId)
   const { rate: bounce_rate_7d } = await recentBounceStats(supabase, companyId, 7)
@@ -380,7 +288,22 @@ export async function getOutreachSnapshot(companyId: string): Promise<OutreachSn
     gmail,
   }
 
-  return { prospects: views, counts, reply_rate, opens, cost_usd_total, sending, campaigns }
+  return {
+    snapshot: {
+      campaigns,
+      views: countViews(index.rows, query.campaignId, index.queued),
+      inbox_untriaged: countUntriaged(index.rows, query.campaignId),
+      contact_buckets: countStageBuckets(index.rows, query.campaignId),
+      campaign_stats: campaignStats(index.rows),
+      template_stats: templateStats(index.rows),
+      counts,
+      reply_rate,
+      opens,
+      cost_usd_total,
+      sending,
+    },
+    page: { rows, total, offset: Math.max(0, query.offset) },
+  }
 }
 
 // ── Outcomes ──────────────────────────────────────────────────────────────────

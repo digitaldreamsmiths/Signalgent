@@ -2576,3 +2576,40 @@ The polish item left over from stage 2b. The persistent frame — banners, setup
 - Chrome renders above the rail and persists; every section still renders (Contacts deep-load shows all 4,933 rows with chrome and a 4-link rail); Sending settings still opens from the header and closes without saving.
 - `tsc` clean. eslint: **every file touched here is clean** — the four remaining findings in `components/widgets/content/` are all pre-existing, in files this change didn't touch (`scheduled-view`, `sending-settings-modal`, `templates-modal`).
 - A mid-refactor parse error (a bad brace match left three orphaned function fragments) was fixed before commit; the console kept showing it from its buffer, so the dev server was restarted to confirm — a fresh server shows only the pre-existing HMR WebSocket noise, no parse errors and no 500s.
+
+## Session 47 — Outreach snapshot pagination
+
+`getOutreachSnapshot(companyId)` loaded every prospect, draft, send and `api_usage` row, built ~4,900 view objects, and returned the lot to the browser — on mount **and** on the ~150s poll. The client then sliced that array into the ten views, counted them, sorted them and filtered them. The scale debt tracked since stage 2a; this closes it.
+
+### Shape
+
+| File | Role |
+| --- | --- |
+| `outreach/views.ts` (NEW) | The view vocabulary (`Filter`, `SECTIONS`, `FILTER_LABEL`, `SECTION_HREF`), page size, the sort/stage-bucket key types, and `defaultSort`. Moved out of `outreach-context.tsx` because the server counts the views now and a `'use client'` module can't be imported from a server action. The context re-exports it, so existing imports still resolve. |
+| `outreach/stage.ts` (NEW) | `matchesView`, `matchesCampaign`, `contactStage`, `stageBucket`, `rowStage`, `isUnqueued` — over STRUCTURAL parameter types, so the server's index rows and the client's `OutreachProspectView` both satisfy them. One definition of "is this in To review", shared by the page query, the counts and the badges. |
+| `outreach/query.ts` (NEW) | Two passes. **Index:** one lean walk over prospects/drafts/sends — enough to decide membership, scope, stage and order, and to count every view, but without the draft subject/body/facts. **Hydrate:** full draft rows for the page's prospects only, `.in()` chunked 100 ids at a time so the URL stays under PostgREST's limit. |
+| `actions.ts` | `getOutreachSnapshot` → `getOutreachWorkspace(companyId, query)`, returning `{ snapshot, page }` from one index pass. |
+| `types.ts` | `OutreachSnapshot` loses `prospects` and gains `views` (per-view counts), `inbox_untriaged`, `contact_buckets`, `campaign_stats`, `template_stats`. `counts` keeps its shape and stays whole-company; the new fields are campaign-scoped, because they label the lists. |
+| `outreach-context.tsx` | Owns the query (view, campaign, sort, dir, stage, limit) and one page of rows. |
+
+### Decisions
+
+- **`offset` stays 0 and `limit` grows.** Load more and the poll take the identical path, so a background tick refreshes the loaded window in place instead of bouncing the user to the top — and offset paging can't skip or duplicate across a boundary. Verified: 200 loaded rows, 200 unique, no gap at the seam.
+- **Bulk actions act on the LOADED rows** (Eudon's call), and every label says so: "Approve loaded (100)", "Export CSV (100 of 369)", with the full total in the tooltip. A footer under every list reads "100 of 4,933".
+- **A 2,000-row ceiling on the loaded window.** Past it "Load more" is replaced by "pick a campaign or a status to narrow it down" — every loaded row carries its drafts' full copy and the poll re-reads the whole window.
+- **Counts never come from row lengths again.** Sub-tabs, rail badges, the "To review" metric, the Contacts status chips and the "no prospects yet" gate all read server counts.
+- **Sorting moved server-side**, so the Contacts columns and the draft lists' Sort bar order the whole view rather than re-shuffling the first 100. Every comparator ends in an id tiebreak.
+- **`select('*')` kept for prospects, narrowed for drafts.** Prospect columns arrive by out-of-band migration (`campaign_id`, `contact_name`), so `'*'` stays; the drafts index selects six columns and falls back to `'*'` if one is missing. That needed `fetchAllPagesResult`, which surfaces the first page error instead of only logging it — `fetchAllPages` would have reported a missing column as an empty drafts table and silently emptied the workspace.
+
+### Verification (live SourceGent workspace)
+
+- Metrics reconcile with the known prod numbers: 4,933 prospects, 369 queued, 434 sent. Chips sum exactly: 4,409 New + 90 Ready + 420 Emailed + 14 Other = 4,933.
+- Pipeline "Ready to email": 100 of 369, grouped Personalized 10 / Templates 90; after Load more, Personalized 10 / Templates 190 — grouping survives paging.
+- Contacts "Emailed" chip: 100 of 420, every visible row `Emailed`. Email column sort returns the globally-first 100 addresses, not a re-sort of an arbitrary page.
+- Poll (dispatched `visibilitychange`): loaded window stayed at 200, the checked draft stayed checked, the detail pane kept its prospect, scroll position held at 900px.
+- One page of 100 drafted rows is **255 KB decoded / 37 KB over the wire** — and the poll now repeats that instead of the whole workspace.
+- `tsc` clean, `next build` clean. eslint: one pre-existing-pattern finding (`refresh` is an async `useCallback` that setStates, same as `connected-accounts-context.tsx:33`); the other outreach files are clean.
+
+### Residual
+
+`api_usage` is still walked in full every read, for one number (`cost_usd_total`). PostgREST can't `SUM` without an RPC, and migrations here are out-of-band — left alone deliberately, and it is only a `cost_usd` float per row.

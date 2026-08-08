@@ -1,8 +1,7 @@
 'use client'
 
 /**
- * Shared outreach workspace data — Phase 5 stage 2 of
- * docs/specs/signalgent-govcon-v1.md.
+ * Shared outreach workspace data.
  *
  * The workspace was one component that owned the snapshot, so every view lived
  * on one page. A Next layout can't pass props down to page children, so
@@ -10,80 +9,87 @@
  * it each route would re-fetch the entire workspace on every navigation.
  *
  * What lives here: everything that is the same no matter which section you are
- * looking at (snapshot, campaigns + the campaign scope, the queued-send list,
- * toasts, the poll). What stays with each view: its own selection, sort, and
- * dialog state.
+ * looking at (the snapshot, campaigns + the campaign scope, the queued-send
+ * list, toasts, the poll) PLUS the active view's query and its one page of
+ * rows. What stays with each view: its own selection and dialog state.
  *
- * NOTE this does not change how much data is fetched — `getOutreachSnapshot`
- * still loads every prospect (~4,900 today). That scale debt is tracked
- * separately in the spec; the provider just stops routes from multiplying it.
+ * PAGING. The snapshot used to carry every prospect (~4,900 on SourceGent) and
+ * the client sliced it into the ten views. Now the server filters, sorts and
+ * counts (see `lib/integrations/outreach/query.ts`) and returns `limit` rows;
+ * the counts that label the tabs and rail come from `snapshot.views`, never
+ * from row lengths. The query lives here rather than in the views because it
+ * determines what gets fetched, and because the ~150s poll has to refresh the
+ * ALREADY-LOADED window in place — re-requesting offset 0 with the current
+ * limit — so a background tick never bounces the user back to the first page.
  */
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { usePathname } from 'next/navigation'
 import { useCompany } from '@/contexts/company-context'
-import { getOutreachSnapshot } from '@/lib/integrations/outreach/actions'
+import { getOutreachWorkspace } from '@/lib/integrations/outreach/actions'
 import { getScheduledSends } from '@/lib/integrations/outreach/sending'
+import {
+  PROSPECT_MAX_LOADED,
+  PROSPECT_PAGE_SIZE,
+  defaultSort,
+  filtersOf,
+  sectionFromPathname,
+  type Filter,
+  type ProspectSort,
+  type StageBucket,
+} from '@/lib/integrations/outreach/views'
 import type { OutreachCampaign } from '@/lib/integrations/outreach/campaigns'
-import type { OutreachProspectView, OutreachSnapshot, ScheduledSendView } from '@/lib/integrations/outreach/types'
+import type {
+  CampaignStats,
+  OutreachProspectView,
+  OutreachSnapshot,
+  ProspectQuery,
+  ScheduledSendView,
+} from '@/lib/integrations/outreach/types'
 
-// ── View vocabulary ──────────────────────────────────────────────────────────
-// Lives here rather than in the widget file so both the nav (which will move to
-// the layout) and the views can read it.
-
-export type Filter =
-  | 'contacts' | 'review' | 'templates' | 'needs_review' | 'approved'
-  | 'exported' | 'replied' | 'bounced' | 'scheduled' | 'all'
-
-export type Section = 'pipeline' | 'contacts' | 'inbox' | 'schedule'
-
-export const SECTIONS: { key: Section; label: string; filters: Filter[] }[] = [
-  // Order matters: the first filter is the section's landing view.
-  { key: 'pipeline', label: 'Pipeline', filters: ['review', 'templates', 'needs_review', 'approved', 'exported', 'all'] },
-  { key: 'contacts', label: 'Contacts', filters: ['contacts'] },
-  { key: 'inbox', label: 'Inbox', filters: ['replied', 'bounced'] },
-  { key: 'schedule', label: 'Schedule', filters: ['scheduled'] },
-]
-
-export const SECTION_OF: Record<Filter, Section> = SECTIONS.reduce((acc, s) => {
-  for (const f of s.filters) acc[f] = s.key
-  return acc
-}, {} as Record<Filter, Section>)
-
-export const FILTER_LABEL: Record<Filter, string> = {
-  contacts: 'Contacts',
-  review: 'To review',
-  templates: 'Templates',
-  needs_review: 'Needs review',
-  approved: 'Ready to email',
-  exported: 'Sent',
-  replied: 'Replied',
-  bounced: 'Bounced / opt-out',
-  scheduled: 'Scheduled',
-  all: 'All',
-}
-
-/** Per-campaign funnel, derived from the snapshot the workspace already holds. */
-export interface CampaignStats {
-  prospects: number
-  sent: number
-  replied: number
-  opened: number
-}
+// The view vocabulary moved to a plain module so the server can share it (the
+// per-view counts are computed there now). Re-exported so the existing
+// `@/contexts/outreach-context` imports keep working.
+export {
+  FILTER_LABEL,
+  SECTIONS,
+  SECTION_HREF,
+  SECTION_OF,
+  type Filter,
+  type Section,
+} from '@/lib/integrations/outreach/views'
+export type { CampaignStats } from '@/lib/integrations/outreach/types'
 
 export type Toast = { id: number; text: string; kind: 'info' | 'error' }
 
 interface OutreachContextValue {
   companyId: string | null
+  /** Metrics, per-view counts, campaigns, sending health. Fixed size. */
   snapshot: OutreachSnapshot | null
+  /** True until the first workspace read lands. */
   loading: boolean
+  /** Re-read the workspace, keeping the current view, sort and loaded window. */
   refresh: () => Promise<void>
 
-  /** Every prospect, ignoring the campaign scope. */
-  allProspects: OutreachProspectView[]
-  /** Prospects within the current campaign scope — what the views render. */
-  prospects: OutreachProspectView[]
-  /** Prospect lists per view, already campaign-scoped. */
-  lists: Record<Filter, OutreachProspectView[]>
+  // ── The active view and its page ───────────────────────────────────────────
+  view: Filter
+  setView: (f: Filter) => void
+  /** The loaded rows of the active view — a prefix, not the whole view. */
+  rows: OutreachProspectView[]
+  /** How many rows match the view in full, so labels can say "100 of 4,933". */
+  total: number
+  hasMore: boolean
+  /** A page read is in flight (initial, view change, or Load more). */
+  rowsLoading: boolean
+  loadMore: () => void
+
+  sort: ProspectSort
+  dir: 'asc' | 'desc'
+  /** Sort by `key`; repeating the current key flips the direction. */
+  toggleSort: (key: ProspectSort) => void
+  /** Contacts-table status chip. 'all' = no stage filter. */
+  stage: StageBucket | 'all'
+  setStage: (s: StageBucket | 'all') => void
 
   campaigns: OutreachCampaign[]
   campaignStats: Map<string, CampaignStats>
@@ -113,10 +119,38 @@ export function useOutreach(): OutreachContextValue {
 export function OutreachProvider({ children }: { children: React.ReactNode }) {
   const { activeCompany } = useCompany()
   const companyId = activeCompany?.id ?? null
+  const section = sectionFromPathname(usePathname())
 
   const [snapshot, setSnapshot] = useState<OutreachSnapshot | null>(null)
+  const [rows, setRows] = useState<OutreachProspectView[]>([])
+  const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
-  const [campaignFilter, setCampaignFilter] = useState<string>('all')
+
+
+  const sectionFilters = filtersOf(section)
+  const [viewState, setViewState] = useState<Filter>(() => sectionFilters[0])
+  // Navigating between sections lands on that section's first view; a sub-tab
+  // click within a section keeps the chosen one. Derived rather than synced in
+  // an effect, so no read ever goes out for the section you just left.
+  const view = sectionFilters.includes(viewState) ? viewState : sectionFilters[0]
+
+  const [{ sort, dir }, setSortState] = useState(() => defaultSort(sectionFilters[0]))
+  const [stage, setStageState] = useState<StageBucket | 'all'>('all')
+  const [limit, setLimit] = useState(PROSPECT_PAGE_SIZE)
+  const [campaignFilter, setCampaignFilterState] = useState<string>('all')
+
+  // Sort, stage filter and the loaded window belong to a view; changing view
+  // resets all three. Adjusted during render (React's documented pattern for
+  // state derived from something else) rather than in an effect, so the fetch
+  // below never fires once with the old sort and again with the new one.
+  const [sortedView, setSortedView] = useState(view)
+  if (sortedView !== view) {
+    setSortedView(view)
+    setSortState(defaultSort(view))
+    setStageState('all')
+    setLimit(PROSPECT_PAGE_SIZE)
+  }
+
   const [scheduledSends, setScheduledSends] = useState<ScheduledSendView[]>([])
   const [toasts, setToasts] = useState<Toast[]>([])
   const [setupKey, setSetupKey] = useState(0)
@@ -125,11 +159,87 @@ export function OutreachProvider({ children }: { children: React.ReactNode }) {
   // someone who never opens Schedule doesn't pay for it every tick.
   const scheduledLoaded = useRef(false)
 
+  // Anything that changes WHICH rows match starts the window over at one page —
+  // holding a 400-row window across a re-filter would fetch 400 rows of a list
+  // the user hasn't looked at yet.
+  const setView = useCallback((f: Filter) => setViewState(f), [])
+
+  const toggleSort = useCallback((key: ProspectSort) => {
+    setSortState((s) => (s.sort === key
+      ? { sort: key, dir: s.dir === 'asc' ? 'desc' : 'asc' }
+      : { sort: key, dir: key === 'added' ? 'desc' : 'asc' }))
+    setLimit(PROSPECT_PAGE_SIZE)
+  }, [])
+
+  const setStage = useCallback((s: StageBucket | 'all') => {
+    setStageState(s)
+    setLimit(PROSPECT_PAGE_SIZE)
+  }, [])
+
+  const setCampaignFilter = useCallback((v: string) => {
+    setCampaignFilterState(v)
+    setLimit(PROSPECT_PAGE_SIZE)
+  }, [])
+
+  const loadMore = useCallback(() => setLimit((n) => Math.min(n + PROSPECT_PAGE_SIZE, PROSPECT_MAX_LOADED)), [])
+
+  const query = useMemo<ProspectQuery>(
+    // offset stays 0 and `limit` grows: one request always covers the whole
+    // loaded window, so Load more and the poll take the identical path and
+    // rows already on screen refresh instead of going stale.
+    () => ({ view, campaignId: campaignFilter, sort, dir, stage, offset: 0, limit }),
+    [view, campaignFilter, sort, dir, stage, limit],
+  )
+
+  // "Which query are the rows on screen for?" — derived rather than a flag set
+  // in the fetch effect, so a background poll (same query) never flashes a
+  // spinner while changing view or loading a page does.
+  const queryKey = useMemo(() => JSON.stringify(query), [query])
+  const [loadedKey, setLoadedKey] = useState<string | null>(null)
+  const rowsLoading = loadedKey !== queryKey
+
+  // The poll and every action's `refresh()` re-read whatever is on screen NOW.
+  // Going through a ref keeps `refresh` stable, so loading another page doesn't
+  // tear down and restart the 150s interval.
+  const queryRef = useRef({ query, queryKey })
+  useEffect(() => { queryRef.current = { query, queryKey } }, [query, queryKey])
+
+  // The one place rows are fetched on their own: mount, and every query change.
+  // The cleanup flag drops a superseded response rather than letting a slow
+  // earlier query overwrite a fresher page — easy to trigger by clicking
+  // through sub-tabs.
+  useEffect(() => {
+    if (!companyId) return
+    let active = true
+    ;(async () => {
+      const data = await getOutreachWorkspace(companyId, query)
+      if (!active) return
+      if (data) {
+        setSnapshot(data.snapshot)
+        setRows(data.page.rows)
+        setTotal(data.page.total)
+      }
+      setLoadedKey(queryKey)
+      setLoading(false)
+    })()
+    return () => { active = false }
+  }, [companyId, query, queryKey])
+
   const refresh = useCallback(async () => {
     if (!companyId) return
-    const snap = await getOutreachSnapshot(companyId)
-    setSnapshot(snap)
-    setSetupKey((k) => k + 1) // setup state rides on the same events as the snapshot
+    const { query: q, queryKey: k } = queryRef.current
+    const data = await getOutreachWorkspace(companyId, q)
+    // A view change during the round trip wins: its own read is already on the
+    // way with the right rows.
+    if (queryRef.current.queryKey !== k) return
+    if (data) {
+      setSnapshot(data.snapshot)
+      setRows(data.page.rows)
+      setTotal(data.page.total)
+    }
+    setLoadedKey(k)
+    setLoading(false)
+    setSetupKey((n) => n + 1) // setup state rides on the same events as the snapshot
   }, [companyId])
 
   const loadScheduled = useCallback(async () => {
@@ -151,23 +261,10 @@ export function OutreachProvider({ children }: { children: React.ReactNode }) {
     [dismissToast],
   )
 
-  // Initial load. No per-company reset needed: the layout keys this provider by
-  // company, so switching workspaces remounts it with fresh state.
-  useEffect(() => {
-    if (!companyId) return
-    let active = true
-    ;(async () => {
-      const snap = await getOutreachSnapshot(companyId)
-      if (!active) return
-      setSnapshot(snap)
-      setLoading(false)
-    })()
-    return () => { active = false }
-  }, [companyId])
-
   // The cron mutates send/reply state every ~5 minutes; poll while the tab is
   // visible (and refetch the moment it becomes visible again) so counts stay
-  // current without a manual reload.
+  // current without a manual reload. Refetching the loaded window rather than
+  // resetting it is what keeps scroll, selection and "Load more" progress.
   useEffect(() => {
     if (!companyId) return
     const tick = () => {
@@ -183,47 +280,16 @@ export function OutreachProvider({ children }: { children: React.ReactNode }) {
     }
   }, [companyId, refresh, loadScheduled])
 
-  const allProspects = useMemo(() => snapshot?.prospects ?? [], [snapshot])
   const campaigns = useMemo(() => snapshot?.campaigns ?? [], [snapshot])
-
-  const campaignStats = useMemo(() => {
-    const map = new Map<string, CampaignStats>()
-    for (const p of allProspects) {
-      if (!p.campaign_id) continue
-      const s = map.get(p.campaign_id) ?? { prospects: 0, sent: 0, replied: 0, opened: 0 }
-      s.prospects += 1
-      if (p.drafts.some((d) => d.status === 'exported' || d.send?.status === 'sent')) s.sent += 1
-      if (p.disposition === 'replied' || p.disposition === 'interested' || p.disposition === 'not_interested') s.replied += 1
-      if (p.drafts.some((d) => d.send?.opened_at)) s.opened += 1
-      map.set(p.campaign_id, s)
-    }
-    return map
-  }, [allProspects])
-
-  const prospects = useMemo(() => {
-    if (campaignFilter === 'all') return allProspects
-    return allProspects.filter((p) => (campaignFilter === 'none' ? !p.campaign_id : p.campaign_id === campaignFilter))
-  }, [allProspects, campaignFilter])
-
-  const lists = useMemo<Record<Filter, OutreachProspectView[]>>(() => {
-    const withDraft = prospects.filter((p) => p.draft)
-    return {
-      contacts: prospects,
-      review: withDraft.filter((p) => !p.draft!.is_template && p.draft!.status === 'pending'),
-      templates: withDraft.filter((p) => p.draft!.is_template && p.draft!.status === 'pending' && !p.needs_review),
-      needs_review: prospects.filter((p) => p.needs_review),
-      approved: withDraft.filter((p) => p.draft!.status === 'approved' || p.draft!.status === 'edited'),
-      exported: withDraft.filter((p) => p.draft!.status === 'exported'),
-      replied: prospects.filter((p) => p.disposition === 'replied' || p.disposition === 'interested' || p.disposition === 'not_interested'),
-      bounced: prospects.filter((p) => p.disposition === 'bounced' || p.disposition === 'unsubscribed'),
-      scheduled: [], // the Schedule view renders from scheduledSends, not this list
-      all: withDraft,
-    }
-  }, [prospects])
+  const campaignStats = useMemo(
+    () => new Map(Object.entries(snapshot?.campaign_stats ?? {})),
+    [snapshot],
+  )
 
   const value: OutreachContextValue = {
     companyId, snapshot, loading, refresh,
-    allProspects, prospects, lists,
+    view, setView, rows, total, hasMore: rows.length < total, rowsLoading, loadMore,
+    sort, dir, toggleSort, stage, setStage,
     campaigns, campaignStats, campaignFilter, setCampaignFilter,
     scheduledSends, loadScheduled,
     toasts, pushToast, dismissToast,
