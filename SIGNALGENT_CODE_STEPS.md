@@ -2613,3 +2613,27 @@ The polish item left over from stage 2b. The persistent frame — banners, setup
 ### Residual
 
 `api_usage` is still walked in full every read, for one number (`cost_usd_total`). PostgREST can't `SUM` without an RPC, and migrations here are out-of-band — left alone deliberately, and it is only a `cost_usd` float per row.
+
+## Session 48 — Soft-bounce classification (stranded branch, rebased)
+
+Not new work. `outreach-templates-manage-entry` carried one unmerged commit from 2026-07-20 — `50123f4`, "only count hard bounces toward the auto-pause bounce rate" — that never landed and was 55 commits behind. The branch name pointed at its merge base (the templates-manager entry, on `main` since July 16), which is why it read as already-shipped. Found while sweeping merged branches after Session 47.
+
+### Why it still matters
+
+`main` had the flat `isBounce()` that treats every DSN as a bounce. Auto-pause is live, so a run of mailbox-full or greylisting notices could push the 7-day rate over the threshold and silently stop sending — exactly the failure this commit prevents.
+
+### What the commit does
+
+Delivery notices are classified by severity. **Hard** (dead/closed/nonexistent mailbox, `5.x.x`) still sets `bounced_at` and drives the rate. **Soft** (mailbox full, over quota, greylisted, rate-limited, delay/still-retrying, `4.x.x`, 421/450/451/452) is detected and ignored: the prospect stays `open` and it never touches the rate. The RFC 3463 enhanced status code is authoritative, and the classifier only DEMOTES to soft on a positive temporary signal — ambiguous notices stay hard, so genuine dead addresses are never undercounted. Precedence became hard bounce > opt-out > reply > soft bounce, so a delay notice can't be misread as a human reply.
+
+### Conflicts resolved in the rebase
+
+- **`cron/route.ts`** — both sides additive. Kept `softBounced` accumulation AND the follow-up sweep that landed in between; the JSON summary now carries `softBounced`, `followupsQueued` and `followupsReview` together.
+- **`outreach-widgets.tsx`** — the incoming hunk patched `handleScanReplies` inside `OutreachWorkspace()`, its pre-Phase-5 home. That handler moved to `outreach-chrome.tsx` in Session 46, so the widget kept `main`'s side and the toast change (`softBounced` in the destructure, the zero-check, and the ", N temporary (not counted)" fragment) was reapplied there instead.
+- `scan.ts` and `sending.ts` auto-merged; the classifier and the precedence chain were re-read line by line afterwards to confirm the merge didn't reorder them.
+
+### Verification
+
+- `bounceKind` exercised directly against seven representative DSNs — all pass. Notably `5.4.1 Recipient address rejected: Access denied` classifies **hard** on the enhanced code alone with no keyword match, which is the "ambiguous stays hard" guarantee; `452 4.2.2 over quota` and a bare `421 service temporarily unavailable` both classify soft.
+- "Scan replies" run in the app: the new code path returns and renders its toast ("No new replies or bounces (no open threads)") — the `softBounced === 0` branch. A live soft bounce could not be produced on demand; the workspace had no open threads at the time.
+- `tsc` clean, `next build` clean, eslint clean on all four touched files.
