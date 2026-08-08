@@ -214,7 +214,7 @@ export async function processSendQueue(companyId: string): Promise<ActionResult<
 
 /** Manually run the reply/bounce scanner (the "Scan replies" button). Bypasses
  * the cron throttle via { force: true }. */
-export async function scanRepliesNow(companyId: string): Promise<ActionResult<{ replied: number; bounced: number; unsubscribed: number; skipped?: string }>> {
+export async function scanRepliesNow(companyId: string): Promise<ActionResult<{ replied: number; bounced: number; unsubscribed: number; softBounced?: number; skipped?: string }>> {
   try {
     await requireCompanyAccess(companyId)
   } catch (err) {
