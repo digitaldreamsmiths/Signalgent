@@ -59,23 +59,41 @@ export async function listAccounts(companyId: string): Promise<ConnectedAccount[
 }
 
 /**
- * Idempotent upsert on (company_id, service). Callers pass already-encrypted
- * token fields. Merges metadata shallowly when the row exists.
+ * Save an account by company, service, and identity on either database layout.
+ * Callers pass already-encrypted token fields.
  */
 export async function upsertAccount(
   row: InsertTables<'connected_accounts'>
 ): Promise<ConnectedAccount> {
   const supabase = await createClient()
-  const { data, error } = await supabase
-    .from('connected_accounts')
-    .upsert({ ...row, account_identifier: row.account_identifier ?? row.service }, { onConflict: 'company_id,service,account_identifier' })
-    .select('*')
-    .single()
-
-  if (error) {
-    throw new Error(`upsertAccount failed: ${error.message}`)
+  const values = { ...row, account_identifier: row.account_identifier ?? row.service }
+  const find = () => supabase.from('connected_accounts').select('*')
+    .eq('company_id', row.company_id).eq('service', row.service)
+    .eq('account_identifier', values.account_identifier).maybeSingle()
+  const update = async (existing: ConnectedAccount) => {
+    const { id, company_id, service, created_at, ...patch } = values
+    void id; void company_id; void service; void created_at
+    const { data, error } = await supabase.from('connected_accounts')
+      .update({ ...patch, refresh_token: values.refresh_token ?? existing.refresh_token })
+      .eq('id', existing.id).eq('company_id', row.company_id).eq('service', row.service)
+      .select('*').single()
+    if (error) throw new Error(`upsertAccount failed: ${error.message}`)
+    return data
   }
-  return data
+  // Reconnect an existing identity without depending on the new unique index.
+  const existing = await find()
+  if (existing.error) throw new Error(`upsertAccount failed: ${existing.error.message}`)
+  if (existing.data) return update(existing.data)
+  const inserted = await supabase.from('connected_accounts').insert(values).select('*').single()
+  if (!inserted.error) return inserted.data
+  if (inserted.error.code === '23505') {
+    const raced = await find()
+    if (raced.error) throw new Error(`upsertAccount failed: ${raced.error.message}`)
+    if (raced.data) return update(raced.data)
+    // The legacy schema must never let a second mailbox replace the first.
+    throw new Error('ACCOUNT_MIGRATION_REQUIRED')
+  }
+  throw new Error(`upsertAccount failed: ${inserted.error.message}`)
 }
 
 /** Patch an existing row by (companyId, service). Returns the updated row. */
