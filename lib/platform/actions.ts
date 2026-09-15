@@ -3,7 +3,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { requireCompanyAccess } from '@/lib/integrations/auth'
 import { validateContent, validateContact, validateCampaign, validUuid } from './validation'
-import { EMPTY_WORKSPACE, type WorkspaceData, type ContentItem, type Contact, type Campaign, type Result } from './types'
+import { EMPTY_WORKSPACE, type WorkspaceData, type ContentItem, type Contact, type Campaign, type ChannelAccount, type Result } from './types'
 
 function failure(error: unknown): { ok: false; error: string } {
   const message = error instanceof Error ? error.message : ''
@@ -14,6 +14,20 @@ async function authorize(companyId: string) {
   if (!validUuid(companyId)) throw new Error('Choose a business first.')
   await requireCompanyAccess(companyId)
   return createClient()
+}
+/** Existing integrations must remain available when new workspace tables lag deployment. */
+export async function readWorkspaceAccounts(companyId: string): Promise<Result<ChannelAccount[]>> {
+  try {
+    const db = await authorize(companyId)
+    const { data, error } = await db.from('connected_accounts')
+      .select('id, service, account_label, account_identifier, status, scopes')
+      .eq('company_id', companyId).order('created_at')
+    if (error) throw new Error(error.message)
+    return { ok: true, data: (data ?? []).map(a => ({
+      id: a.id, service: a.service, label: a.account_label ?? a.account_identifier ?? a.service,
+      status: a.status, scopes: a.scopes ?? [],
+    })) }
+  } catch (error) { return failure(error) }
 }
 export async function readWorkspace(companyId: string): Promise<Result<WorkspaceData>> {
   try {

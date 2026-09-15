@@ -15,9 +15,10 @@ import { verifyState, InvalidStateError } from '@/lib/integrations/oauth-state'
 import { exchangeCode, getGmailProfile } from '@/lib/integrations/gmail/fetch'
 import { saveGmailCredentials, GMAIL_SERVICE } from '@/lib/integrations/gmail/tokens'
 import { invalidateCommunicationsSnapshot } from '@/lib/integrations/gmail/snapshot'
+import { gmailConnectionError } from '@/lib/integrations/gmail/connection-errors'
 
 function redirectToCommunications(origin: string, params: Record<string, string>): NextResponse {
-  const url = new URL('/settings/connections', origin)
+  const url = new URL('/connections', origin)
   for (const [k, v] of Object.entries(params)) {
     url.searchParams.set(k, v)
   }
@@ -29,14 +30,13 @@ export async function GET(request: NextRequest) {
   const code = searchParams.get('code')
   const stateParam = searchParams.get('state')
   const googleError = searchParams.get('error')
-  const googleErrorDesc = searchParams.get('error_description')
 
   // User cancelled or Google returned an error
   if (googleError) {
     return redirectToCommunications(origin, {
       integration: 'gmail',
       status: 'cancelled',
-      reason: googleErrorDesc ?? googleError,
+      reason: 'cancelled',
     })
   }
 
@@ -44,7 +44,7 @@ export async function GET(request: NextRequest) {
     return redirectToCommunications(origin, {
       integration: 'gmail',
       status: 'error',
-      reason: 'Missing code or state',
+      reason: 'invalid_state',
     })
   }
 
@@ -57,17 +57,17 @@ export async function GET(request: NextRequest) {
       return redirectToCommunications(origin, {
         integration: 'gmail',
         status: 'error',
-        reason: err.message,
+        reason: 'invalid_state',
       })
     }
-    throw err
+    return redirectToCommunications(origin, { integration: 'gmail', status: 'error', reason: gmailConnectionError(err, 'invalid_state') })
   }
 
   if (payload.service !== GMAIL_SERVICE) {
     return redirectToCommunications(origin, {
       integration: 'gmail',
       status: 'error',
-      reason: 'State service mismatch',
+      reason: 'invalid_state',
     })
   }
 
@@ -82,16 +82,16 @@ export async function GET(request: NextRequest) {
       return redirectToCommunications(origin, {
         integration: 'gmail',
         status: 'error',
-        reason: err.message,
+        reason: 'unauthorized',
       })
     }
-    throw err
+    return redirectToCommunications(origin, { integration: 'gmail', status: 'error', reason: 'unauthorized' })
   }
   if (access.userId !== payload.userId) {
     return redirectToCommunications(origin, {
       integration: 'gmail',
       status: 'error',
-      reason: 'User mismatch on callback',
+      reason: 'unauthorized',
     })
   }
 
@@ -102,11 +102,10 @@ export async function GET(request: NextRequest) {
   try {
     tokens = await exchangeCode({ code, redirectUri })
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Token exchange failed'
     return redirectToCommunications(origin, {
       integration: 'gmail',
       status: 'error',
-      reason: msg,
+      reason: gmailConnectionError(err, 'exchange'),
     })
   }
 
@@ -117,19 +116,26 @@ export async function GET(request: NextRequest) {
   try {
     const profile = await getGmailProfile(tokens.access_token)
     emailAddress = profile.emailAddress
+    if (!emailAddress?.includes('@')) throw new Error('Missing mailbox identity')
   } catch {
-    emailAddress = 'unknown'
+    return redirectToCommunications(origin, { integration: 'gmail', status: 'error', reason: 'profile' })
   }
 
   // 5. Save encrypted + invalidate cache
-  await saveGmailCredentials(access.companyId, {
+  try {
+    await saveGmailCredentials(access.companyId, {
     accessToken: tokens.access_token,
     refreshToken: tokens.refresh_token ?? null,
     expiresAt: Date.now() + tokens.expires_in * 1000,
     scope: tokens.scope ?? null,
     emailAddress,
   })
-  await invalidateCommunicationsSnapshot(access.companyId)
+    await invalidateCommunicationsSnapshot(access.companyId)
+  } catch (err) {
+    const reason = gmailConnectionError(err, 'save')
+    console.error('[gmail:callback]', { stage: 'save', reason })
+    return redirectToCommunications(origin, { integration: 'gmail', status: 'error', reason })
+  }
 
   return redirectToCommunications(origin, {
     integration: 'gmail',

@@ -1,7 +1,7 @@
 'use client'
 
 import { createContext, useContext, useEffect, useState, useCallback, type ReactNode } from 'react'
-import { readWorkspace, saveContent, saveContact, saveCampaign } from '@/lib/platform/actions'
+import { readWorkspace, readWorkspaceAccounts, saveContent, saveContact, saveCampaign } from '@/lib/platform/actions'
 import { validateContent, validateContact, validateCampaign } from '@/lib/platform/validation'
 import { previewWorkspace } from '@/lib/platform/preview'
 import { EMPTY_WORKSPACE, type WorkspaceData, type ContentItem, type Contact, type Campaign, type Result } from '@/lib/platform/types'
@@ -29,7 +29,11 @@ export function PlatformProvider({ children, companyId = '', companyName = 'Your
     setLoading(true)
     try {
       const result = await readWorkspace(companyId)
-      if (result.ok) { setData(result.data); setError('') } else setError(result.error)
+      if (result.ok) { setData(result.data); setError('') } else {
+        setError(result.error)
+        const accounts = await readWorkspaceAccounts(companyId)
+        if (accounts.ok) setData(d => ({ ...d, accounts: accounts.data }))
+      }
     } catch { setError('Could not reach your workspace. Check your connection and try again.') }
     finally { setLoading(false) }
   }, [companyId, preview])

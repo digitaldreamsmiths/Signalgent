@@ -2,11 +2,12 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { useState } from 'react'
+import { Suspense, useState } from 'react'
 import { LayoutDashboard, Inbox, Users, Mail, PanelsTopLeft, CalendarDays, ChartNoAxesCombined, Plug, ArrowUpRight, Plus, Search, Menu, X, Radio, ChevronDown, CircleHelp, Send, PanelLeftClose } from 'lucide-react'
 import { NAV, type Section } from '@/lib/platform/types'
 import { usePlatform } from './provider'
 import { Editor } from './editor'
+import { ConnectionNotice } from './connection-notice'
 
 const icons = { today: LayoutDashboard, inbox: Inbox, contacts: Users, email: Mail, social: PanelsTopLeft, calendar: CalendarDays, reports: ChartNoAxesCombined, connections: Plug }
 export function WorkspaceShell({ children, companyControl, userControl }: { children: React.ReactNode; companyControl?: React.ReactNode; userControl?: React.ReactNode }) {
@@ -33,7 +34,7 @@ export function WorkspaceShell({ children, companyControl, userControl }: { chil
     <div className="sg-main-shell">
       <header className="sg-topbar"><div className="sg-row"><button className="sg-icon-button sg-mobile-toggle" aria-label="Open navigation" onClick={() => setMobileOpen(true)}><Menu size={20} /></button><span className="sg-breadcrumb">Workspace <span>/</span> <strong>{active?.label ?? 'Cold outreach'}</strong></span></div><div className="sg-row">{preview && <span className="sg-preview-pill">Interactive preview</span>}<Link className="sg-icon-button" href={href('/connections')} aria-label="Connection setup"><CircleHelp size={18} /></Link><button className="sg-button sg-primary sg-compact" onClick={() => setEditor({ kind: 'content', channel: 'linkedin' })}><Plus size={16} />Create</button></div></header>
       {preview && <div className="sg-preview-banner">Sample data. Changes stay in this browser session; no emails or posts are sent.<Link href="/login">Open your workspace <ArrowUpRight size={12} /></Link></div>}
-      <main id="workspace-main" className="sg-main">{children}</main>
+      <main id="workspace-main" className="sg-main"><Suspense><ConnectionNotice /></Suspense>{children}</main>
     </div>
     {notice && <div className="sg-toast" role="status">{notice}</div>}
     <Editor />

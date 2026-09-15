@@ -16,6 +16,7 @@ import { requireCompanyAccess, IntegrationAuthError } from '@/lib/integrations/a
 import { issueState } from '@/lib/integrations/oauth-state'
 import { buildAuthorizeUrl } from '@/lib/integrations/gmail/fetch'
 import { GMAIL_SERVICE } from '@/lib/integrations/gmail/tokens'
+import { gmailConnectionError } from '@/lib/integrations/gmail/connection-errors'
 
 export async function GET(request: NextRequest) {
   // The connections UI sends `company_id` (the app-wide convention); accept the
@@ -41,7 +42,12 @@ export async function GET(request: NextRequest) {
     if (err instanceof IntegrationAuthError) {
       return NextResponse.json({ error: err.message }, { status: err.status })
     }
-    const msg = err instanceof Error ? err.message : 'Internal error'
-    return NextResponse.json({ error: msg }, { status: 500 })
+    const reason = gmailConnectionError(err, 'configuration')
+    console.error('[gmail:connect]', { reason })
+    const url = new URL('/connections', request.nextUrl.origin)
+    url.searchParams.set('integration', 'gmail')
+    url.searchParams.set('status', 'error')
+    url.searchParams.set('reason', reason)
+    return NextResponse.redirect(url)
   }
 }
