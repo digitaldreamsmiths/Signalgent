@@ -85,7 +85,7 @@ export default function OnboardingPage() {
         throw new Error((payload.error ?? `Onboarding failed (HTTP ${res.status})`) + step)
       }
 
-      router.push('/outreach')
+      router.push('/today')
       router.refresh()
     } catch (err) {
       const message =

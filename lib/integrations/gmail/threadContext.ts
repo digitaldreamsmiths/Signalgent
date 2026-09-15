@@ -166,7 +166,7 @@ function receivedAtIso(internalDate: string): string {
   return new Date(ms).toISOString()
 }
 
-function toMessageContext(msg: GmailMessage): ThreadMessageContext {
+export function toMessageContext(msg: GmailMessage): ThreadMessageContext {
   const headers = msg.payload.headers ?? []
   const { text, attachments } = extractMessageBody(msg)
   return {

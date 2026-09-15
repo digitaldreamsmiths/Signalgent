@@ -1,3 +1,5 @@
+import type { PlatformTables } from '@/lib/platform/database'
+
 export type Json =
   | string
   | number
@@ -8,7 +10,7 @@ export type Json =
 
 export interface Database {
   public: {
-    Tables: {
+    Tables: PlatformTables & {
       profiles: {
         Row: {
           id: string

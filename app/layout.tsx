@@ -16,8 +16,8 @@ const jetbrainsMono = JetBrains_Mono({
 })
 
 export const metadata: Metadata = {
-  title: 'Signalgent — Business OS',
-  description: 'AI-powered command center for small business owners',
+  title: 'Signalgent — Email & Social',
+  description: 'Your workspace for email, social content, campaigns, and conversations',
 }
 
 export const viewport: Viewport = {
@@ -35,7 +35,7 @@ export default function RootLayout({
       <body className="min-h-full font-sans antialiased" style={{ background: 'var(--app-bg)', color: 'var(--app-text-2)' }}>
         <ThemeProvider
           attribute="class"
-          defaultTheme="dark"
+          defaultTheme="light"
           enableSystem
           disableTransitionOnChange
         >

@@ -5,12 +5,14 @@ import { createClient } from '@/lib/supabase/client'
 import { useCompany } from '@/contexts/company-context'
 import type { ConnectedAccount } from '@/lib/types'
 
+type AccountView = Omit<ConnectedAccount, 'access_token' | 'refresh_token'>
+
 interface ConnectedAccountsContextValue {
-  connectedAccounts: ConnectedAccount[]
+  connectedAccounts: AccountView[]
   /** True if the given service is connected and active for the current company */
   isConnected: (service: string) => boolean
   /** Returns the full account record if connected */
-  getAccount: (service: string) => ConnectedAccount | undefined
+  getAccount: (service: string) => AccountView | undefined
   /** Re-fetch from Supabase */
   refresh: () => Promise<void>
   isLoading: boolean
@@ -25,7 +27,7 @@ const ConnectedAccountsContext = createContext<ConnectedAccountsContextValue>({
 })
 
 export function ConnectedAccountsProvider({ children }: { children: React.ReactNode }) {
-  const [connectedAccounts, setConnectedAccounts] = useState<ConnectedAccount[]>([])
+  const [connectedAccounts, setConnectedAccounts] = useState<AccountView[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const { activeCompany } = useCompany()
   const supabase = createClient()
@@ -38,7 +40,7 @@ export function ConnectedAccountsProvider({ children }: { children: React.ReactN
     setIsLoading(true)
     const { data } = await supabase
       .from('connected_accounts')
-      .select('*')
+      .select('id, company_id, service, status, account_identifier, account_label, provider_account_id, token_expires_at, scope, scopes, metadata, last_error, last_synced_at, created_at, updated_at')
       .eq('company_id', activeCompany.id)
       .eq('status', 'connected')
     setConnectedAccounts(data ?? [])
