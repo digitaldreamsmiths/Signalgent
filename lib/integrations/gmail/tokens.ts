@@ -66,9 +66,10 @@ export async function saveGmailCredentials(
  */
 export async function loadGmailCredentials(
   companyId: string,
-  client?: SupabaseClient<Database>
+  client?: SupabaseClient<Database>,
+  accountId?: string
 ): Promise<{ accessToken: string; emailAddress: string } | null> {
-  const creds = await loadGoogleCredentials(companyId, SERVICE, client)
+  const creds = await loadGoogleCredentials(companyId, SERVICE, client, accountId)
   if (!creds) return null
   return { accessToken: creds.accessToken, emailAddress: creds.accountIdentifier }
 }

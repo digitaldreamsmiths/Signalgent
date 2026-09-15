@@ -29,7 +29,7 @@ export default function LoginPage() {
       setError(error.message)
       setLoading(false)
     } else {
-      router.push('/outreach')
+      router.push('/today')
       router.refresh()
     }
   }

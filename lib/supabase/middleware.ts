@@ -41,12 +41,12 @@ export async function updateSession(request: NextRequest) {
   // Auth pages — redirect logged-in users to the app
   if (user && (pathname === '/login' || pathname === '/signup')) {
     const url = request.nextUrl.clone()
-    url.pathname = '/outreach'
+    url.pathname = '/today'
     return NextResponse.redirect(url)
   }
 
   // Protected routes — redirect unauthenticated to login
-  const protectedPaths = ['/outreach', '/onboarding', '/settings']
+  const protectedPaths = ['/outreach', '/onboarding', '/settings', '/today', '/inbox', '/contacts', '/email', '/social', '/calendar', '/reports', '/connections']
   const isProtected = protectedPaths.some((p) => pathname.startsWith(p))
 
   if (!user && isProtected) {

@@ -29,15 +29,13 @@ type DbClient = SupabaseClient<Database>
 export async function getAccount(
   companyId: string,
   service: ConnectedService,
-  client?: DbClient
+  client?: DbClient,
+  accountId?: string
 ): Promise<ConnectedAccount | null> {
   const supabase = client ?? await createClient()
-  const { data, error } = await supabase
-    .from('connected_accounts')
-    .select('*')
-    .eq('company_id', companyId)
-    .eq('service', service)
-    .maybeSingle()
+  let query = supabase.from('connected_accounts').select('*').eq('company_id', companyId).eq('service', service)
+  if (accountId) query = query.eq('id', accountId)
+  const { data, error } = await query.order('created_at').order('id').limit(1).maybeSingle()
 
   if (error) {
     throw new Error(`getAccount failed: ${error.message}`)
@@ -70,7 +68,7 @@ export async function upsertAccount(
   const supabase = await createClient()
   const { data, error } = await supabase
     .from('connected_accounts')
-    .upsert(row, { onConflict: 'company_id,service' })
+    .upsert({ ...row, account_identifier: row.account_identifier ?? row.service }, { onConflict: 'company_id,service,account_identifier' })
     .select('*')
     .single()
 
@@ -85,12 +83,16 @@ export async function updateAccount(
   companyId: string,
   service: ConnectedService,
   patch: UpdateTables<'connected_accounts'>,
-  client?: DbClient
+  client?: DbClient,
+  accountId?: string
 ): Promise<ConnectedAccount | null> {
   const supabase = client ?? await createClient()
+  const account = await getAccount(companyId, service, supabase, accountId)
+  if (!account) return null
   const { data, error } = await supabase
     .from('connected_accounts')
     .update(patch)
+    .eq('id', account.id)
     .eq('company_id', companyId)
     .eq('service', service)
     .select('*')
@@ -125,9 +127,12 @@ export async function deleteAccount(
   service: ConnectedService
 ): Promise<void> {
   const supabase = await createClient()
+  const account = await getAccount(companyId, service, supabase)
+  if (!account) return
   const { error } = await supabase
     .from('connected_accounts')
     .delete()
+    .eq('id', account.id)
     .eq('company_id', companyId)
     .eq('service', service)
   if (error) {
@@ -152,10 +157,11 @@ export async function markError(
   companyId: string,
   service: ConnectedService,
   message: string,
-  client?: DbClient
+  client?: DbClient,
+  accountId?: string
 ): Promise<void> {
   await updateAccount(companyId, service, {
     status: 'error',
     last_error: message.slice(0, 500),
-  }, client)
+  }, client, accountId)
 }

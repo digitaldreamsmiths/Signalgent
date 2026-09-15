@@ -507,14 +507,18 @@ export async function runQueue(supabase: DB, companyId: string): Promise<{ sent:
     // recorded, skip — sending with unrecorded state risks a duplicate later.
     // updated_at is set explicitly (no touch trigger) so the stale sweep can
     // tell how long the row has been in 'sending'.
-    const { error: claimErr } = await supabase
+    const { data: claimed, error: claimErr } = await supabase
       .from('outreach_sends')
       .update({ status: 'sending', updated_at: new Date().toISOString() })
       .eq('id', s.id)
+      .eq('status', 'queued')
+      .select('id')
+      .maybeSingle()
     if (claimErr) {
       console.error(`[send-worker] could not claim send ${s.id}: ${claimErr.message}`)
       continue
     }
+    if (!claimed) continue // Another worker already claimed this send.
     // Thread follow-ups under the prospect's most recent sent email.
     const { data: prior } = await supabase
       .from('outreach_sends')

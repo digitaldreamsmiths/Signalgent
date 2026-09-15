@@ -55,9 +55,10 @@ export interface LoadedGoogleCreds {
 export async function loadGoogleCredentials(
   companyId: string,
   service: ConnectedService,
-  client?: DbClient
+  client?: DbClient,
+  accountId?: string
 ): Promise<LoadedGoogleCreds | null> {
-  const row = await getAccount(companyId, service, client)
+  const row = await getAccount(companyId, service, client, accountId)
   if (!row) return null
   if (row.status !== 'connected') return null
   if (!row.access_token) return null
@@ -68,7 +69,7 @@ export async function loadGoogleCredentials(
     accessToken = decryptNullable(row.access_token)
     refreshToken = decryptNullable(row.refresh_token)
   } catch {
-    await markError(companyId, service, 'Token decryption failed', client)
+    await markError(companyId, service, 'Token decryption failed', client, row.id)
     return null
   }
   if (!accessToken) return null
@@ -85,7 +86,7 @@ export async function loadGoogleCredentials(
   // Need to refresh. Without a refresh token we cannot recover — mark the
   // row so the UI can prompt reconnect.
   if (!refreshToken) {
-    await markError(companyId, service, 'Access token expired and no refresh token on file', client)
+    await markError(companyId, service, 'Access token expired and no refresh token on file', client, row.id)
     return null
   }
 
@@ -98,11 +99,11 @@ export async function loadGoogleCredentials(
       scope: refreshed.scope ?? row.scope,
       last_error: null,
       status: 'connected',
-    }, client)
+    }, client, row.id)
     return { accessToken: refreshed.access_token, accountIdentifier }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    await markError(companyId, service, `Token refresh failed: ${msg}`, client)
+    await markError(companyId, service, `Token refresh failed: ${msg}`, client, row.id)
     return null
   }
 }

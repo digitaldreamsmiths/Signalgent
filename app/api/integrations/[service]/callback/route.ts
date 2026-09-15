@@ -1,3 +1,5 @@
+import { encryptNullable } from '@/lib/integrations/crypto'
+import { requireCompanyAccess } from '@/lib/integrations/auth'
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { SERVICE_ENV_VARS, type ServiceId } from '@/lib/integrations/services'
@@ -48,6 +50,8 @@ export async function GET(
   if (!user || user.id !== userId) {
     return redirectWithError(baseUrl, 'unauthorized')
   }
+
+  try { await requireCompanyAccess(companyId) } catch { return redirectWithError(baseUrl, 'unauthorized') }
 
   const serviceId = service as ServiceId
   const envVars = SERVICE_ENV_VARS[serviceId]
@@ -201,16 +205,16 @@ export async function GET(
     {
       company_id: companyId,
       service: serviceId,
-      access_token: tokenData.access_token ?? null,
-      refresh_token: tokenData.refresh_token ?? null,
+      access_token: encryptNullable(tokenData.access_token ?? null),
+      refresh_token: encryptNullable(tokenData.refresh_token ?? null),
       token_expires_at: expiresAt,
       scope: tokenData.scope ?? null,
-      account_identifier: accountIdentifier,
+      account_identifier: accountIdentifier ?? serviceId,
       metadata: shop ? { shop } : {},
       status: 'connected',
       updated_at: new Date().toISOString(),
     },
-    { onConflict: 'company_id,service' }
+    { onConflict: 'company_id,service,account_identifier' }
   )
 
   if (upsertError) {

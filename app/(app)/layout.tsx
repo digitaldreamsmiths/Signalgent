@@ -1,51 +1,10 @@
-'use client'
-
-import { useCallback, useEffect, useState } from 'react'
-import { ModeProvider } from '@/contexts/mode-context'
-import { CompanyProvider } from '@/contexts/company-context'
-import { ConnectedAccountsProvider } from '@/contexts/connected-accounts-context'
-import { Topbar } from '@/components/layout/topbar'
-import { CommandPalette } from '@/components/command-palette'
-
-export default function AppLayout({ children }: { children: React.ReactNode }) {
-  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false)
-  const closePalette = useCallback(() => setCommandPaletteOpen(false), [])
-
-  useEffect(() => {
-    function handleKeyDown(e: KeyboardEvent) {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-        e.preventDefault()
-        setCommandPaletteOpen((prev) => !prev)
-      }
-    }
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [])
-
-  return (
-    <ModeProvider>
-      <CompanyProvider>
-        <ConnectedAccountsProvider>
-        <div className="flex h-screen flex-col overflow-hidden" style={{ background: 'var(--app-bg)' }}>
-          <Topbar />
-          {/* Accent line */}
-          <div
-            className="shrink-0"
-            style={{
-              height: 2,
-              background: 'linear-gradient(90deg, transparent 0%, var(--mode-accent, #8B7FF0) 30%, var(--mode-accent, #8B7FF0) 70%, transparent 100%)',
-              boxShadow: '0 0 12px 1px color-mix(in oklch, var(--mode-accent, #8B7FF0) 50%, transparent)',
-              transition: 'background 300ms ease, box-shadow 300ms ease',
-            }}
-          />
-          {/* Main content */}
-          <main className="flex-1 overflow-y-auto" style={{ padding: 20 }}>
-            {children}
-          </main>
-        </div>
-        <CommandPalette open={commandPaletteOpen} onClose={closePalette} />
-        </ConnectedAccountsProvider>
-      </CompanyProvider>
-    </ModeProvider>
-  )
+import { redirect } from 'next/navigation'
+import { createClient } from '@/lib/supabase/server'
+import { AppWorkspace } from '@/components/platform/app-workspace'
+import '@/components/platform/workspace.css'
+export default async function AppLayout({ children }: { children: React.ReactNode }) {
+  const db = await createClient()
+  const { data: { user } } = await db.auth.getUser()
+  if (!user) redirect('/login')
+  return <AppWorkspace>{children}</AppWorkspace>
 }
