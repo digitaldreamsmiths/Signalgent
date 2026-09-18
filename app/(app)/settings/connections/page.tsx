@@ -164,7 +164,7 @@ function ServiceCard({ service }: { service: ServiceDef }) {
             <span
               style={{
                 fontSize: 10,
-                color: '#4CAF50',
+                color: '#2a7a2e',
                 background: 'var(--app-card-2)',
                 border: '1px solid var(--app-border)',
                 borderRadius: 4,
@@ -189,11 +189,11 @@ function ServiceCard({ service }: { service: ServiceDef }) {
             </span>
           )}
         </div>
-        <p style={{ fontSize: 11, color: 'var(--app-faint)', margin: 0, lineHeight: 1.5 }}>
+        <p style={{ fontSize: 11, color: 'var(--app-muted)', margin: 0, lineHeight: 1.5 }}>
           {service.description}
         </p>
         {connected && account?.account_identifier && (
-          <p style={{ fontSize: 10, color: 'var(--app-faint)', marginTop: 4 }}>
+          <p style={{ fontSize: 10, color: 'var(--app-muted)', marginTop: 4 }}>
             {account.account_identifier}
           </p>
         )}
@@ -292,12 +292,12 @@ export default function ConnectionsPage() {
             Connections
           </h2>
           {!isLoading && connectedCount > 0 && (
-            <span style={{ fontSize: 11, color: '#4CAF50' }}>
+            <span style={{ fontSize: 11, color: '#2a7a2e' }}>
               {connectedCount} active
             </span>
           )}
         </div>
-        <p style={{ fontSize: 12, color: 'var(--app-faint)', marginTop: 4 }}>
+        <p style={{ fontSize: 12, color: 'var(--app-muted)', marginTop: 4 }}>
           Connect your platforms to replace sample data with live data in every widget.
         </p>
       </div>
@@ -312,7 +312,7 @@ export default function ConnectionsPage() {
               <p
                 style={{
                   fontSize: 10,
-                  color: 'var(--app-faint)',
+                  color: 'var(--app-muted)',
                   textTransform: 'uppercase',
                   letterSpacing: '0.08em',
                   marginBottom: 8,

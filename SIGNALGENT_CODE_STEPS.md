@@ -2792,3 +2792,22 @@ Not recorded at the time. Session 51 confirmed a connected Gmail account lists, 
 - **`MODES.mutedText` / `subtleText`** were not re-tuned for the light theme.
 - **Pre-existing lint error** `react-hooks/set-state-in-effect` at `templates-modal.tsx:57`.
 - Carried: repoint `APP_URL` for tracking links; approve the nine legacy pending templates.
+
+## Session 51.1 — Settings › Connections contrast
+
+**Goal**: `/settings/connections` on prod still read as washed out after Session 51. Prod was confirmed to be serving the Session 51 token value (`--app-faint:#71716d` in the deployed CSS), so the leftovers were page-specific.
+
+### Changes
+
+| File | Change |
+|---|---|
+| `app/(app)/settings/connections/page.tsx` | "Connected" badge and "N active" count used a hard-coded `#4CAF50` (2.78:1 on white, 2.42:1 on the `--app-card-2` card) → `#2a7a2e` (5.35:1 / 4.66:1). Service descriptions (11px), the account identifier (10px), the intro line (12px) and the uppercase group labels (10px) moved from `--app-faint` to `--app-muted`. `--app-faint` remains only on the disabled "coming soon" button and the shop-domain Cancel link. |
+| `app/globals.css` | Light `--app-muted` `#6c6c68 → #5c5c58` (4.59:1 → 5.84:1 on `--app-card-2`; 6.72:1 on white). This is the `MUTED` constant in every inline-styled outreach module, so secondary text there darkens slightly as well. Dark block unchanged. |
+
+### Verification
+
+Ratios computed from the exact hex values (script in the Session 51 entry); `tsc --noEmit` clean. Not visually re-checked: the preview pane lost its session when the dev server restarted.
+
+### Residuals
+
+- **Login page** (`app/(auth)/login/page.tsx`) is dark-styled but inherits the light theme's text tokens: "Email"/"Password" labels at 1.81:1, "Sign in to your account" (`text-foreground`) effectively invisible on `#0a0a0f`. Next up.
