@@ -107,7 +107,7 @@
 .sg-status { display:inline-flex; align-items:center; gap:5px; border-radius:5px; padding:3px 7px; font-size:9px; font-weight:500; color:#697282; background:#f0f3f7; white-space:nowrap; text-transform:capitalize; }
 .sg-status>span { width:4px; height:4px; border-radius:50%; background:currentColor; }
 .sg-status-active,.sg-status-planned { color:#4873af; background:#edf3fc; }
-.sg-status-approved,.sg-status-subscribed,.sg-status-completed { color:#437d68; background:#edf7f1; }
+.sg-status-approved,.sg-status-subscribed,.sg-status-completed { color:#3d7361; background:#edf7f1; }
 .sg-status-review { color:#8b6c3f; background:#fbf4e9; }
 .sg-status-unsubscribed { color:#a45c60; background:#fcf0f0; }
 .sg-preview-banner { padding:8px 36px; background:#eef3fd; color:#62779c; display:flex; flex-wrap:wrap; justify-content:space-between; gap:8px; font-size:10px; border-bottom:1px solid #e0e8f8; }
@@ -189,14 +189,24 @@
 .sg-connection-card>.sg-row { width:100%; }
 .sg-provider-logo { width:39px; height:39px; border-radius:11px; display:grid; place-items:center; color:white; font-size:20px; font-weight:700; font-family:Arial,sans-serif; }
 .sg-capability { max-width:125px; text-align:right; color:#5e718d; font-size:9px; }
-.sg-connection-card h2 { font-size:16px; margin:17px 0 9px; font-weight:600; }
+.sg-connection-card h3 { font-size:16px; margin:17px 0 9px; font-weight:600; }
 .sg-connection-card>p { font-size:11px; line-height:1.8; color:#5e718d; flex:1; }
-.sg-account-list { margin:16px 0; width:100%; }
-.sg-account-list>div { display:flex; align-items:center; gap:6px; font-size:10px; padding:7px 0; }
-.sg-account-list>div>span:nth-child(2) { min-width:0; overflow:hidden; text-overflow:ellipsis; }
-.sg-account-list small { margin-left:auto; font-size:8px; }
+.sg-account-list { list-style:none; margin:14px 0 12px; padding:0; width:100%; }
+.sg-account-list>li { padding:10px 0; border-top:1px solid #eef1f6; }
+.sg-account-row { display:flex; align-items:center; gap:7px; font-size:11px; min-width:0; }
+.sg-account-label { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.sg-account-row .sg-status { margin-left:auto; flex-shrink:0; }
+.sg-status-connected { color:#3d7361; background:#edf7f1; }
+.sg-status-error { color:#a45c60; background:#fcf0f0; }
+.sg-account-error { font-size:10px; line-height:1.6; color:#a45c60; margin:5px 0 0; }
+.sg-account-actions { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+.sg-button.sg-quiet { border-color:transparent; color:#5e718d; }
+.sg-connections-group { margin-bottom:34px; }
+.sg-connections-group>h2 { font-size:13px; font-weight:600; margin-bottom:12px; }
+.sg-group-note { font-size:11px; line-height:1.7; color:#5e718d; margin:-6px 0 12px; max-width:560px; }
 .sg-connection-dot { width:5px; height:5px; border-radius:50%; background:#ac9271; flex-shrink:0; }
 .sg-connection-dot.connected { background:#6ba38d; }
+.sg-connection-dot.error { background:#c0616a; }
 .sg-coming-soon { font-size:10px; padding:9px 0; color:#62738d; }
 .sg-disabled-link { opacity:.5; pointer-events:none; }
 .sg-empty { padding:50px 25px; text-align:center; display:flex; align-items:center; flex-direction:column; }

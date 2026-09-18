@@ -60,7 +60,7 @@ export function Topbar() {
             <User className="h-4 w-4" />
             Profile
           </DropdownMenuItem>
-          <DropdownMenuItem className="gap-2" onClick={() => router.push('/settings/connections')}>
+          <DropdownMenuItem className="gap-2" onClick={() => router.push('/connections')}>
             <Settings className="h-4 w-4" />
             Settings
           </DropdownMenuItem>

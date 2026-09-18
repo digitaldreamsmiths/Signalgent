@@ -18,6 +18,7 @@
  */
 
 import { NextResponse, type NextRequest } from 'next/server'
+import { connectionRedirect } from '@/lib/integrations/connection-errors'
 import { requireCompanyAccess, IntegrationAuthError } from '@/lib/integrations/auth'
 import { verifyState, InvalidStateError } from '@/lib/integrations/oauth-state'
 import { exchangeCode } from '@/lib/integrations/google/fetch'
@@ -32,10 +33,7 @@ import {
 import { invalidateAnalyticsSnapshot } from '@/lib/integrations/ga/snapshot'
 
 function redirectToAnalytics(origin: string, params: Record<string, string>): NextResponse {
-  const url = new URL('/settings/connections', origin)
-  for (const [k, v] of Object.entries(params)) {
-    url.searchParams.set(k, v)
-  }
+  const url = connectionRedirect(origin, params)
   return NextResponse.redirect(url)
 }
 

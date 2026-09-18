@@ -10,6 +10,11 @@ function failure(error: unknown): { ok: false; error: string } {
   if (/schema cache|does not exist|relation|PGRST|42P01/.test(message)) return { ok: false, error: 'The new workspace storage is not installed yet. Your existing outreach is still available.' }
   return { ok: false, error: message || 'The workspace could not be saved. Try again.' }
 }
+const ACCOUNT_COLUMNS = 'id, service, account_label, account_identifier, status, scopes, last_error'
+type AccountRow = { id: string; service: string; account_label: string | null; account_identifier: string | null; status: string; scopes: string[] | null; last_error: string | null }
+function toChannelAccount(a: AccountRow): ChannelAccount {
+  return { id: a.id, service: a.service, label: a.account_label ?? a.account_identifier ?? a.service, status: a.status, scopes: a.scopes ?? [], error: a.last_error ?? null }
+}
 async function authorize(companyId: string) {
   if (!validUuid(companyId)) throw new Error('Choose a business first.')
   await requireCompanyAccess(companyId)
@@ -20,13 +25,10 @@ export async function readWorkspaceAccounts(companyId: string): Promise<Result<C
   try {
     const db = await authorize(companyId)
     const { data, error } = await db.from('connected_accounts')
-      .select('id, service, account_label, account_identifier, status, scopes')
-      .eq('company_id', companyId).order('created_at')
+      .select(ACCOUNT_COLUMNS)
+      .eq('company_id', companyId).neq('status', 'revoked').order('created_at')
     if (error) throw new Error(error.message)
-    return { ok: true, data: (data ?? []).map(a => ({
-      id: a.id, service: a.service, label: a.account_label ?? a.account_identifier ?? a.service,
-      status: a.status, scopes: a.scopes ?? [],
-    })) }
+    return { ok: true, data: (data ?? []).map(toChannelAccount) }
   } catch (error) { return failure(error) }
 }
 export async function readWorkspace(companyId: string): Promise<Result<WorkspaceData>> {
@@ -36,14 +38,14 @@ export async function readWorkspace(companyId: string): Promise<Result<Workspace
       db.from('platform_content').select('*').eq('company_id', companyId).order('updated_at', { ascending: false }).limit(1000),
       db.from('platform_contacts').select('*').eq('company_id', companyId).order('name').limit(1000),
       db.from('platform_campaigns').select('*').eq('company_id', companyId).order('created_at', { ascending: false }).limit(1000),
-      db.from('connected_accounts').select('id, service, account_label, account_identifier, status, scopes').eq('company_id', companyId).order('created_at'),
+      db.from('connected_accounts').select(ACCOUNT_COLUMNS).eq('company_id', companyId).neq('status', 'revoked').order('created_at'),
       db.from('outreach_sends').select('id', { count: 'exact', head: true }).eq('company_id', companyId).eq('status', 'sent'),
       db.from('outreach_sends').select('id', { count: 'exact', head: true }).eq('company_id', companyId).eq('status', 'queued'),
       db.from('outreach_sends').select('id', { count: 'exact', head: true }).eq('company_id', companyId).eq('status', 'failed'),
       db.from('outreach_prospects').select('id', { count: 'exact', head: true }).eq('company_id', companyId),
     ])
     for (const response of [content, contacts, campaigns, accounts, sent, queued, failed, prospects]) if (response.error) throw new Error(response.error.message)
-    return { ok: true, data: { ...EMPTY_WORKSPACE, content: content.data ?? [], contacts: contacts.data ?? [], campaigns: campaigns.data ?? [], accounts: (accounts.data ?? []).map(a => ({ id: a.id, service: a.service, label: a.account_label ?? a.account_identifier ?? a.service, status: a.status, scopes: a.scopes ?? [] })), outreach: { sent: sent.count ?? 0, queued: queued.count ?? 0, failed: failed.count ?? 0, prospects: prospects.count ?? 0 } } }
+    return { ok: true, data: { ...EMPTY_WORKSPACE, content: content.data ?? [], contacts: contacts.data ?? [], campaigns: campaigns.data ?? [], accounts: (accounts.data ?? []).map(toChannelAccount), outreach: { sent: sent.count ?? 0, queued: queued.count ?? 0, failed: failed.count ?? 0, prospects: prospects.count ?? 0 } } }
   } catch (error) { return failure(error) }
 }
 export async function saveContent(companyId: string, input: ContentItem): Promise<Result<ContentItem>> {
@@ -94,5 +96,18 @@ export async function saveCampaign(companyId: string, input: Campaign): Promise<
       : await db.from('platform_campaigns').insert({ id: input.id, company_id: companyId, ...values }).select().single()
     if (result.error) throw new Error(result.error.message)
     return { ok: true, data: result.data }
+  } catch (error) { return failure(error) }
+}
+/** Soft-revoke one account. The row stays for the audit trail; every reader filters `revoked` out. */
+export async function disconnectAccount(companyId: string, accountId: string): Promise<Result<true>> {
+  try {
+    if (!validUuid(accountId)) throw new Error('Choose an account to disconnect.')
+    const db = await authorize(companyId)
+    const { data, error } = await db.from('connected_accounts')
+      .update({ status: 'revoked', updated_at: new Date().toISOString() })
+      .eq('id', accountId).eq('company_id', companyId).select('id')
+    if (error) throw new Error(error.message)
+    if (!data?.length) throw new Error('That account is no longer connected.')
+    return { ok: true, data: true }
   } catch (error) { return failure(error) }
 }

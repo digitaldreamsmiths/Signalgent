@@ -19,8 +19,9 @@ export function previewWorkspace(): WorkspaceData {
     { ...base, id: 'person-4', name: 'Taylor Brooks', email: 'taylor@example.com', organization: 'Common Ground', tags: ['Lead'], subscription: 'not_subscribed', consent_note: '', notes: '' },
   ]
   return { content, contacts, campaigns: [{ ...base, id: 'campaign-1', name: 'September stories', objective: 'Share the work, start conversations, and bring our community closer.', status: 'active' }], accounts: [
-    { id: 'gmail-preview', service: 'gmail', label: 'hello@example.com', status: 'connected', scopes: [] },
-    { id: 'linkedin-preview', service: 'linkedin', label: 'Northline Studio', status: 'connected', scopes: ['openid', 'profile'] },
-    { id: 'pinterest-preview', service: 'pinterest', label: 'Northline Studio', status: 'connected', scopes: [] },
+    { id: 'gmail-preview', service: 'gmail', label: 'hello@example.com', status: 'connected', scopes: [], error: null },
+    { id: 'gmail-preview-2', service: 'gmail', label: 'orders@example.com', status: 'error', scopes: [], error: 'Token refresh failed: invalid_grant' },
+    { id: 'linkedin-preview', service: 'linkedin', label: 'Northline Studio', status: 'connected', scopes: ['openid', 'profile'], error: null },
+    { id: 'pinterest-preview', service: 'pinterest', label: 'Northline Studio', status: 'connected', scopes: [], error: null },
   ], outreach: { sent: 148, queued: 12, failed: 2, prospects: 264 } }
 }

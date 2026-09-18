@@ -1,6 +1,7 @@
 import { encryptNullable } from '@/lib/integrations/crypto'
 import { requireCompanyAccess } from '@/lib/integrations/auth'
 import { NextResponse } from 'next/server'
+import { connectionRedirect } from '@/lib/integrations/connection-errors'
 import { createClient } from '@/lib/supabase/server'
 import { SERVICE_ENV_VARS, type ServiceId } from '@/lib/integrations/services'
 
@@ -11,8 +12,8 @@ function getBaseUrl(request: Request): string {
   return origin
 }
 
-function redirectWithError(base: string, error: string) {
-  return NextResponse.redirect(`${base}/settings/connections?error=${error}`)
+function redirectWithError(base: string, service: string, error: string) {
+  return NextResponse.redirect(connectionRedirect(base, { integration: service, status: 'error', reason: error }))
 }
 
 export async function GET(
@@ -26,21 +27,21 @@ export async function GET(
   const baseUrl = getBaseUrl(request)
 
   if (!code || !stateParam) {
-    return redirectWithError(baseUrl, 'missing_code_or_state')
+    return redirectWithError(baseUrl, service, 'missing_code_or_state')
   }
 
   // Validate CSRF state
   const cookies = request.headers.get('cookie') ?? ''
   const cookieMatch = cookies.match(new RegExp(`oauth_state_${service}=([^;]+)`))
   if (!cookieMatch || cookieMatch[1] !== stateParam) {
-    return redirectWithError(baseUrl, 'invalid_state')
+    return redirectWithError(baseUrl, service, 'invalid_state')
   }
 
   let parsed: { companyId: string; userId: string; shop?: string }
   try {
     parsed = JSON.parse(Buffer.from(stateParam, 'base64').toString())
   } catch {
-    return redirectWithError(baseUrl, 'invalid_state_payload')
+    return redirectWithError(baseUrl, service, 'invalid_state_payload')
   }
 
   const { companyId, userId, shop } = parsed
@@ -48,21 +49,21 @@ export async function GET(
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user || user.id !== userId) {
-    return redirectWithError(baseUrl, 'unauthorized')
+    return redirectWithError(baseUrl, service, 'unauthorized')
   }
 
-  try { await requireCompanyAccess(companyId) } catch { return redirectWithError(baseUrl, 'unauthorized') }
+  try { await requireCompanyAccess(companyId) } catch { return redirectWithError(baseUrl, service, 'unauthorized') }
 
   const serviceId = service as ServiceId
   const envVars = SERVICE_ENV_VARS[serviceId]
   if (!envVars) {
-    return redirectWithError(baseUrl, 'unsupported_service')
+    return redirectWithError(baseUrl, service, 'unsupported_service')
   }
 
   const clientId = process.env[envVars.clientId]
   const clientSecret = process.env[envVars.clientSecret]
   if (!clientId || !clientSecret) {
-    return redirectWithError(baseUrl, 'service_not_configured')
+    return redirectWithError(baseUrl, service, 'service_not_configured')
   }
 
   const callbackUrl = `${baseUrl}/api/integrations/${service}/callback`
@@ -77,7 +78,7 @@ export async function GET(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, code }),
     })
-    if (!res.ok) return redirectWithError(baseUrl, 'shopify_token_exchange_failed')
+    if (!res.ok) return redirectWithError(baseUrl, service, 'shopify_token_exchange_failed')
     tokenData = await res.json()
     accountIdentifier = shop
   }
@@ -95,7 +96,7 @@ export async function GET(
         grant_type: 'authorization_code',
       }),
     })
-    if (!res.ok) return redirectWithError(baseUrl, 'google_token_exchange_failed')
+    if (!res.ok) return redirectWithError(baseUrl, service, 'google_token_exchange_failed')
     tokenData = await res.json()
 
     // Get email for account_identifier
@@ -121,7 +122,7 @@ export async function GET(
         grant_type: 'authorization_code',
       }),
     })
-    if (!res.ok) return redirectWithError(baseUrl, 'microsoft_token_exchange_failed')
+    if (!res.ok) return redirectWithError(baseUrl, service, 'microsoft_token_exchange_failed')
     tokenData = await res.json()
 
     const infoRes = await fetch('https://graph.microsoft.com/v1.0/me', {
@@ -146,7 +147,7 @@ export async function GET(
         grant_type: 'authorization_code',
       }),
     })
-    if (!res.ok) return redirectWithError(baseUrl, 'linkedin_token_exchange_failed')
+    if (!res.ok) return redirectWithError(baseUrl, service, 'linkedin_token_exchange_failed')
     tokenData = await res.json()
   }
 
@@ -155,7 +156,7 @@ export async function GET(
     const res = await fetch(
       `https://graph.facebook.com/v19.0/oauth/access_token?client_id=${clientId}&redirect_uri=${encodeURIComponent(callbackUrl)}&client_secret=${clientSecret}&code=${code}`
     )
-    if (!res.ok) return redirectWithError(baseUrl, 'facebook_token_exchange_failed')
+    if (!res.ok) return redirectWithError(baseUrl, service, 'facebook_token_exchange_failed')
     tokenData = await res.json()
   }
 
@@ -170,7 +171,7 @@ export async function GET(
         grant_type: 'authorization_code',
       }),
     })
-    if (!res.ok) return redirectWithError(baseUrl, 'stripe_token_exchange_failed')
+    if (!res.ok) return redirectWithError(baseUrl, service, 'stripe_token_exchange_failed')
     tokenData = await res.json()
     accountIdentifier = (tokenData as Record<string, string>).stripe_user_id ?? null
   }
@@ -191,7 +192,7 @@ export async function GET(
         grant_type: 'authorization_code',
       }),
     })
-    if (!res.ok) return redirectWithError(baseUrl, 'quickbooks_token_exchange_failed')
+    if (!res.ok) return redirectWithError(baseUrl, service, 'quickbooks_token_exchange_failed')
     tokenData = await res.json()
     accountIdentifier = realmId ?? null
   }
@@ -218,11 +219,11 @@ export async function GET(
   )
 
   if (upsertError) {
-    return redirectWithError(baseUrl, 'db_error')
+    return redirectWithError(baseUrl, service, 'db_error')
   }
 
   // Clear state cookie and redirect to connections page
-  const response = NextResponse.redirect(`${baseUrl}/settings/connections?connected=${service}`)
+  const response = NextResponse.redirect(connectionRedirect(baseUrl, { integration: service, status: 'connected' }))
   response.cookies.set(`oauth_state_${service}`, '', { maxAge: 0, path: '/' })
   return response
 }

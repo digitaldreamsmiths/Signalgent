@@ -16,6 +16,8 @@ export interface Campaign {
 }
 export interface ChannelAccount {
   id: string; service: string; label: string; status: string; scopes: string[];
+  /** Provider-reported failure (e.g. a refresh-token rejection); null while healthy. */
+  error: string | null;
 }
 export interface WorkspaceData {
   content: ContentItem[]; contacts: Contact[]; campaigns: Campaign[]; accounts: ChannelAccount[];

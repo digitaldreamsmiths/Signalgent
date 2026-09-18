@@ -166,7 +166,7 @@ export function OutreachChrome({ children }: { children: React.ReactNode }) {
         onAction={(action) => {
           if (action === 'sending_settings') setSendingModalOpen(true)
           else if (action === 'offer_profile') router.push('/settings/offer')
-          else if (action === 'connections') router.push('/settings/connections')
+          else if (action === 'connections') router.push('/connections')
           else if (action === 'add_prospects') rawInputRef.current?.focus()
         }}
       />

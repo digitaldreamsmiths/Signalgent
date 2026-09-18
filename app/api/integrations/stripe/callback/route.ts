@@ -10,6 +10,7 @@
  */
 
 import { NextResponse, type NextRequest } from 'next/server'
+import { connectionRedirect } from '@/lib/integrations/connection-errors'
 import { requireCompanyAccess, IntegrationAuthError } from '@/lib/integrations/auth'
 import { verifyState, InvalidStateError } from '@/lib/integrations/oauth-state'
 import { exchangeCode, retrieveAccount } from '@/lib/integrations/stripe/fetch'
@@ -17,10 +18,7 @@ import { saveStripeCredentials, STRIPE_SERVICE } from '@/lib/integrations/stripe
 import { invalidateFinanceSnapshot } from '@/lib/integrations/stripe/snapshot'
 
 function redirectToFinance(origin: string, params: Record<string, string>): NextResponse {
-  const url = new URL('/settings/connections', origin)
-  for (const [k, v] of Object.entries(params)) {
-    url.searchParams.set(k, v)
-  }
+  const url = connectionRedirect(origin, params)
   return NextResponse.redirect(url)
 }
 

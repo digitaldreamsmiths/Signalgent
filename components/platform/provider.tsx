@@ -1,7 +1,7 @@
 'use client'
 
 import { createContext, useContext, useEffect, useState, useCallback, type ReactNode } from 'react'
-import { readWorkspace, readWorkspaceAccounts, saveContent, saveContact, saveCampaign } from '@/lib/platform/actions'
+import { readWorkspace, readWorkspaceAccounts, saveContent, saveContact, saveCampaign, disconnectAccount } from '@/lib/platform/actions'
 import { validateContent, validateContact, validateCampaign } from '@/lib/platform/validation'
 import { previewWorkspace } from '@/lib/platform/preview'
 import { EMPTY_WORKSPACE, type WorkspaceData, type ContentItem, type Contact, type Campaign, type Result } from '@/lib/platform/types'
@@ -14,6 +14,7 @@ interface PlatformContextValue {
   persistContent: (item: ContentItem) => Promise<Result<ContentItem>>;
   persistContact: (item: Contact) => Promise<Result<Contact>>;
   persistCampaign: (item: Campaign) => Promise<Result<Campaign>>;
+  removeAccount: (id: string) => Promise<Result<true>>;
   href: (path: string) => string;
 }
 const Context = createContext<PlatformContextValue | null>(null)
@@ -70,6 +71,11 @@ export function PlatformProvider({ children, companyId = '', companyName = 'Your
       return result
     } catch (e) { return { ok: false, error: e instanceof Error ? e.message : 'Could not save campaign.' } }
   }
-  return <Context.Provider value={{ data, loading, error, notice, preview, companyId, companyName, editor, setEditor, refresh, notify: setNotice, persistContent, persistContact, persistCampaign, href: path => preview ? `/preview${path}` : path }}>{children}</Context.Provider>
+  const removeAccount = async (id: string): Promise<Result<true>> => {
+    const result: Result<true> = preview ? { ok: true, data: true } : await disconnectAccount(companyId, id)
+    if (result.ok) { setData(d => ({ ...d, accounts: d.accounts.filter(a => a.id !== id) })); setNotice('Account disconnected') } else setNotice(result.error)
+    return result
+  }
+  return <Context.Provider value={{ data, loading, error, notice, preview, companyId, companyName, editor, setEditor, refresh, notify: setNotice, persistContent, persistContact, persistCampaign, removeAccount, href: path => preview ? `/preview${path}` : path }}>{children}</Context.Provider>
 }
 export function usePlatform() { const context = useContext(Context); if (!context) throw new Error('Platform provider missing'); return context }

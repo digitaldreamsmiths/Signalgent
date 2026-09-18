@@ -2867,3 +2867,64 @@ Re-scanned after the change: `/settings/offer` (50 text nodes), `/inbox` (131), 
 - The three outreach modals above.
 - Facebook badge (brand colour, deliberate).
 - Carried from Session 51: three client-side 400s on first `/today` load, `templates-modal.tsx:57` lint error, `APP_URL` repoint.
+
+## Session 52 — One Connections page
+
+**Goal**: There were two connections pages. The workspace's `/connections` (Session 49) listed Gmail, LinkedIn, Pinterest and three "not available yet" channels, could connect but not disconnect, and showed a bare status word per account. The old `/settings/connections` listed nine services from the Business OS era, most of whose connect paths (`linkedin_page`, `facebook_page`, `stripe_account`, `quickbooks`, `shopify`) pointed at the generic `[service]` route rather than the provider routes that actually exist, and every provider callback except Gmail still redirected there with raw error text in the URL. Fold them into one page that shows every account the company has, with connect, reconnect, per-account disconnect, a readable state, and one sentence when an OAuth round-trip fails.
+
+### Locked scope
+
+- **In**: a provider registry; account error surfacing; per-account soft disconnect; reconnect for errored accounts; the "other connected services" group for Etsy / Google Analytics / Stripe rows that predate the workspace; one redirect target and one reason-code vocabulary for all seven callbacks; retiring the old page behind a config redirect.
+- **Not in**: any new provider (Outlook, Instagram, Facebook stay "Not available yet"); publishing; hard-deleting account rows; removing the six unused `*-connection-chip.tsx` components or `lib/integrations/services.ts` (still imported by the generic routes and the hidden modes).
+
+### Architectural choices
+
+- **One registry, `lib/platform/connections.ts`.** Each provider carries its group (`email` / `social` / `other`), connect path, whether it allows several accounts (`multi`, Gmail only), and copy. `other` providers render only when the company still has a row for them, so a legacy Etsy or GA connection stays visible and disconnectable without the page implying the workspace uses it. Rationale: the earlier page hard-coded its provider array inside the component and the old page hard-coded a different one; the notice, the page, and future channels should read the same list.
+- **`ChannelAccount` gains `error`.** `readWorkspace` and `readWorkspaceAccounts` now select `last_error` and share one `toChannelAccount()` mapper, and both exclude `status = 'revoked'` rows. `accountProblem()` turns the provider's raw failure ("Token refresh failed: Google token refresh …", "Token decryption failed") into one sentence; the raw text never reaches the page.
+- **Disconnect is a server action, per account.** `disconnectAccount(companyId, accountId)` in `lib/platform/actions.ts` sets `status = 'revoked'` on one row scoped by company and returns `Result<true>`; the provider's `removeAccount` drops it from the snapshot and toasts. The old `POST /api/integrations/[service]/disconnect` revoked every row for a service, which with multi-account Gmail (Session 49) would have disconnected all mailboxes at once. That route is left in place but nothing in the workspace calls it.
+- **One callback redirect, one reason vocabulary.** `lib/integrations/connection-errors.ts` exports `CONNECTION_ERRORS` (ten codes → sentences), `connectionReason()` (classifies the free-text reasons the LinkedIn, Pinterest, Etsy, GA and Stripe callbacks have always produced: "Missing code or state" → `invalid_state`, "User mismatch on callback" → `unauthorized`, "No Etsy shop found…" → `no_shop`, "No GA4 properties…" → `no_property`, `42P10` → `migration`, env-var names → `configuration`, and so on) and `connectionRedirect(origin, params)` which builds `/connections?integration=&status=[&reason=code]`. Each provider callback's `redirectTo…()` helper became a one-line call to it, so their bodies did not need to be rewritten; the generic `[service]` callback's `?error=` / `?connected=` params were replaced the same way. Gmail keeps its own richer map from Session 50; `ConnectionNotice` tries it first for `integration=gmail`, then the generic one, then a fallback sentence that names the provider.
+- **Old page retired by config, not by render.** `app/(app)/settings/connections/page.tsx` is deleted and `next.config.ts` redirects `/settings/connections → /connections` (307), the same mechanism as Session 51's outreach index, for the same reason: no server `redirect()` under the async app layout on Next 16.2.3. The Settings nav keeps a "Connections" item pointing at the new page; the old topbar and the outreach setup checklist repoint too.
+- **Preview stays read-only for connections.** Connect, reconnect and disconnect all toast "disabled in the sample workspace"; the sample now includes an errored mailbox (`orders@example.com`) so the state is visible there.
+
+### New / extended infrastructure
+
+| File | Purpose |
+|---|---|
+| `lib/platform/connections.ts` | `PROVIDERS`, `providerFor()`, `accountProblem()`. |
+| `lib/integrations/connection-errors.ts` | `CONNECTION_ERRORS`, `connectionReason()`, `connectionRedirect()`. |
+| `components/platform/connections.tsx` | The page: three groups, per-account rows with state pill, problem sentence, Reconnect / Disconnect, Connect / Connect another. |
+
+### Files modified
+
+| File | Change |
+|---|---|
+| `lib/platform/types.ts` | `ChannelAccount.error: string \| null`. |
+| `lib/platform/actions.ts` | `ACCOUNT_COLUMNS` + `toChannelAccount()`; revoked rows excluded; `disconnectAccount()`. |
+| `components/platform/provider.tsx` | `removeAccount(id)` on the context. |
+| `components/platform/pages.tsx` | Inline `Connections` removed; imports the new module. |
+| `components/platform/connection-notice.tsx` | Handles every integration, not just Gmail. |
+| `components/platform/workspace.css` | Account rows as `ul > li`; `.sg-status-connected` / `.sg-status-error`; `.sg-account-error`; `.sg-account-actions`; `.sg-button.sg-quiet`; group headings; error dot. The green used by connected/approved/subscribed pills darkened once more (`#437d68` was 4.39:1 on its tint at 9px). |
+| `lib/platform/preview.ts` | `error` on every sample account; one errored Gmail. |
+| `app/api/integrations/{linkedin,pinterest,etsy,google_analytics,stripe}/callback/route.ts` | Redirect helper → `connectionRedirect()`. |
+| `app/api/integrations/[service]/callback/route.ts` | `redirectWithError(base, service, error)` and the success redirect → `connectionRedirect()`. |
+| `app/(app)/settings/layout.tsx`, `components/layout/topbar.tsx`, `components/widgets/content/outreach-chrome.tsx` | Links → `/connections`. |
+| `next.config.ts` | `/settings/connections → /connections`. |
+| `app/(app)/settings/connections/page.tsx` | Deleted. |
+
+### Local verification
+
+- Real workspace `/connections`: groups Email, Social, Other connected services; cards Gmail (thedvegroup@gmail.com, Connected, Disconnect, Connect another account), Outlook, LinkedIn, Instagram, Facebook, Pinterest, Etsy (DigitalDreamsmiths), Google Analytics (SignalGent). Stripe correctly absent (this company has no Stripe row).
+- `/preview/connections`: the errored sample mailbox shows the red dot, "Needs attention", "The saved sign-in no longer works. Reconnect to keep using this account.", Reconnect and Disconnect; Disconnect toasts the sample-workspace notice and changes nothing.
+- `/connections?integration=linkedin&status=error&reason=cancelled` renders "The connection was cancelled. Nothing changed." above the page.
+- `/settings/connections` lands on `/connections` (307).
+- Contrast scan on the real page: 76 text nodes; after the green adjustment the only item under 4.5:1 is the Facebook logo glyph (brand colour, deliberate).
+- `next typegen` + `tsc --noEmit` clean; eslint clean on the new and touched files (pages.tsx keeps its pre-existing unused-import warnings).
+- Not exercised: a real disconnect (it would revoke a live mailbox) and a live OAuth round-trip through the new redirect. The redirect builder is pure and was exercised through the notice with hand-built URLs.
+- Dev-server note, again: deleting the page while `next dev` ran required stopping the orphaned `next-server` process that the app no longer tracked (it held port 3001), `rm -rf .next`, and a fresh start.
+
+### Residuals heading into Session 53
+
+- **Disconnect route** `POST /api/integrations/[service]/disconnect` is now unused by the workspace and still revokes every account of a service; delete it or make it per-account.
+- **Six `*-connection-chip.tsx` components** and most of `lib/integrations/services.ts` (`SERVICES`, `SERVICES_BY_MODE`) have no remaining consumer in the visible app.
+- **Live OAuth round-trip** through `connectionRedirect()` for LinkedIn / Pinterest / Etsy / GA / Stripe has not been run since the change.
+- Carried: three client-side 400s on first `/today` load; `templates-modal.tsx:57` lint error; `APP_URL` repoint.

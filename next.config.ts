@@ -8,7 +8,11 @@ const nextConfig: NextConfig = {
   // during the previous render" on every hard load of /outreach. Redirecting
   // at the config level answers with a 307 before anything renders.
   async redirects() {
-    return [{ source: '/outreach', destination: '/outreach/pipeline', permanent: false }]
+    return [
+      { source: '/outreach', destination: '/outreach/pipeline', permanent: false },
+      // Session 52: the old settings page folded into the workspace Connections page.
+      { source: '/settings/connections', destination: '/connections', permanent: false },
+    ]
   },
 };
 export default nextConfig;
