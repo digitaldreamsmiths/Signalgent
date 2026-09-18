@@ -7,7 +7,7 @@ const CARD = 'var(--app-card)'
 const INPUT = 'var(--app-input)'
 const TEXT = 'var(--app-text)'
 const MUTED = 'var(--app-muted)'
-const ACCENT = '#D85A30'
+const ACCENT = '#c04b24'
 
 /** Next weekday at 09:00, as separate date (YYYY-MM-DD) + time (HH:MM) strings. */
 function defaultStart(): { date: string; time: string } {

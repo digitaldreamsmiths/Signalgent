@@ -13,7 +13,7 @@
 import type { Filter, StageBucket } from './views'
 import type { Disposition, SendStatus } from './types'
 
-const ACCENT = '#D85A30'
+const ACCENT = '#c04b24'
 const MUTED = 'var(--app-muted)'
 
 /** The draft fields every predicate here needs. `OutreachDraftView` is a superset. */
@@ -76,26 +76,26 @@ export function matchesCampaign(p: ProspectLike, campaignId: string): boolean {
 export function contactStage(p: ProspectLike): { label: string; color: string } {
   if (p.disposition === 'bounced') return { label: 'Bounced', color: '#b04545' }
   if (p.disposition === 'unsubscribed') return { label: 'Opt-out ✋', color: '#b04545' }
-  if (p.disposition === 'replied' || p.disposition === 'interested' || p.disposition === 'not_interested') return { label: 'Replied', color: '#378ADD' }
-  if (p.needs_review) return { label: 'Needs review', color: '#e0a060' }
+  if (p.disposition === 'replied' || p.disposition === 'interested' || p.disposition === 'not_interested') return { label: 'Replied', color: '#2173c5' }
+  if (p.needs_review) return { label: 'Needs review', color: '#a1601f' }
 
   // Emailed = any touch actually sent or marked exported to the sending tool.
-  if (p.drafts.some((d) => d.status === 'exported' || d.send?.status === 'sent')) return { label: 'Emailed', color: '#378ADD' }
+  if (p.drafts.some((d) => d.status === 'exported' || d.send?.status === 'sent')) return { label: 'Emailed', color: '#2173c5' }
 
   const send = p.draft?.send
   if (send?.status === 'sending') return { label: 'Sending', color: ACCENT }
   if (send?.status === 'queued') return { label: 'Queued', color: ACCENT }
 
   const ds = p.draft?.status
-  if (ds === 'approved' || ds === 'edited') return { label: 'Ready to email', color: '#1D9E75' }
-  if (ds === 'rejected') return { label: 'Rejected', color: '#BA7517' }
-  if (ds === 'pending') return p.draft!.is_template ? { label: 'Template', color: MUTED } : { label: 'In review', color: '#1D9E75' }
+  if (ds === 'approved' || ds === 'edited') return { label: 'Ready to email', color: '#17805f' }
+  if (ds === 'rejected') return { label: 'Rejected', color: '#9f6414' }
+  if (ds === 'pending') return p.draft!.is_template ? { label: 'Template', color: MUTED } : { label: 'In review', color: '#17805f' }
 
   switch (p.status) {
-    case 'skipped': return { label: 'Skipped', color: '#BA7517' }
+    case 'skipped': return { label: 'Skipped', color: '#9f6414' }
     case 'error': return { label: 'Error', color: '#b04545' }
-    case 'enriched': return { label: 'Enriched', color: '#378ADD' }
-    case 'drafted': return { label: 'Drafted', color: '#1D9E75' }
+    case 'enriched': return { label: 'Enriched', color: '#2173c5' }
+    case 'drafted': return { label: 'Drafted', color: '#17805f' }
     default: return { label: 'New', color: MUTED }
   }
 }

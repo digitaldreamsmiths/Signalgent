@@ -28,11 +28,11 @@ import {
 } from '@/hooks/use-linkedin-connection'
 
 const SOURCE_COLORS: Record<string, string> = {
-  commerce: '#378ADD',
-  communications: '#1D9E75',
-  finance: '#BA7517',
-  analytics: '#639922',
-  marketing: '#D85A30',
+  commerce: '#2173c5',
+  communications: '#17805f',
+  finance: '#9f6414',
+  analytics: '#507c1c',
+  marketing: '#c04b24',
 }
 
 export function IntelligenceBriefing() {

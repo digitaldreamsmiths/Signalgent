@@ -11,7 +11,7 @@ const CARD = 'var(--app-card)'
 const INPUT = 'var(--app-input)'
 const TEXT = 'var(--app-text)'
 const MUTED = 'var(--app-muted)'
-const ACCENT = '#D85A30'
+const ACCENT = '#c04b24'
 
 const DEFAULTS: SendSettings = {
   sender_name: '', sender_email: '', reply_to: '',
@@ -31,8 +31,8 @@ const labelStyle: React.CSSProperties = { fontSize: 10, fontWeight: 600, color: 
 const inputStyle: React.CSSProperties = { width: '100%', background: INPUT, border: `1px solid ${BORDER}`, borderRadius: 6, color: TEXT, fontSize: 12, padding: '7px 9px' }
 
 const VERDICT_META: Record<Verdict, { color: string; mark: string; word: string }> = {
-  pass: { color: '#1D9E75', mark: '✓', word: 'Pass' },
-  warn: { color: '#e0a060', mark: '!', word: 'Warning' },
+  pass: { color: '#17805f', mark: '✓', word: 'Pass' },
+  warn: { color: '#a1601f', mark: '!', word: 'Warning' },
   fail: { color: '#b04545', mark: '✕', word: 'Fail' },
   unknown: { color: MUTED, mark: '?', word: 'Unknown' },
 }
@@ -153,7 +153,7 @@ export function SendingSettingsModal({ companyId, onClose, onSaved }: { companyI
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {!form.active && form.pause_reason === 'bounce_rate' && (
-              <div style={{ fontSize: 11, color: '#e0a060', background: 'var(--app-card-2)', border: `1px solid ${BORDER}`, borderRadius: 6, padding: '8px 10px' }}>
+              <div style={{ fontSize: 11, color: '#a1601f', background: 'var(--app-card-2)', border: `1px solid ${BORDER}`, borderRadius: 6, padding: '8px 10px' }}>
                 Auto-paused — recent bounce rate exceeded {Math.round(form.bounce_pause_threshold * 100)}%. Clean the list, then re-enable sending below to resume.
               </div>
             )}

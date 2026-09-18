@@ -56,7 +56,7 @@ export function WidgetShell({
           position: 'relative',
           display: 'flex',
           flexDirection: 'column',
-          '--mode-accent-glow': 'color-mix(in oklch, var(--mode-accent, #8B7FF0) 30%, transparent)',
+          '--mode-accent-glow': 'color-mix(in oklch, var(--mode-accent, #6a5aec) 30%, transparent)',
         } as React.CSSProperties}
       >
         {/* Header row */}

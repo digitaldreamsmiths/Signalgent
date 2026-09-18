@@ -46,7 +46,7 @@ export function TrafficChart() {
         <Tooltip contentStyle={{ background: '#1a1a1a', border: '1px solid #333', borderRadius: 6, fontSize: 11 }} />
         <Bar dataKey="value" radius={[3, 3, 0, 0]} animationDuration={400}>
           {data.map((_, i) => (
-            <Cell key={i} fill={i === data.length - 1 ? '#639922' : '#173404'} />
+            <Cell key={i} fill={i === data.length - 1 ? '#507c1c' : '#173404'} />
           ))}
         </Bar>
       </BarChart>
@@ -66,7 +66,7 @@ export function EngagementChart() {
         <Tooltip contentStyle={{ background: '#1a1a1a', border: '1px solid #333', borderRadius: 6, fontSize: 11 }} />
         <Bar dataKey="value" radius={[3, 3, 0, 0]} animationDuration={400}>
           {data.map((_, i) => (
-            <Cell key={i} fill={i === data.length - 1 ? '#639922' : '#173404'} />
+            <Cell key={i} fill={i === data.length - 1 ? '#507c1c' : '#173404'} />
           ))}
         </Bar>
       </BarChart>
@@ -125,7 +125,7 @@ export function TopPages() {
             <span style={{ fontSize: 10, color: '#999999' }}>{p.views.toLocaleString()}</span>
           </div>
           <div style={{ height: 4, background: '#272727', borderRadius: 2, overflow: 'hidden' }}>
-            <div style={{ height: '100%', width: `${p.pct}%`, background: '#639922', borderRadius: 2 }} />
+            <div style={{ height: '100%', width: `${p.pct}%`, background: '#507c1c', borderRadius: 2 }} />
           </div>
         </div>
       ))}
@@ -152,7 +152,7 @@ export function ConversionStats() {
         <div key={s.label}>
           <div style={{ fontSize: 10, color: '#666666', marginBottom: 3 }}>{s.label}</div>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-            <span style={{ fontSize: 20, fontWeight: 500, color: '#97C459' }}>{s.value}</span>
+            <span style={{ fontSize: 20, fontWeight: 500, color: '#507c1c' }}>{s.value}</span>
             <span style={{ fontSize: 10, color: s.change.startsWith('+') ? '#6a6' : s.change.startsWith('-') ? '#a66' : '#999999' }}>{s.change}</span>
           </div>
         </div>
@@ -177,7 +177,7 @@ export function BounceRate() {
         <XAxis dataKey="day" tick={{ fontSize: 9, fill: '#666666' }} axisLine={false} tickLine={false} />
         <YAxis tick={{ fontSize: 9, fill: '#666666' }} axisLine={false} tickLine={false} domain={[minR, maxR]} unit="%" />
         <Tooltip contentStyle={{ background: '#1a1a1a', border: '1px solid #333', borderRadius: 6, fontSize: 11 }} formatter={(value) => [`${value}%`]} />
-        <Line type="monotone" dataKey="rate" stroke="#97C459" strokeWidth={2} dot={{ fill: '#97C459', r: 3 }} animationDuration={400} />
+        <Line type="monotone" dataKey="rate" stroke="#507c1c" strokeWidth={2} dot={{ fill: '#507c1c', r: 3 }} animationDuration={400} />
       </LineChart>
     </ResponsiveContainer>
   )
@@ -195,7 +195,7 @@ export function ReferralSources() {
         <Tooltip contentStyle={{ background: '#1a1a1a', border: '1px solid #333', borderRadius: 6, fontSize: 11 }} />
         <Bar dataKey="value" fill="#173404" radius={[0, 3, 3, 0]} animationDuration={400}>
           {data.map((_, i) => (
-            <Cell key={i} fill={i === 0 ? '#639922' : '#173404'} />
+            <Cell key={i} fill={i === 0 ? '#507c1c' : '#173404'} />
           ))}
         </Bar>
       </BarChart>

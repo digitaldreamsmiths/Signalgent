@@ -9,7 +9,7 @@ const CARD = 'var(--app-card)'
 const CARD2 = 'var(--app-card-2)'
 const TEXT = 'var(--app-text)'
 const MUTED = 'var(--app-muted)'
-const ACCENT = '#D85A30'
+const ACCENT = '#c04b24'
 
 /**
  * Deep link to the conversation in Gmail. Answering happens there — composing
@@ -64,8 +64,8 @@ function fmtWhen(iso: string | null): string {
 }
 
 const DISPO_PILL: Partial<Record<Disposition, { label: string; color: string }>> = {
-  interested: { label: 'interested', color: '#1D9E75' },
-  not_interested: { label: 'not interested', color: '#BA7517' },
+  interested: { label: 'interested', color: '#17805f' },
+  not_interested: { label: 'not interested', color: '#9f6414' },
   bounced: { label: 'bounced', color: '#b04545' },
   unsubscribed: { label: 'opt-out', color: '#b04545' },
 }
@@ -122,8 +122,8 @@ function ReplyCard({ p, companyId, senderEmail, onChanged }: {
       <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
         {needsTriage ? (
           <>
-            <button disabled={busy} onClick={() => triage('interested')} style={btn('#1D9E75')}>Interested</button>
-            <button disabled={busy} onClick={() => triage('not_interested')} style={btnGhost('#BA7517')}>Not interested</button>
+            <button disabled={busy} onClick={() => triage('interested')} style={btn('#17805f')}>Interested</button>
+            <button disabled={busy} onClick={() => triage('not_interested')} style={btnGhost('#9f6414')}>Not interested</button>
             <button disabled={busy} onClick={() => triage('unsubscribed')} style={btnGhost('#b04545')} title="Suppress this address from all future sending">Opt out</button>
           </>
         ) : (

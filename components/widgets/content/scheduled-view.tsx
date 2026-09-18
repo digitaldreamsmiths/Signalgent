@@ -11,7 +11,7 @@ const CARD2 = 'var(--app-card-2)'
 const TEXT = 'var(--app-text)'
 const TEXT2 = 'var(--app-text-2)'
 const MUTED = 'var(--app-muted)'
-const ACCENT = '#D85A30'
+const ACCENT = '#c04b24'
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
 const DOW = ['S', 'M', 'T', 'W', 'T', 'F', 'S']
 

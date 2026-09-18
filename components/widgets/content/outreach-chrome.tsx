@@ -180,13 +180,13 @@ export function OutreachChrome({ children }: { children: React.ReactNode }) {
         </Banner>
       )}
       {snapshot?.sending?.pause_reason === 'bounce_rate' && !snapshot.sending.active && (
-        <Banner color="#e0a060">
-          ⚠ Sending auto-paused — bounce rate hit {Math.round((snapshot.sending.bounce_rate_7d ?? 0) * 100)}% over the last 7 days. Clean the list, then re-enable in <button onClick={() => setSendingModalOpen(true)} style={{ ...btnGhost('#e0a060'), padding: '2px 8px' }}>Sending</button>.
+        <Banner color="#a1601f">
+          ⚠ Sending auto-paused — bounce rate hit {Math.round((snapshot.sending.bounce_rate_7d ?? 0) * 100)}% over the last 7 days. Clean the list, then re-enable in <button onClick={() => setSendingModalOpen(true)} style={{ ...btnGhost('#a1601f'), padding: '2px 8px' }}>Sending</button>.
         </Banner>
       )}
       {snapshot?.sending?.pause_reason === 'manual' && !snapshot.sending.active && (c?.queued ?? 0) > 0 && (
-        <Banner color="#e0a060">
-          ⚠ Sending is off — {c!.queued} queued email{c!.queued === 1 ? '' : 's'} will not go out until you re-enable it in <button onClick={() => setSendingModalOpen(true)} style={{ ...btnGhost('#e0a060'), padding: '2px 8px' }}>Sending</button>.
+        <Banner color="#a1601f">
+          ⚠ Sending is off — {c!.queued} queued email{c!.queued === 1 ? '' : 's'} will not go out until you re-enable it in <button onClick={() => setSendingModalOpen(true)} style={{ ...btnGhost('#a1601f'), padding: '2px 8px' }}>Sending</button>.
         </Banner>
       )}
 
@@ -250,7 +250,7 @@ export function OutreachChrome({ children }: { children: React.ReactNode }) {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 8 }}>
           <Metric label="To review" value={snapshot?.views.review ?? 0} accent={ACCENT} />
           <Metric label="Prospects" value={c.total} />
-          <Metric label="Sent" value={c.sent} accent="#378ADD" />
+          <Metric label="Sent" value={c.sent} accent="#2173c5" />
           <Metric label="Queued" value={c.queued} accent={c.queued > 0 ? ACCENT : undefined} />
           {/* Today against the cap. The warmup ramp used to be invisible math:
               the queue would go quiet mid-morning with nothing explaining why. */}
@@ -258,7 +258,7 @@ export function OutreachChrome({ children }: { children: React.ReactNode }) {
             <Metric
               label="Today"
               value={`${snapshot.sending.sent_today}/${snapshot.sending.effective_daily_cap}`}
-              accent={snapshot.sending.sent_today >= snapshot.sending.effective_daily_cap ? '#e0a060' : undefined}
+              accent={snapshot.sending.sent_today >= snapshot.sending.effective_daily_cap ? '#a1601f' : undefined}
               // Kept short: the tile ellipsizes its hint (full text on hover).
               hint={
                 !snapshot.sending.active
@@ -271,7 +271,7 @@ export function OutreachChrome({ children }: { children: React.ReactNode }) {
               }
             />
           )}
-          <Metric label="Replied" value={c.replied} accent="#1D9E75" />
+          <Metric label="Replied" value={c.replied} accent="#17805f" />
           <Metric label="Reply rate" value={fmtPct(snapshot?.reply_rate ?? 0, c.sent)} />
           {/* Denominator is tracked sends, not all sends: emails sent before
               open tracking existed carry no pixel and would drag this to zero. */}

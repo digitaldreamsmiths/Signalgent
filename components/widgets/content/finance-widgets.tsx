@@ -69,7 +69,7 @@ function FinanceKpiRowLive({ snapshot }: { snapshot: FinanceSnapshot }) {
         return (
           <div key={label} style={{ textAlign: 'center' }}>
             <div style={{ fontSize: 10, color: '#666666', marginBottom: 4 }}>{label}</div>
-            <div style={{ fontSize: 24, fontWeight: 500, color: '#EF9F27' }}>
+            <div style={{ fontSize: 24, fontWeight: 500, color: '#9f6414' }}>
               {formatCurrency(kpi.value, c)}
             </div>
             <div style={{ fontSize: 10, color: changeColor, marginTop: 2 }}>{change}</div>
@@ -92,7 +92,7 @@ function FinanceKpiRowMock() {
       {kpis.map((k) => (
         <div key={k.label} style={{ textAlign: 'center' }}>
           <div style={{ fontSize: 10, color: '#666666', marginBottom: 4 }}>{k.label}</div>
-          <div style={{ fontSize: 24, fontWeight: 500, color: '#EF9F27' }}>{k.value}</div>
+          <div style={{ fontSize: 24, fontWeight: 500, color: '#9f6414' }}>{k.value}</div>
           <div style={{ fontSize: 10, color: k.change.startsWith('+') ? '#6a6' : '#a66', marginTop: 2 }}>{k.change}</div>
         </div>
       ))}
@@ -129,7 +129,7 @@ export function RevenueChart() {
           formatter={(value) => [formatCurrency(Number(value), currency), 'Revenue']}
         />
         <Bar dataKey="revenue" barSize={44} radius={[3, 3, 0, 0]} animationDuration={400}>
-          {data.map((_, i) => <Cell key={i} fill={i === data.length - 1 ? '#EF9F27' : '#412402'} />)}
+          {data.map((_, i) => <Cell key={i} fill={i === data.length - 1 ? '#9f6414' : '#412402'} />)}
         </Bar>
       </BarChart>
     </ResponsiveContainer>
@@ -227,7 +227,7 @@ function RecentTransactionsMock() {
 // ------------------------------------------------------------
 
 export function ExpenseBreakdown() {
-  const COLORS = ['#EF9F27', '#BA7517', '#6a5010', '#3a2a00']
+  const COLORS = ['#9f6414', '#9f6414', '#6a5010', '#3a2a00']
   return (
     <div>
       <ResponsiveContainer width="100%" height={160}>
@@ -261,7 +261,7 @@ export function CashflowChart() {
         <YAxis tick={{ fontSize: 9, fill: '#666666' }} axisLine={false} tickLine={false} />
         <Tooltip contentStyle={{ background: '#1a1a1a', border: '1px solid #333', borderRadius: 6, fontSize: 11 }} formatter={(value) => [`$${Number(value).toLocaleString()}`]} />
         <Bar dataKey="cashflow" fill="#412402" barSize={44} radius={[3, 3, 0, 0]} animationDuration={400}>
-          {data.map((_, i) => <Cell key={i} fill={i === data.length - 1 ? '#EF9F27' : '#412402'} />)}
+          {data.map((_, i) => <Cell key={i} fill={i === data.length - 1 ? '#9f6414' : '#412402'} />)}
         </Bar>
       </BarChart>
     </ResponsiveContainer>
@@ -277,7 +277,7 @@ export function ProfitMargin() {
         <XAxis dataKey="week" tick={{ fontSize: 9, fill: '#666666' }} axisLine={false} tickLine={false} />
         <YAxis tick={{ fontSize: 9, fill: '#666666' }} axisLine={false} tickLine={false} unit="%" domain={[40, 75]} />
         <Tooltip contentStyle={{ background: '#1a1a1a', border: '1px solid #333', borderRadius: 6, fontSize: 11 }} formatter={(value) => [`${value}%`]} />
-        <Line type="monotone" dataKey="margin" stroke="#EF9F27" strokeWidth={2} dot={{ fill: '#EF9F27', r: 3 }} animationDuration={400} />
+        <Line type="monotone" dataKey="margin" stroke="#9f6414" strokeWidth={2} dot={{ fill: '#9f6414', r: 3 }} animationDuration={400} />
       </LineChart>
     </ResponsiveContainer>
   )
@@ -291,7 +291,7 @@ export function RevenueVsExpenses() {
         <XAxis dataKey="week" tick={{ fontSize: 9, fill: '#666666' }} axisLine={false} tickLine={false} />
         <YAxis tick={{ fontSize: 9, fill: '#666666' }} axisLine={false} tickLine={false} />
         <Tooltip contentStyle={{ background: '#1a1a1a', border: '1px solid #333', borderRadius: 6, fontSize: 11 }} formatter={(value) => [`$${Number(value).toLocaleString()}`]} />
-        <Bar dataKey="revenue" fill="#EF9F27" barSize={44} radius={[3, 3, 0, 0]} animationDuration={400} />
+        <Bar dataKey="revenue" fill="#9f6414" barSize={44} radius={[3, 3, 0, 0]} animationDuration={400} />
         <Bar dataKey="expenses" fill="#412402" barSize={44} radius={[3, 3, 0, 0]} animationDuration={400} />
       </BarChart>
     </ResponsiveContainer>

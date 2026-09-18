@@ -74,8 +74,8 @@ type InboxFilter = 'all' | 'urgent' | 'opportunity' | 'canWait' | 'untriaged' | 
 const FILTERS: { key: InboxFilter; label: string; color: string }[] = [
   { key: 'all', label: 'All', color: '#888' },
   { key: 'urgent', label: 'Urgent', color: '#e55' },
-  { key: 'opportunity', label: 'Opportunity', color: '#5DCAA5' },
-  { key: 'canWait', label: 'Can wait', color: '#1D9E75' },
+  { key: 'opportunity', label: 'Opportunity', color: '#17805f' },
+  { key: 'canWait', label: 'Can wait', color: '#17805f' },
   { key: 'untriaged', label: 'Untriaged', color: '#888' },
   { key: 'promo', label: 'Promo', color: '#9089b8' },
 ]
@@ -264,7 +264,7 @@ function EmailClientLive({ snapshot }: { snapshot: CommunicationsSnapshot }) {
                 style={{
                   textAlign: 'left',
                   padding: '8px 10px',
-                  borderLeft: i === active ? '2px solid #1D9E75' : '2px solid transparent',
+                  borderLeft: i === active ? '2px solid #17805f' : '2px solid transparent',
                   background: i === active ? 'rgba(255,255,255,0.02)' : 'transparent',
                   borderBottom: '1px solid #272727',
                   cursor: 'pointer',
@@ -273,7 +273,7 @@ function EmailClientLive({ snapshot }: { snapshot: CommunicationsSnapshot }) {
                   width: '100%',
                 }}
               >
-                <div style={{ borderLeft: i === active ? '2px solid #1D9E75' : '2px solid transparent', paddingLeft: 8 }}>
+                <div style={{ borderLeft: i === active ? '2px solid #17805f' : '2px solid transparent', paddingLeft: 8 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <span style={{ fontSize: 11, fontWeight: msg.unread ? 600 : 500, color: '#ffffff' }}>
                       {senderLabel(msg)}
@@ -283,7 +283,7 @@ function EmailClientLive({ snapshot }: { snapshot: CommunicationsSnapshot }) {
                   <div style={{ fontSize: 10, color: '#ffffff', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.7 }}>
                     {msg.subject}
                   </div>
-                  <span style={{ fontSize: 8, color: '#5DCAA5', background: '#031a12', borderRadius: 3, padding: '1px 5px', marginTop: 3, display: 'inline-block' }}>
+                  <span style={{ fontSize: 8, color: '#17805f', background: '#031a12', borderRadius: 3, padding: '1px 5px', marginTop: 3, display: 'inline-block' }}>
                     {msg.tag}
                   </span>
                 </div>
@@ -292,7 +292,7 @@ function EmailClientLive({ snapshot }: { snapshot: CommunicationsSnapshot }) {
           </div>
 
           <div style={{ padding: '0 8px', display: 'flex', flexDirection: 'column', gap: 10, overflowY: 'auto', minHeight: 0 }}>
-            <div style={{ fontSize: 13, fontWeight: 500, color: '#5DCAA5' }}>{senderLabel(selected)}</div>
+            <div style={{ fontSize: 13, fontWeight: 500, color: '#17805f' }}>{senderLabel(selected)}</div>
             <div style={{ fontSize: 11, color: '#ffffff', lineHeight: 1.6, opacity: 0.8 }}>
               <div style={{ marginBottom: 6, fontWeight: 500, opacity: 1 }}>{selected.subject}</div>
               {selected.snippet || '(no preview available)'}
@@ -339,8 +339,8 @@ function EmailClientLive({ snapshot }: { snapshot: CommunicationsSnapshot }) {
                 style={{
                   fontSize: 10,
                   background: 'transparent',
-                  color: '#5DCAA5',
-                  border: '1px solid #1D9E75',
+                  color: '#17805f',
+                  border: '1px solid #17805f',
                   borderRadius: 5,
                   padding: '4px 10px',
                   textDecoration: 'none',
@@ -451,7 +451,7 @@ function SendButton({
 }) {
   const disabled = !hasContent && state.status === 'idle'
   let label = 'Send'
-  let background = '#1D9E75'
+  let background = '#17805f'
   let color = '#fff'
   if (state.status === 'running') label = 'Sending…'
   else if (state.status === 'done') {
@@ -524,7 +524,7 @@ function ReplyEditor({
           lineHeight: 1.5,
           color: '#fff',
           background: '#0c1612',
-          border: `1px solid ${fromAi && value ? '#1D9E75' : '#1f1f1f'}`,
+          border: `1px solid ${fromAi && value ? '#17805f' : '#1f1f1f'}`,
           borderRadius: 6,
           padding: '8px 10px',
           fontFamily: 'inherit',
@@ -637,7 +637,7 @@ function AssistPanel({
         style={{
           fontSize: 9,
           fontWeight: 500,
-          color: isError ? '#ef7b7b' : '#5DCAA5',
+          color: isError ? '#ef7b7b' : '#17805f',
           marginBottom: 4,
           display: 'flex',
           justifyContent: 'space-between',
@@ -651,7 +651,7 @@ function AssistPanel({
             style={{
               fontSize: 9,
               background: 'transparent',
-              color: '#5DCAA5',
+              color: '#17805f',
               border: '1px solid #0f3a26',
               borderRadius: 4,
               padding: '1px 6px',
@@ -691,7 +691,7 @@ function EmailClientMock() {
             style={{
               textAlign: 'left',
               padding: '8px 10px',
-              borderLeft: i === active ? '2px solid #1D9E75' : '2px solid transparent',
+              borderLeft: i === active ? '2px solid #17805f' : '2px solid transparent',
               background: i === active ? 'rgba(255,255,255,0.02)' : 'transparent',
               borderBottom: '1px solid #272727',
               cursor: 'pointer',
@@ -700,7 +700,7 @@ function EmailClientMock() {
               width: '100%',
             }}
           >
-            <div style={{ borderLeft: i === active ? '2px solid #1D9E75' : '2px solid transparent', paddingLeft: 8 }}>
+            <div style={{ borderLeft: i === active ? '2px solid #17805f' : '2px solid transparent', paddingLeft: 8 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span style={{ fontSize: 11, fontWeight: 500, color: '#ffffff' }}>{email.sender}</span>
                 <span style={{ fontSize: 9, color: '#999999' }}>{email.time}</span>
@@ -708,7 +708,7 @@ function EmailClientMock() {
               <div style={{ fontSize: 10, color: '#ffffff', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.7 }}>
                 {email.subject}
               </div>
-              <span style={{ fontSize: 8, color: '#5DCAA5', background: '#031a12', borderRadius: 3, padding: '1px 5px', marginTop: 3, display: 'inline-block' }}>
+              <span style={{ fontSize: 8, color: '#17805f', background: '#031a12', borderRadius: 3, padding: '1px 5px', marginTop: 3, display: 'inline-block' }}>
                 {email.tag}
               </span>
             </div>
@@ -717,16 +717,16 @@ function EmailClientMock() {
       </div>
 
       <div style={{ padding: '0 8px', display: 'flex', flexDirection: 'column', gap: 10, overflowY: 'auto', minHeight: 0 }}>
-        <div style={{ fontSize: 13, fontWeight: 500, color: '#5DCAA5' }}>{selected.sender}</div>
+        <div style={{ fontSize: 13, fontWeight: 500, color: '#17805f' }}>{selected.sender}</div>
         <div style={{ fontSize: 11, color: '#ffffff', lineHeight: 1.6, opacity: 0.8 }}>
           {selected.subject}. The full thread would appear here once connected.
         </div>
         <div style={{ background: '#031a12', border: '1px solid #082e1e', borderRadius: 6, padding: '8px 10px' }}>
-          <div style={{ fontSize: 9, fontWeight: 500, color: '#5DCAA5', marginBottom: 4 }}>AI suggestion</div>
+          <div style={{ fontSize: 9, fontWeight: 500, color: '#17805f', marginBottom: 4 }}>AI suggestion</div>
           <div style={{ fontSize: 10, color: '#ffffff', opacity: 0.7 }}>This message appears to need a response within 24 hours.</div>
         </div>
         <div style={{ display: 'flex', gap: 6, marginTop: 'auto' }}>
-          <button style={{ fontSize: 10, background: '#1D9E75', color: '#fff', border: 'none', borderRadius: 5, padding: '4px 10px', cursor: 'pointer' }}>Reply</button>
+          <button style={{ fontSize: 10, background: '#17805f', color: '#fff', border: 'none', borderRadius: 5, padding: '4px 10px', cursor: 'pointer' }}>Reply</button>
           <button style={{ fontSize: 10, background: '#1a1a1a', color: '#999999', border: 'none', borderRadius: 5, padding: '4px 10px', cursor: 'pointer' }}>Archive</button>
         </div>
       </div>
@@ -775,7 +775,7 @@ export function ResponseStats() {
       {stats.map((s) => (
         <div key={s.label} style={{ textAlign: 'center' }}>
           <div style={{ fontSize: 10, color: '#666666', marginBottom: 4 }}>{s.label}</div>
-          <div style={{ fontSize: 22, fontWeight: 500, color: '#5DCAA5' }}>{s.value}</div>
+          <div style={{ fontSize: 22, fontWeight: 500, color: '#17805f' }}>{s.value}</div>
         </div>
       ))}
     </div>
@@ -821,8 +821,8 @@ export function UnreadSummary() {
 
   const buckets = [
     { key: 'urgent', label: 'Urgent', count: urgent, color: '#e55' },
-    { key: 'opportunity', label: 'Opportunity', count: opportunity, color: '#5DCAA5' },
-    { key: 'canWait', label: 'Can wait', count: canWait, color: '#1D9E75' },
+    { key: 'opportunity', label: 'Opportunity', count: opportunity, color: '#17805f' },
+    { key: 'canWait', label: 'Can wait', count: canWait, color: '#17805f' },
     { key: 'untriaged', label: 'Untriaged', count: untriaged, color: '#444' },
     { key: 'promo', label: 'Promo', count: promo, color: '#3a2e6e' },
   ]
@@ -831,7 +831,7 @@ export function UnreadSummary() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 12 }}>
-        <span style={{ fontSize: 28, fontWeight: 500, color: '#5DCAA5' }}>{totalUnread}</span>
+        <span style={{ fontSize: 28, fontWeight: 500, color: '#17805f' }}>{totalUnread}</span>
         <span style={{ fontSize: 12, color: '#999' }}>unread across {snapshot?.threadsActive ?? '—'} threads</span>
       </div>
 
@@ -900,7 +900,7 @@ export function PriorityBreakdown() {
     { name: 'Opportunity', value: source.opportunity },
     { name: 'Can wait', value: source.canWait },
   ]
-  const COLORS = ['#1D9E75', '#5DCAA5', '#0F6E56']
+  const COLORS = ['#17805f', '#17805f', '#0F6E56']
   return (
     <div>
       <ResponsiveContainer width="100%" height={160}>

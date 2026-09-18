@@ -30,7 +30,7 @@ export function OrderStats() {
       {stats.map((s) => (
         <div key={s.label} style={{ textAlign: 'center' }}>
           <div style={{ fontSize: 10, color: '#666666', marginBottom: 4 }}>{s.label}</div>
-          <div style={{ fontSize: 22, fontWeight: 500, color: '#85B7EB' }}>{s.value}</div>
+          <div style={{ fontSize: 22, fontWeight: 500, color: '#2173c5' }}>{s.value}</div>
         </div>
       ))}
     </div>
@@ -55,7 +55,7 @@ export function Products() {
           <div style={{ height: 30, background: 'rgba(255,255,255,0.03)', borderRadius: 4, marginBottom: 6 }} />
           <div style={{ fontSize: 11, color: '#ffffff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 3 }}>
-            <span style={{ fontSize: 12, fontWeight: 500, color: '#378ADD' }}>{p.price}</span>
+            <span style={{ fontSize: 12, fontWeight: 500, color: '#2173c5' }}>{p.price}</span>
             <span style={{ fontSize: 9, color: p.stock < 10 ? '#e55' : '#999999' }}>{p.stock} in stock</span>
           </div>
         </div>
@@ -82,7 +82,7 @@ export function OrdersKanban() {
                 orders.map((o) => (
                   <div key={o.id} style={{ background: '#1a1a1a', border: '1px solid #272727', borderRadius: 6, padding: '6px 8px' }}>
                     <div style={{ fontSize: 10, color: '#ffffff' }}>{o.id}</div>
-                    <div style={{ fontSize: 11, fontWeight: 500, color: '#378ADD', marginTop: 2 }}>{o.amount}</div>
+                    <div style={{ fontSize: 11, fontWeight: 500, color: '#2173c5', marginTop: 2 }}>{o.amount}</div>
                   </div>
                 ))
               )}
@@ -98,7 +98,7 @@ export function RecentActivity() {
   const { snapshot } = useCommerceSnapshot()
   const live = useLiveMark(snapshot?.recentActivity)
   const items = live && live.length > 0 ? live : c.recentActivity
-  const typeColors: Record<string, string> = { order: '#378ADD', shipped: '#6a6', alert: '#e55', processing: '#85B7EB', refund: '#a66' }
+  const typeColors: Record<string, string> = { order: '#2173c5', shipped: '#6a6', alert: '#e55', processing: '#2173c5', refund: '#a66' }
   if (live && live.length === 0) {
     return <div style={{ fontSize: 11, color: '#999999' }}>No recent activity in the last 30 days.</div>
   }
@@ -134,7 +134,7 @@ export function LowStock() {
             <div style={{ fontSize: 10, color: '#999999', marginTop: 1 }}>{p.price}</div>
           </div>
           <div style={{ textAlign: 'right' }}>
-            <div style={{ fontSize: 16, fontWeight: 500, color: p.stock < 10 ? '#e55' : '#EF9F27' }}>{p.stock}</div>
+            <div style={{ fontSize: 16, fontWeight: 500, color: p.stock < 10 ? '#e55' : '#9f6414' }}>{p.stock}</div>
             <div style={{ fontSize: 9, color: '#999999' }}>remaining</div>
           </div>
         </div>
@@ -158,7 +158,7 @@ export function RevenueByProduct() {
         <YAxis dataKey="name" type="category" tick={{ fontSize: 9, fill: '#ffffff' }} axisLine={false} tickLine={false} width={80} />
         <Tooltip contentStyle={{ background: '#1a1a1a', border: '1px solid #333', borderRadius: 6, fontSize: 11 }} formatter={(value) => [`$${Number(value).toLocaleString()}`]} />
         <Bar dataKey="value" fill="#0C447C" radius={[0, 3, 3, 0]} animationDuration={400}>
-          {data.map((_, i) => <Cell key={i} fill={i === 0 ? '#378ADD' : '#0C447C'} />)}
+          {data.map((_, i) => <Cell key={i} fill={i === 0 ? '#2173c5' : '#0C447C'} />)}
         </Bar>
       </BarChart>
     </ResponsiveContainer>

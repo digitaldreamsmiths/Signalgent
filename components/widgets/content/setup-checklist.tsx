@@ -6,11 +6,11 @@ import { getSetupStatus, type SetupStatus, type SetupStep } from '@/lib/integrat
 const BORDER = 'var(--app-border)'
 const CARD = 'var(--app-card)'
 const MUTED = 'var(--app-muted)'
-const ACCENT = '#D85A30'
+const ACCENT = '#c04b24'
 
 const STATE_META = {
-  done: { color: '#1D9E75', mark: '✓' },
-  warn: { color: '#e0a060', mark: '!' },
+  done: { color: '#17805f', mark: '✓' },
+  warn: { color: '#a1601f', mark: '!' },
   todo: { color: MUTED, mark: '○' },
 } as const
 
@@ -57,7 +57,7 @@ export function SetupChecklist({ companyId, refreshKey, onAction }: {
   if (status.complete && !expanded) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, border: `1px solid ${BORDER}`, borderRadius: 8, padding: '7px 12px', background: CARD }}>
-        <span style={{ fontSize: 11, color: attention > 0 ? '#e0a060' : '#1D9E75', fontWeight: 700 }}>{attention > 0 ? '!' : '✓'}</span>
+        <span style={{ fontSize: 11, color: attention > 0 ? '#a1601f' : '#17805f', fontWeight: 700 }}>{attention > 0 ? '!' : '✓'}</span>
         <span style={{ fontSize: 11, color: 'var(--app-text-2)' }}>
           Setup complete{attention > 0 ? ` — ${attention} thing${attention === 1 ? '' : 's'} worth a look` : ''}.
         </span>
@@ -88,7 +88,7 @@ export function SetupChecklist({ companyId, refreshKey, onAction }: {
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: 'flex', gap: 6, alignItems: 'baseline', flexWrap: 'wrap' }}>
                     <span style={{ fontSize: 12, fontWeight: 600, color: s.state === 'done' ? MUTED : 'var(--app-text)' }}>{s.title}</span>
-                    {s.detail && <span style={{ fontSize: 10, color: s.state === 'warn' ? '#e0a060' : MUTED }}>{s.detail}</span>}
+                    {s.detail && <span style={{ fontSize: 10, color: s.state === 'warn' ? '#a1601f' : MUTED }}>{s.detail}</span>}
                   </div>
                   {s.state !== 'done' && (
                     <div style={{ fontSize: 11, color: 'var(--app-text-2)', marginTop: 3, lineHeight: 1.45 }}>{s.why}</div>

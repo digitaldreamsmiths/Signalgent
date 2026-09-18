@@ -94,7 +94,7 @@ export function StripeConnectionChip() {
         href={getStripeConnectUrl(companyId)}
         style={{
           fontSize: 11,
-          color: 'var(--mode-accent-text, #EF9F27)',
+          color: 'var(--mode-accent-text, #9f6414)',
           background: 'var(--mode-card-bg, #1a1a1a)',
           border: '1px solid var(--mode-card-border, #272727)',
           borderRadius: 6,
@@ -110,7 +110,7 @@ export function StripeConnectionChip() {
             width: 6,
             height: 6,
             borderRadius: '50%',
-            background: 'var(--mode-accent, #BA7517)',
+            background: 'var(--mode-accent, #9f6414)',
             display: 'inline-block',
           }}
         />
@@ -219,7 +219,7 @@ export function StripeConnectionChip() {
                   flex: 1,
                   textAlign: 'center',
                   fontSize: 11,
-                  color: 'var(--mode-accent-text, #EF9F27)',
+                  color: 'var(--mode-accent-text, #9f6414)',
                   background: 'var(--mode-card-bg, #1a1a1a)',
                   border: '1px solid var(--mode-card-border, #272727)',
                   borderRadius: 6,

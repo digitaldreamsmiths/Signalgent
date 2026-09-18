@@ -13,7 +13,7 @@ const INPUT = 'var(--app-input)'
 const TEXT = 'var(--app-text)'
 const TEXT2 = 'var(--app-text-2)'
 const MUTED = 'var(--app-muted)'
-const ACCENT = '#D85A30'
+const ACCENT = '#c04b24'
 
 
 type FormState = { id: string | null; name: string; subject: string; body: string; weight: number; active: boolean }
@@ -180,7 +180,7 @@ export function TemplatesModal({
                   <div style={{ fontSize: 10, color: MUTED, marginTop: 6, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
                     <span>{s?.assigned ?? 0} assigned</span>
                     <span>{s?.sent ?? 0} sent</span>
-                    <span style={{ color: (s?.sent ?? 0) > 0 ? '#1D9E75' : MUTED }}>reply {pct(s?.replied ?? 0, s?.sent ?? 0)}</span>
+                    <span style={{ color: (s?.sent ?? 0) > 0 ? '#17805f' : MUTED }}>reply {pct(s?.replied ?? 0, s?.sent ?? 0)}</span>
                     <span>bounce {pct(s?.bounced ?? 0, s?.sent ?? 0)}</span>
                     <span style={{ color: (s?.optout ?? 0) > 0 ? '#b04545' : MUTED }}>opt-out {pct(s?.optout ?? 0, s?.sent ?? 0)}</span>
                   </div>
@@ -191,7 +191,7 @@ export function TemplatesModal({
         )}
 
         {templates !== null && active.length === 0 && templates.length > 0 && (
-          <div style={{ fontSize: 11, color: '#e0a060', marginBottom: 10 }}>No active templates — the five built-in variants rotate until you activate one.</div>
+          <div style={{ fontSize: 11, color: '#a1601f', marginBottom: 10 }}>No active templates — the five built-in variants rotate until you activate one.</div>
         )}
 
         {/* Editor */}
@@ -236,8 +236,8 @@ export function TemplatesModal({
             </div>
 
             {risks.length > 0 && (
-              <div style={{ border: `1px solid ${BORDER}`, borderLeft: '2px solid #e0a060', borderRadius: 6, padding: '8px 10px' }}>
-                <div style={{ fontSize: 10, fontWeight: 600, color: '#e0a060', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 5 }}>Reply risk</div>
+              <div style={{ border: `1px solid ${BORDER}`, borderLeft: '2px solid #a1601f', borderRadius: 6, padding: '8px 10px' }}>
+                <div style={{ fontSize: 10, fontWeight: 600, color: '#a1601f', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 5 }}>Reply risk</div>
                 <ul style={{ margin: 0, paddingLeft: 15, fontSize: 11, color: TEXT2, lineHeight: 1.6 }}>
                   {risks.map((w) => <li key={w}>{w}</li>)}
                 </ul>

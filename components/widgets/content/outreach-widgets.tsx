@@ -47,17 +47,17 @@ const LIST_SORTS: { key: ProspectSort; label: string }[] = [
 
 const DISPO_META: Record<Disposition, { label: string; color: string }> = {
   open: { label: 'open', color: 'var(--app-muted)' },
-  replied: { label: 'replied', color: '#378ADD' },
-  interested: { label: 'interested', color: '#1D9E75' },
-  not_interested: { label: 'not interested', color: '#BA7517' },
+  replied: { label: 'replied', color: '#2173c5' },
+  interested: { label: 'interested', color: '#17805f' },
+  not_interested: { label: 'not interested', color: '#9f6414' },
   bounced: { label: 'bounced', color: '#b04545' },
   unsubscribed: { label: 'opt-out', color: '#b04545' },
 }
 
 /** Outcome buttons, in funnel order. */
 const DISPOSITIONS: { key: Disposition; label: string; color: string }[] = [
-  { key: 'interested', label: 'Interested', color: '#1D9E75' },
-  { key: 'not_interested', label: 'Not interested', color: '#BA7517' },
+  { key: 'interested', label: 'Interested', color: '#17805f' },
+  { key: 'not_interested', label: 'Not interested', color: '#9f6414' },
   { key: 'bounced', label: 'Bounced', color: '#b04545' },
   { key: 'unsubscribed', label: 'Unsubscribed', color: 'var(--app-muted)' },
 ]
@@ -184,10 +184,10 @@ function ProspectRow({ p, selected, onSelect, checked, onToggle }: { p: Outreach
         <div style={{ fontSize: 13, fontWeight: selected ? 600 : 400, color: 'var(--app-text)' }}>{p.recipient_name ?? p.domain}</div>
         <div style={{ fontSize: 11, color: MUTED, marginTop: 2 }}>{p.email}</div>
         <div style={{ display: 'flex', gap: 6, marginTop: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-          {p.needs_review ? <Pill label="review" color="#e0a060" /> : p.draft ? (p.draft.is_template ? <Pill label="template" color={MUTED} /> : <Pill label="personalized" color="#1D9E75" />) : null}
+          {p.needs_review ? <Pill label="review" color="#a1601f" /> : p.draft ? (p.draft.is_template ? <Pill label="template" color={MUTED} /> : <Pill label="personalized" color="#17805f" />) : null}
           {p.draft && !p.draft.clean && <Pill label="drift" color="#b04545" />}
-          {p.draft?.status === 'approved' && <Pill label="approved" color="#1D9E75" />}
-          {p.draft?.status === 'exported' && <Pill label="exported" color="#378ADD" />}
+          {p.draft?.status === 'approved' && <Pill label="approved" color="#17805f" />}
+          {p.draft?.status === 'exported' && <Pill label="exported" color="#2173c5" />}
           {p.draft?.send?.status === 'queued' && <Pill label="queued" color={ACCENT} />}
           {p.drafts.length > 1 && <Pill label={`${p.drafts.length} touches`} color={MUTED} />}
           {p.disposition !== 'open' && <Pill label={DISPO_META[p.disposition].label} color={DISPO_META[p.disposition].color} />}
@@ -496,7 +496,7 @@ function sendLabel(send: NonNullable<OutreachDraftView['send']>): string {
 }
 
 function sendColor(status: string): string {
-  if (status === 'sent') return '#378ADD'
+  if (status === 'sent') return '#2173c5'
   if (status === 'failed') return '#b04545'
   return ACCENT
 }
@@ -522,7 +522,7 @@ function TouchCard({ draft, companyId, onChanged }: { draft: OutreachDraftView; 
   )
 
   const statusColor =
-    draft.status === 'approved' ? '#1D9E75' : draft.status === 'rejected' ? '#b04545' : draft.status === 'edited' ? '#BA7517' : draft.status === 'exported' ? '#378ADD' : ACCENT
+    draft.status === 'approved' ? '#17805f' : draft.status === 'rejected' ? '#b04545' : draft.status === 'edited' ? '#9f6414' : draft.status === 'exported' ? '#2173c5' : ACCENT
 
   const warnings = hygieneWarnings(draft.subject, draft.body)
   const risks = replyRiskWarnings(draft.subject, draft.body)
@@ -532,10 +532,10 @@ function TouchCard({ draft, companyId, onChanged }: { draft: OutreachDraftView; 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--app-text-2)' }}>{touchLabel(draft.step)}</span>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-          {draft.is_template ? <Pill label="template" color={MUTED} /> : <Pill label="personalized" color="#1D9E75" />}
+          {draft.is_template ? <Pill label="template" color={MUTED} /> : <Pill label="personalized" color="#17805f" />}
           {!draft.clean && <Pill label="drift" color="#b04545" />}
-          {warnings.length > 0 && <Pill label="hygiene" color="#e0a060" />}
-          {risks.length > 0 && <Pill label="reply risk" color="#e0a060" />}
+          {warnings.length > 0 && <Pill label="hygiene" color="#a1601f" />}
+          {risks.length > 0 && <Pill label="reply risk" color="#a1601f" />}
           {draft.synthesis_confidence != null && <span style={{ fontSize: 10, color: MUTED }}>fit {draft.synthesis_confidence.toFixed(2)}</span>}
           <Pill label={draft.status} color={statusColor} />
         </div>
@@ -546,11 +546,11 @@ function TouchCard({ draft, companyId, onChanged }: { draft: OutreachDraftView; 
       )}
 
       {warnings.length > 0 && (
-        <div style={{ fontSize: 11, color: '#e0a060' }}>Deliverability: {warnings.join(' · ')}</div>
+        <div style={{ fontSize: 11, color: '#a1601f' }}>Deliverability: {warnings.join(' · ')}</div>
       )}
 
       {risks.length > 0 && (
-        <div style={{ fontSize: 11, color: '#e0a060' }}>Reply risk: {risks.join(' · ')}</div>
+        <div style={{ fontSize: 11, color: '#a1601f' }}>Reply risk: {risks.join(' · ')}</div>
       )}
 
       {editing ? (
@@ -606,14 +606,14 @@ function TouchCard({ draft, companyId, onChanged }: { draft: OutreachDraftView; 
           </>
         ) : (
           <>
-            <button disabled={busy} onClick={() => act(() => approveDraft(companyId, draft.id))} style={btn('#1D9E75')}>Approve</button>
+            <button disabled={busy} onClick={() => act(() => approveDraft(companyId, draft.id))} style={btn('#17805f')}>Approve</button>
             <button disabled={busy} onClick={() => setEditing(true)} style={btnGhost()}>Edit</button>
             <button disabled={busy} onClick={() => act(() => rejectDraft(companyId, draft.id))} style={btnGhost('#b04545')}>Reject</button>
             {(draft.status === 'approved' || draft.status === 'edited') && (!draft.send || draft.send.status === 'failed' || draft.send.status === 'canceled') && (
               <button disabled={busy} onClick={() => act(() => queueDraftSend(companyId, draft.id))} style={btn(ACCENT)}>Queue to send</button>
             )}
             {(draft.status === 'approved' || draft.status === 'edited') && (
-              <button disabled={busy} onClick={() => act(() => markExported(companyId, [draft.id]))} style={btnGhost('#378ADD')}>Mark as sent</button>
+              <button disabled={busy} onClick={() => act(() => markExported(companyId, [draft.id]))} style={btnGhost('#2173c5')}>Mark as sent</button>
             )}
             <button
               onClick={() => {
@@ -730,7 +730,7 @@ function DraftDetail({ prospect, companyId, senderEmail, onChanged }: { prospect
 
       {/* Inbound reply/bounce preview (snippet only — full thread lives in Gmail). */}
       {(prospect.reply_snippet || prospect.reply_from) && (
-        <div style={{ border: `1px solid ${BORDER}`, borderLeft: `3px solid ${prospect.disposition === 'bounced' || prospect.disposition === 'unsubscribed' ? '#b04545' : '#378ADD'}`, borderRadius: 8, padding: 10, background: 'var(--app-card-2)' }}>
+        <div style={{ border: `1px solid ${BORDER}`, borderLeft: `3px solid ${prospect.disposition === 'bounced' || prospect.disposition === 'unsubscribed' ? '#b04545' : '#2173c5'}`, borderRadius: 8, padding: 10, background: 'var(--app-card-2)' }}>
           <div style={{ fontSize: 10, fontWeight: 600, color: MUTED, textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 6 }}>
             {prospect.disposition === 'bounced' ? 'Bounce notice' : prospect.disposition === 'unsubscribed' ? 'Opt-out message' : 'Reply received'}
             {prospect.disposition_at && ` · ${fmtWhen(prospect.disposition_at)}`}
@@ -765,7 +765,7 @@ function DraftDetail({ prospect, companyId, senderEmail, onChanged }: { prospect
           draft is approved/sent) so an uncertain match stays fixable later. */}
       {prospect.skip_stage === 'enrich' && (prospect.skip_reason ?? '').startsWith('low_confidence') && (
         <div style={{ border: `1px solid ${BORDER}`, borderRadius: 8, padding: 10, background: 'var(--app-card-2)' }}>
-          <div style={{ fontSize: 11, color: '#e0a060', marginBottom: 6 }}>
+          <div style={{ fontSize: 11, color: '#a1601f', marginBottom: 6 }}>
             Uncertain match. Type the correct company name (as it appears in federal records) to re-resolve.
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
@@ -936,7 +936,7 @@ export function OutreachWorkspace({ section }: { section: Section }) {
               {(filter === 'review' || filter === 'templates') && current.length > 0 && (
                 <button
                   onClick={() => handleApproveAll(current.map((p) => p.draft!.id))}
-                  style={btn('#1D9E75')}
+                  style={btn('#17805f')}
                   title={`Approve the ${current.length} draft(s) loaded${scopeNote}`}
                 >
                   {partial ? 'Approve loaded' : 'Approve all'} ({current.length})
@@ -971,7 +971,7 @@ export function OutreachWorkspace({ section }: { section: Section }) {
                 </button>
               )}
               {filter === 'approved' && selectedDraftIds.size > 0 && (
-                <button onClick={() => { handleMarkExported([...selectedDraftIds]); setSelectedDraftIds(new Set()) }} style={btnGhost('#378ADD')}>
+                <button onClick={() => { handleMarkExported([...selectedDraftIds]); setSelectedDraftIds(new Set()) }} style={btnGhost('#2173c5')}>
                   Mark as sent
                 </button>
               )}

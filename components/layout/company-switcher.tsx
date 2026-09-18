@@ -159,7 +159,7 @@ export function CompanySwitcher() {
                       )}
                     </div>
                     {isActive && (
-                      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#5DCAA5" strokeWidth="1.5">
+                      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#17805f" strokeWidth="1.5">
                         <polyline points="3,7 6,10 11,4" />
                       </svg>
                     )}

@@ -6,7 +6,7 @@
  * chrome was hoisted so neither file has to import the other.
  */
 
-export const ACCENT = '#D85A30'
+export const ACCENT = '#c04b24'
 export const BORDER = 'var(--app-border)'
 export const CARD = 'var(--app-card)'
 export const MUTED = 'var(--app-muted)'

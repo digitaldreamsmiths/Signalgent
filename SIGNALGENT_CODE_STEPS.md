@@ -2637,3 +2637,158 @@ Delivery notices are classified by severity. **Hard** (dead/closed/nonexistent m
 - `bounceKind` exercised directly against seven representative DSNs — all pass. Notably `5.4.1 Recipient address rejected: Access denied` classifies **hard** on the enhanced code alone with no keyword match, which is the "ambiguous stays hard" guarantee; `452 4.2.2 over quota` and a bare `421 service temporarily unavailable` both classify soft.
 - "Scan replies" run in the app: the new code path returns and renders its toast ("No new replies or bounces (no open threads)") — the `softBounced === 0` branch. A live soft bounce could not be produced on demand; the workspace had no open threads at the time.
 - `tsc` clean, `next build` clean, eslint clean on all four touched files.
+
+## Session 49 — Rebuild Signalgent as an email and social workspace
+
+Written up retroactively in Session 51 from commit `797be48` (2026-09-15, merged as `178f4df`). The commit predates this entry, so "Local verification" below records what was verified when the entry was written, not on the day the code landed.
+
+**Goal**: Replace the six-mode "Business OS" dashboard with a single light-themed workspace for one thing: email and social content for a small business. Eight sections (Overview, Inbox, Contacts, Email campaigns, Social studio, Calendar, Reports, Connections) share one shell, one in-memory data snapshot, and one editor. The Gmail integration becomes a real mailbox (list, thread, archive, compose, reply) rather than a triage summary, and it supports more than one connected mailbox per company. Cold outreach stays exactly where it was, reachable from the new sidebar as "Cold outreach".
+
+### Locked scope
+
+- **In**: the new shell and eight section pages; a `platform_*` data layer (content, contacts, campaigns, mail operations) with row-level security; multi-account Gmail with explicit account selection per mailbox operation; a fictional sample workspace at `/preview/*` that needs no login; light theme as the default; the auth proxy protecting the new routes.
+- **Not in**: publishing to any social channel (LinkedIn and Pinterest connect identity only; Instagram, Facebook and Outlook are "Not available yet"); engagement or conversion reporting (Reports shows outreach delivery counts and content-by-channel only); migrating outreach prospects into workspace contacts (Contacts links out to `/outreach/contacts` instead); any dark-theme treatment of the new CSS.
+
+### Architectural choices
+
+- **Old modes hidden behind the new shell, not deleted.** `app/(app)/layout.tsx` went from a 59-line client layout (ModeProvider + Topbar + command palette) to a 10-line server component that checks `db.auth.getUser()` and renders `AppWorkspace`. `AppWorkspace` still wraps everything in `ModeProvider`, `CompanyProvider` and `ConnectedAccountsProvider`, so `/outreach/*` and `/settings/*` keep working unchanged inside the new sidebar. Rationale: outreach is live and sending; rebuilding the shell must not touch it.
+- **One client-side snapshot per company.** `PlatformProvider` (keyed by `activeCompany.id` so switching companies remounts it) loads `readWorkspace(companyId)` once and holds content, contacts, campaigns, accounts and four outreach counts in memory. Saves patch the snapshot optimistically after the server action returns. Rationale: the eight pages are views over the same small dataset; refetching per page would multiply Supabase round trips for no benefit.
+- **Server actions return `Result<T>`, never throw.** Every action in `lib/platform/actions.ts` and `lib/platform/mail.ts` wraps its body in try/catch and returns `{ ok, data } | { ok, error }`. `failure()` maps Postgres "relation does not exist" / PostgREST schema-cache errors to a single friendly message ("The new workspace storage is not installed yet. Your existing outreach is still available.") because migrations are applied to prod out-of-band and code can ship before the tables exist.
+- **Validation runs twice from one module.** `lib/platform/validation.ts` is imported by both the client provider (before the action call, so the editor can show the message inline) and the server actions (so nothing bypasses it). The rules mirror the CHECK constraints in the migration: 1–180 char titles, at least one supported channel, `planned` requires `planned_at`, `subscribed` requires a non-empty consent note, HTTPS-only image URLs.
+- **Gmail becomes multi-account by changing the unique key.** `connected_accounts` unique constraint moves from `(company_id, service)` to `(company_id, service, account_identifier)`; legacy rows get `account_identifier = service` so they stay unique. `getAccount`, `loadGoogleCredentials`, `loadGmailCredentials` and `markError` all take an optional `accountId`; without one they return the oldest row (ordered by `created_at, id`), which keeps the outreach sender on the mailbox it has always used. Every mailbox operation in `lib/platform/mail.ts` requires an explicit `accountId`.
+- **Sends are claimed before they go to Google.** `sendMail` inserts a `platform_mail_operations` row with `status='sending'` under a client-generated UUID before calling Gmail, updates it to `sent` afterwards, and marks it `uncertain` if anything throws after the claim. A duplicate insert (same operation id) short-circuits to the previous result. Rationale: a retry after a network error must never produce a second copy of a customer email.
+- **Replies are addressed from the thread, not the form.** For a reply, `sendMail` re-reads the thread with metadata headers, targets the latest non-SENT message, takes `Reply-To` (falling back to `From`) as the recipient, forces the `Re:` subject, and sets `In-Reply-To` / `References` so Gmail threads it. The compose form's `to` is ignored for replies.
+- **Preview workspace is the same components with fictional data.** `app/preview/[[...section]]/page.tsx` renders `PlatformProvider preview` + `WorkspaceShell` + `WorkspacePage` with `lib/platform/preview.ts` data ("Northline Studio", example.com contacts). Edits persist only to `sessionStorage['signalgent-preview-v1']`; every save path checks `preview` and never calls a server action. `href()` prefixes links with `/preview` so navigation stays inside the sample.
+- **Tokens are encrypted on the generic OAuth callback too.** `app/api/integrations/[service]/callback/route.ts` now calls `requireCompanyAccess` and stores `encryptNullable(access_token/refresh_token)`, matching the Gmail path. `ConnectedAccountsProvider` stops selecting `*` and reads an explicit column list that excludes both tokens (`AccountView`).
+- **Outreach send worker claims atomically.** The claim update adds `.eq('status','queued').select('id').maybeSingle()` and `continue`s when nothing came back, so two overlapping cron runs cannot both send the same queued row.
+- **Theme default flipped to light.** `app/layout.tsx` `defaultTheme` dark → light. `workspace.css` hard-codes white surfaces and has no dark variant, so this is effectively a light-only app now; `MODES` tokens were left with their dark values (addressed in Session 51).
+
+### New / extended infrastructure
+
+| File | Purpose |
+|---|---|
+| `components/platform/app-workspace.tsx` | Client wrapper: providers + company gate ("Opening your business…") + `PlatformProvider` keyed by company + `WorkspaceShell` with company switcher and sign-out. |
+| `components/platform/provider.tsx` | `PlatformProvider` / `usePlatform`: snapshot state, `refresh`, `persistContent/Contact/Campaign`, editor state, 5-second notices, preview persistence. |
+| `components/platform/shell.tsx` | Sidebar (NAV + "Cold outreach" link), topbar with breadcrumb and Create, search dialog over pages and contacts, mobile drawer, toast, `Editor` mount. |
+| `components/platform/pages.tsx` | `WorkspacePage` switch over the eight sections plus shared `ChannelBadges`, `Status`, `Empty`. |
+| `components/platform/editor.tsx` | One `<dialog>` editor for content, contact and campaign; channel checkboxes; validation errors inline. |
+| `components/platform/inbox.tsx` | Mailbox picker, Inbox/Unread/Sent segmented control, Gmail search, paged list, thread pane, archive, compose/reply dialog with client-generated operation id. |
+| `components/platform/workspace.css` | All workspace styling, plain CSS, light only. |
+| `lib/platform/types.ts` | `ContentItem`, `Contact`, `Campaign`, `ChannelAccount`, `WorkspaceData`, `Result`, `NAV`, `CHANNELS`, `EMPTY_WORKSPACE`. |
+| `lib/platform/actions.ts` | `readWorkspace`, `saveContent`, `saveContact`, `saveCampaign` server actions (`'use server'`). |
+| `lib/platform/mail.ts` / `mail-types.ts` | `readMail`, `readMailThread`, `updateMailThread`, `sendMail` against Gmail with bounded concurrency (5 metadata fetches at a time). |
+| `lib/platform/validation.ts` | Shared field rules + `validUuid`. |
+| `lib/platform/database.ts` | `PlatformTables` type merged into `Database['public']['Tables']`. |
+| `lib/platform/preview.ts` | `previewWorkspace()` fictional data. |
+| `app/(app)/{today,inbox,contacts,email,social,calendar,reports,connections}/page.tsx` | Two-line pages that render `WorkspacePage section="…"`. |
+| `app/preview/[[...section]]/page.tsx` | Login-free sample workspace; 404s on unknown or nested sections. |
+| `supabase/migrations/20260915000000_communications_workspace.sql` | Unique-key change on `connected_accounts`; `platform_campaigns`, `platform_contacts` (unique on `lower(email)` per company), `platform_content`, `platform_mail_operations`; RLS policy `workspace_access` on all four via `workspace_members`. |
+
+### Files modified
+
+| File | Change |
+|---|---|
+| `app/(app)/layout.tsx` | Client layout → server auth gate + `AppWorkspace`. |
+| `app/layout.tsx` | Title "Signalgent — Email & Social"; `defaultTheme="light"`. |
+| `app/(auth)/login/page.tsx`, `app/api/auth/callback/route.ts`, `app/onboarding/page.tsx` | Post-auth destination `/outreach` → `/today`. |
+| `lib/supabase/middleware.ts` | Root redirect → `/today`; protected paths gain the eight workspace routes. |
+| `lib/integrations/accounts.ts` | `getAccount(…, accountId?)` ordered by `created_at, id`; upsert on the new three-column key; `markError` scoped by row id. |
+| `lib/integrations/google/tokens.ts`, `lib/integrations/gmail/tokens.ts` | `accountId` threaded through credential loading and refresh. |
+| `lib/integrations/gmail/threadContext.ts` | `toMessageContext` exported for the thread pane. |
+| `app/api/integrations/[service]/callback/route.ts` | Company access check; encrypted token storage; `account_identifier ?? serviceId`. |
+| `contexts/connected-accounts-context.tsx` | Explicit column list, no tokens on the client. |
+| `lib/integrations/outreach/send/worker.ts` | Atomic queued-row claim. |
+| `lib/types/database.types.ts` | `PlatformTables` merged in. |
+| `next.config.ts` | `serverExternalPackages: ['@anthropic-ai/sdk']`. |
+
+### Local verification
+
+Not recorded at the time. See Session 51 for the smoke test that covered all eight sections in both the sample and the real workspace, and for confirmation that the migration is applied to prod.
+
+### Residuals heading into Session 50
+
+- **Reconnecting an already-linked mailbox** relies on the new three-column unique key; on a database that has not run the migration the upsert throws.
+- **Every OAuth failure surfaces raw error text** in the redirect URL and nothing in the new shell reads it.
+- **`MODES` tokens are still dark-theme values** (`cardBg #1a1a1a`, `accentText #F0997B`) applied to a light app.
+- **`app/(app)/outreach/page.tsx` still does a server `redirect()`** under the new async layout.
+
+## Session 50 — Gmail reconnect compatibility and connection error surfacing
+
+Written up retroactively in Session 51 from commit `a3aff2c` (2026-09-15, merged as `94883e1`).
+
+**Goal**: Make "Connect another account" and "reconnect the same mailbox" work whether or not the Session 49 migration has been applied, and replace raw error strings in the callback redirect with stable reason codes that the new shell can turn into a sentence.
+
+### Changes
+
+| File | Change |
+|---|---|
+| `lib/integrations/accounts.ts` | `upsertAccount` no longer uses `.upsert(…, { onConflict: 'company_id,service,account_identifier' })`, which fails with `42P10` ("no unique or exclusion constraint") on the legacy schema. It now does find → update, else insert; on a `23505` duplicate it re-finds and updates (a race with another callback), and if the duplicate came from the legacy `(company_id, service)` key it throws `ACCOUNT_MIGRATION_REQUIRED` rather than let a second mailbox overwrite the first. Updates keep the existing `refresh_token` when Google did not send a new one (Google only sends it on first consent). |
+| `lib/integrations/gmail/connection-errors.ts` (new) | `GMAIL_CONNECTION_ERRORS`: eight reason codes (`cancelled`, `invalid_state`, `unauthorized`, `configuration`, `exchange`, `profile`, `migration`, `save`) → user sentences. `gmailConnectionError(err, fallback)` classifies: `ACCOUNT_MIGRATION_REQUIRED` / `42P10` → `migration`; missing `OAUTH_STATE_SECRET`, `INTEGRATION_ENCRYPTION_KEY`, `GOOGLE_CLIENT_ID/SECRET` → `configuration`; else the caller's fallback. |
+| `app/api/integrations/gmail/callback/route.ts` | Redirect target `/settings/connections` → `/connections`. Every branch that previously put `err.message` or Google's `error_description` in `?reason=` now sends a code. Two `throw err` paths (unexpected state error, unexpected auth error) now redirect instead of 500ing. Profile fetch failure used to save the account as `emailAddress: 'unknown'`; it now aborts with `reason=profile` and keeps the existing account. `saveGmailCredentials` + snapshot invalidation are wrapped so a save failure logs `[gmail:callback] { stage: 'save', reason }` and redirects with `reason=save`. |
+| `app/api/integrations/gmail/connect/route.ts` | Non-auth failures (missing env, etc.) used to return JSON 500 to a browser navigation; they now redirect to `/connections?integration=gmail&status=error&reason=configuration` and log `[gmail:connect]`. |
+| `components/platform/connection-notice.tsx` (new) | Reads `integration`, `status`, `reason` from the URL; renders `role="status"` on success and `role="alert"` with the mapped sentence otherwise (unknown codes fall back to a generic retry message). |
+| `components/platform/shell.tsx` | Mounts `ConnectionNotice` inside `Suspense` (it uses `useSearchParams`). |
+| `lib/platform/actions.ts` | New `readWorkspaceAccounts(companyId)` reading only `connected_accounts`. |
+| `components/platform/provider.tsx` | When `readWorkspace` fails (typically: tables not installed), still call `readWorkspaceAccounts` so Inbox and Connections work against a pre-migration database. |
+
+### Verification
+
+Not recorded at the time. Session 51 confirmed a connected Gmail account lists, opens threads and switches folders in the real workspace, and that the migration is applied, so the `migration` code path is no longer reachable on prod.
+
+### Residuals heading into Session 51
+
+- Same as Session 49's last two items: dark `MODES` tokens on a light app, and the server `redirect()` in the outreach index page.
+- **Nine legacy pending outreach templates** still need approving, and `APP_URL` still needs repointing for tracking links (carried since Session 29).
+
+## Session 51 — Workspace smoke test, contrast pass, checkbox labels, outreach index crash
+
+**Goal**: First end-to-end check of the Session 49 rebuild and the Session 50 Gmail fix in the running app, against both the sample workspace and the real SourceGent workspace, then fix what it turned up: a crash on every hard load of `/outreach`, text that was too light to read across the new shell and the outreach pages, and unnamed channel checkboxes in the content editor. Sessions 49 and 50 were also written up (they had shipped without changelog entries).
+
+### Locked scope
+
+- **In**: the smoke test itself; the three defects above; the retroactive Session 49/50 entries.
+- **Not in**: sending, replying or archiving against the real mailbox (would change real mail); type-size changes (9–11px labels are small but that is a design decision, not a defect); the dark-theme block in `globals.css`; deleting the test contact (no delete path exists in the editor).
+
+### What the smoke test covered before any change
+
+- **Sample workspace** (`/preview/*`, no login): all eight sections render; clicking an inbox message opens the thread with Archive and Reply; editing a post and saving updates the card and shows the "Content saved" toast; Connections marks Outlook, Instagram and Facebook "Not available yet".
+- **Real workspace** (logged in as the SourceGent company, Gmail `thedvegroup@gmail.com` connected): all eight sections render with no server-side errors; Inbox lists real mail, the Sent segment switches folders, a thread opens; Compose opens a "New email" dialog from the connected address (closed without sending); Reports shows 1,277 sent / 282 queued / 430 failed, matching the Overview tile.
+- **Migration confirmation**: a contact saved through the editor was still present after a full reload, so `platform_contacts` exists on prod and RLS admits the workspace member. Side effect: a row named "Test Contact (delete me)" (`test-contact@example.com`, "Smoke Test Co") now exists in the real workspace.
+
+### Defects found
+
+1. **`/outreach` crashed on every hard load** with "This page couldn't load". The dev overlay's stack: `updateWorkInProgressHook → updateMemo → useMemo → Router` (in `node_modules/next/dist/client`, the app router) `→ AppRouter → ServerRoot`, message "Rendered more hooks than during the previous render." Reproduced 3 of 3 times on a full page load of `/outreach`; never on a client-side navigation to `/outreach`; never on a hard load of `/outreach/pipeline`. So it is not a hook in app code. `app/(app)/outreach/page.tsx` called a server `redirect('/outreach/pipeline')`, and since Session 49 the app layout above it is async (it awaits `db.auth.getUser()`), so the shell has already started streaming when the redirect is thrown. Next 16.2.3 then replays the redirect on the client during hydration and its Router mismatches its own hook count. The dev overlay labels this Next version "(stale)".
+2. **Low-contrast text.** A page script that computes the WCAG ratio of every visible text node against its nearest opaque ancestor found 14 distinct styles under 4.5:1 on `/today` alone. In `workspace.css`: breadcrumb separator `#c0c8d3` 1.69:1, stat captions `#9aa5b5` 2.49:1, sidebar group labels `#99a2b2` 2.57:1, empty-state copy `#8e9eb5` 2.72:1, the `--sg-muted` token itself `#738096` 3.99:1; 84 `color:` declarations in total were below 4.5:1. On the outreach pages the problem was different: `MODES` in `lib/modes.ts` still held dark-theme values applied to the light shell (`accentText #F0997B` 2.20:1, `accent #D85A30` 3.87:1, `cardBg #1a1a1a`), the pause banner amber `#e0a060` was 2.24:1, the triage green `#1D9E75` 3.39:1, the commerce blue `#378ADD` 3.59:1, and `--app-faint #9a9a96` 2.82:1.
+3. **Channel checkboxes had no accessible name.** The accessibility tree reported the five checkboxes in the content editor as `checkbox "on"`.
+
+### Changes
+
+| File | Change |
+|---|---|
+| `next.config.ts` | `redirects()` returns `/outreach → /outreach/pipeline` (307, `permanent: false`). Redirects are checked before the filesystem, so the response is a real 307 and nothing renders. Comment in the file records why. |
+| `app/(app)/outreach/page.tsx` | Deleted. |
+| `components/platform/workspace.css` | 84 `color:` values darkened along their own hue until ≥4.8:1 on white (script: convert to HSL, step lightness down 1% until the target; 4.8 rather than 4.5 because many surfaces are faintly tinted). The regex matches `color:` and `--sg-muted:` only, not `border-color:`, so borders and backgrounds are untouched; `#fff`/`white` skipped because they sit on dark fills (primary button, toast, badges). `--sg-muted` `#738096 → #647186`; the editor's override `#8b9bb1 → #5e728c`. Two colours on the tinted focus panel (`#e9f0fb`) were still 4.2–4.3:1 after that pass and were set by hand: `.sg-focus-copy p → #4f6685` (5.13:1 on the panel), `.sg-focus-tag → #48638d` (5.32:1). |
+| `lib/modes.ts` | Per-mode `accent`/`accentText` → `#c04b24` (outreach, marketing), `#17805f` (communications), `#9f6414` (finance), `#2173c5` (commerce), `#507c1c` (analytics), `#6a5aec` (dashboard); all ≥4.8:1 on white. `cardBg → #ffffff`, `cardBorder → #e4e3df` on every mode. `mutedText`/`subtleText` left as they were (dark on white, fine). |
+| 29 files under `components/` and `lib/` | The same 13 literals replaced wherever they were hard-coded rather than read from `MODES`: `const ACCENT = '#D85A30'` in seven outreach modules, the `#e0a060` banners in `outreach-chrome.tsx` and `templates-modal.tsx`, triage colours in `reply-inbox.tsx`, stage colours in `lib/integrations/outreach/stage.ts`, the avatar palette in `lib/company-avatar.ts`, the `var(--mode-…, #fallback)` fallbacks in the six connection chips, and the hidden-mode widgets. Pure string replacement; no logic touched. |
+| `app/globals.css` | Light `--app-faint` `#9a9a96 → #71716d` (4.90:1). The `.dark` block is unchanged. |
+| `components/platform/editor.tsx` | `aria-label={channel.label}` on each channel checkbox. |
+| `SIGNALGENT_CODE_STEPS.md` | Sessions 49 and 50 written retroactively from their commits. |
+
+### Local verification
+
+- Hard load of `/outreach` now answers 307 and lands on `/outreach/pipeline` with the Outreach heading; the console has no "Rendered more hooks" entry (it had one per load before).
+- Contrast scan on the real `/today`: 52 visible text nodes, 0 below 4.5:1 after the focus-panel adjustment (14 distinct offenders before, lowest 1.69:1). A second scan after the focus-panel adjustment confirmed 0 of 52 below 4.5:1 (the two values compute to 5.13:1 and 5.32:1 on `#e9f0fb`).
+- Content editor accessibility tree reads `checkbox "Email"`, `"LinkedIn"`, `"Instagram"`, `"Facebook"`, `"Pinterest"`.
+- `next typegen` + `tsc --noEmit` clean. Note for future route deletions: after `git rm` of the page, the running dev server's Turbopack cache kept the old endpoint and panicked on every request ("Failed to write app endpoint /(app)/outreach/page … AppPageLoaderTree no longer exists"); a plain restart did not clear it, `rm -rf .next` plus restart did.
+- eslint on the touched files: clean except a pre-existing `react-hooks/set-state-in-effect` error at line 57 (`useEffect(() => { load() }, [companyId])`) of `components/widgets/content/templates-modal.tsx`, which this session did not touch.
+- Nothing was committed; the working tree holds all of the above plus the uncommitted `.claude/launch.json` addition (a second dev-server entry pointing at the proposalforge checkout, which is a local path and should not be committed).
+
+### Residuals heading into Session 52
+
+- **"Test Contact (delete me)"** must be removed from `platform_contacts` for the SourceGent company directly in Supabase; the editor has no delete.
+- **Three `400` console errors on the first `/today` load after login.** Not from the Next server (no server-side 400s logged); a client-side call, most likely Supabase auth. Cosmetic so far.
+- **Type sizes.** Contrast is fixed; the 9px/10px captions are still small.
+- **Next 16.2.3 is flagged stale** by the dev overlay. The Router hydration bug behind defect 1 may be fixed upstream; until upgraded, do not put a server `redirect()` in any page under `app/(app)`.
+- **`MODES.mutedText` / `subtleText`** were not re-tuned for the light theme.
+- **Pre-existing lint error** `react-hooks/set-state-in-effect` at `templates-modal.tsx:57`.
+- Carried: repoint `APP_URL` for tracking links; approve the nine legacy pending templates.

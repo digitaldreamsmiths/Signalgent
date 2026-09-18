@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation'
 import { SECTIONS, SECTION_HREF, useOutreach, type Section } from '@/contexts/outreach-context'
 
 const BORDER = 'var(--app-border)'
-const ACCENT = '#D85A30'
+const ACCENT = '#c04b24'
 
 export { SECTION_HREF }
 

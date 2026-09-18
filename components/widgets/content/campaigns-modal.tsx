@@ -10,7 +10,7 @@ const CARD = 'var(--app-card)'
 const INPUT = 'var(--app-input)'
 const TEXT = 'var(--app-text)'
 const MUTED = 'var(--app-muted)'
-const ACCENT = '#D85A30'
+const ACCENT = '#c04b24'
 
 const labelStyle: React.CSSProperties = { fontSize: 10, fontWeight: 600, color: MUTED, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4, display: 'block' }
 const inputStyle: React.CSSProperties = { width: '100%', background: INPUT, border: `1px solid ${BORDER}`, borderRadius: 6, color: TEXT, fontSize: 12, padding: '7px 9px' }
@@ -52,7 +52,7 @@ function CampaignRow({ campaign, stats, companyId, onChanged, onError }: {
         <button
           disabled={busy}
           onClick={() => patch({ status: archived ? 'active' : 'archived' })}
-          style={btnGhost(archived ? '#1D9E75' : MUTED)}
+          style={btnGhost(archived ? '#17805f' : MUTED)}
           title={archived ? 'Reactivate — sequences resume per its settings' : 'Archive — stops this campaign’s follow-up sequences'}
         >
           {archived ? 'Restore' : 'Archive'}
