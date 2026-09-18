@@ -48,7 +48,7 @@ export default function SignupPage() {
     <div>
       <h2 className="text-lg font-semibold text-foreground">Create your account</h2>
       <p className="mt-1 text-sm text-muted-foreground">
-        Set up your command center in under a minute
+        Set up your workspace in under a minute.
       </p>
 
       {error && (

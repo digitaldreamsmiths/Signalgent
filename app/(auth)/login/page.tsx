@@ -80,7 +80,7 @@ export default function LoginPage() {
     <div>
       <h2 className="text-lg font-semibold text-foreground">Sign in to your account</h2>
       <p className="mt-1 text-sm text-muted-foreground">
-        Access your command center
+        Sign in to your workspace.
       </p>
 
       {error && (

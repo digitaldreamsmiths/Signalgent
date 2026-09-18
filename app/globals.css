@@ -191,19 +191,19 @@
 }
 .auth-orb-1 {
   width: 380px; height: 380px;
-  background: oklch(0.62 0.24 268 / 0.18);
+  background: oklch(0.55 0.2 265 / 0.16);
   top: -80px; right: -80px;
   animation-delay: 0s;
 }
 .auth-orb-2 {
   width: 260px; height: 260px;
-  background: oklch(0.62 0.24 268 / 0.10);
+  background: oklch(0.55 0.2 265 / 0.10);
   bottom: -60px; left: -60px;
   animation-delay: -4.5s;
 }
 .auth-orb-3 {
   width: 180px; height: 180px;
-  background: oklch(0.70 0.20 300 / 0.08);
+  background: oklch(0.6 0.16 290 / 0.08);
   top: 40%; left: 30%;
   animation-delay: -2s;
   animation-duration: 12s;

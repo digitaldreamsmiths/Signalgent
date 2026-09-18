@@ -2811,3 +2811,25 @@ Ratios computed from the exact hex values (script in the Session 51 entry); `tsc
 ### Residuals
 
 - **Login page** (`app/(auth)/login/page.tsx`) is dark-styled but inherits the light theme's text tokens: "Email"/"Password" labels at 1.81:1, "Sign in to your account" (`text-foreground`) effectively invisible on `#0a0a0f`. Next up.
+
+## Session 51.2 — Login and signup screens
+
+**Goal**: `app/(auth)/layout.tsx` was a dark panel (`#08080f` / `#0a0a0f`, purple `#8B7FF0` accent) left over from the Business OS era, rendered under the light theme that Session 49 made the default. The shadcn tokens inside it (`text-foreground` = oklch 0.145, `text-muted-foreground` = oklch 0.50) therefore came out near-black on near-black: the "Email"/"Password" labels measured 1.81:1, "Business OS" 2.03:1, and "Sign in to your account" was effectively invisible. The layout's own greys (`#444`, `#555`, `#3a3a4a`, `#2a2a3a`) were unreadable on the dark panel as well, and its copy still promised "5 business modes" and "Marketing, communications, finance, commerce, and analytics".
+
+### Changes
+
+| File | Change |
+|---|---|
+| `app/(auth)/layout.tsx` | Rewritten light, on the workspace palette: brand panel `#e9f0fb` with a `#dce6f6` divider (the same tint as the Overview focus panel), form panel `#f8fafd` (the workspace background), ink `#253047`, accent `#3461db` (5.4:1 on white), body copy `#4f6685` (5.1:1 on the tint). Dot grid and top accent line recoloured to the blue. Copy updated to the current product: "Email & Social", "Your email and social, one workspace.", a one-paragraph description, and a stat row of true facts (1 shared inbox, 5 content channels, 1 calendar). Footer line replaced. |
+| `app/(auth)/login/page.tsx`, `app/(auth)/signup/page.tsx` | Subtitles "Access your command center" / "Set up your command center in under a minute" → "Sign in to your workspace." / "Set up your workspace in under a minute." No other changes; the shadcn tokens now resolve correctly against a light background. |
+| `app/globals.css` | `.auth-orb-1/2/3` glow colours moved from the purple hue (268/300) to the blue (265/290) at the same alphas. |
+
+### Verification
+
+- `/login` at 1280×900: both panels render; in-page contrast scan of 20 visible text nodes finds none below 4.5:1 apart from one false positive (the primary button's oklch background, which the scanner cannot parse; it is near-black with white text).
+- `/signup` at 1280×900 and `/login` at 375×812 (mobile, brand panel hidden, wordmark shown above the form) both render on the new palette.
+- `tsc --noEmit` and eslint clean on the three files.
+
+### Residuals
+
+- Same list as Session 51 (test contact in prod contacts, three client-side 400s on first `/today` load, `templates-modal.tsx:57` lint error, `APP_URL`, nine legacy templates).
