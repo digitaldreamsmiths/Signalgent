@@ -29,7 +29,7 @@ function page(title: string, message: string, form?: string): Response {
   h1 { font-size:1.15rem; margin:0 0 .6rem; }
   p { margin:0 0 1.25rem; opacity:.75; }
   button { font:inherit; font-weight:600; padding:.6rem 1.2rem; border-radius:8px;
-           border:0; background:#D85A30; color:#fff; cursor:pointer; }
+           border:0; background:#b4441e; color:#fff; cursor:pointer; }
 </style></head>
 <body><main><h1>${title}</h1><p>${message}</p>${form ?? ''}</main></body></html>`,
     { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' } },

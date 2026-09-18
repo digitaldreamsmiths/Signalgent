@@ -34,7 +34,7 @@
 .sg-profile small { font-weight:400; font-size:10px; }
 .sg-main-shell { margin-left:230px; flex:1; min-width:0; }
 .sg-topbar { min-height:69px; display:flex; align-items:center; justify-content:space-between; padding:0 36px; border-bottom:1px solid var(--sg-border); background:#fff; gap:12px; }
-.sg-breadcrumb { font-size:11px; color:#657183; }
+.sg-breadcrumb { font-size:11px; color:#5c6a7f; }
 .sg-breadcrumb span { margin:0 11px; color:#61728a; }
 .sg-breadcrumb strong { font-weight:500; color:#536078; }
 .sg-row { display:flex; gap:10px; align-items:center; }
@@ -114,7 +114,7 @@
 .sg-preview-banner a { display:inline-flex; align-items:center; gap:3px; color:#3d66b3; }
 .sg-preview-pill { font-size:9px; color:#5d7197; padding:4px 8px; border:1px solid #e1e8f5; border-radius:5px; }
 .sg-tabs { display:flex; gap:23px; border-bottom:1px solid var(--sg-border); overflow-x:auto; }
-.sg-tabs button { padding:13px 0; border:0; border-bottom:2px solid transparent; background:transparent; color:#657183; font-size:11px!important; text-transform:capitalize; display:flex; gap:7px; white-space:nowrap; }
+.sg-tabs button { padding:13px 0; border:0; border-bottom:2px solid transparent; background:transparent; color:#5c6a7f; font-size:11px!important; text-transform:capitalize; display:flex; gap:7px; white-space:nowrap; }
 .sg-tabs button.active { color:#3461db; border-bottom-color:#3461db; font-weight:600; }
 .sg-tabs button span { background:#eef2f7; padding:0 5px; border-radius:4px; font-size:9px; }
 .sg-toolbar { display:flex; align-items:center; justify-content:space-between; gap:15px; padding:21px 0; }
@@ -158,7 +158,7 @@
 .sg-calendar-toolbar { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:21px; }
 .sg-calendar-toolbar h2 { font-size:17px; margin-right:7px; font-weight:600; }
 .sg-segmented { display:inline-flex; border:1px solid #e0e7f1; background:#f0f4fa; border-radius:6px; padding:3px; }
-.sg-segmented button { border:0; background:transparent; color:#5f7290; border-radius:4px; padding:5px 11px; font-size:10px!important; }
+.sg-segmented button { border:0; background:transparent; color:#56698a; border-radius:4px; padding:5px 11px; font-size:10px!important; }
 .sg-segmented button.active { background:white; color:#4d6590; box-shadow:0 1px 3px #465e8020; }
 .sg-calendar-scroll { overflow:auto; }
 .sg-calendar-grid { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); min-width:700px; border:1px solid var(--sg-border); border-radius:8px; overflow:hidden; background:#fff; }

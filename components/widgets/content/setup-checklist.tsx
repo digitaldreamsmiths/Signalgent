@@ -6,7 +6,7 @@ import { getSetupStatus, type SetupStatus, type SetupStep } from '@/lib/integrat
 const BORDER = 'var(--app-border)'
 const CARD = 'var(--app-card)'
 const MUTED = 'var(--app-muted)'
-const ACCENT = '#c04b24'
+const ACCENT = '#b4441e'
 
 const STATE_META = {
   done: { color: '#17805f', mark: '✓' },

@@ -2833,3 +2833,37 @@ Ratios computed from the exact hex values (script in the Session 51 entry); `tsc
 ### Residuals
 
 - Same list as Session 51 (test contact in prod contacts, three client-side 400s on first `/today` load, `templates-modal.tsx:57` lint error, `APP_URL`, nine legacy templates).
+
+## Session 51.3 — Contrast sweep of every page
+
+**Goal**: With a real login available, run the in-page contrast scanner (every visible text node vs its nearest opaque ancestor, WCAG ratio, disabled controls excluded) across all 14 routes: the eight workspace sections, the four outreach sections, and Settings › Offer profile / Plan & usage, and clear what it found.
+
+### Findings (before)
+
+| Page | Below 4.5:1 |
+|---|---|
+| `/today`, `/contacts`, `/outreach/pipeline`, `/outreach/contacts`, `/outreach/inbox`, `/settings/plan` | none |
+| `/inbox`, `/calendar` | inactive segmented-control labels ("Unread", "List") `#5f7290` on `#f0f4fa` — 4.43:1 at 10px |
+| `/email`, `/social` | tab count badges `#657183` on `#eef2f7` — 4.40:1 at 9px |
+| `/reports` | Facebook channel badge, white on the brand blue `#1877f2` — 4.23:1. Left as is: it is the brand colour and a one-letter glyph. |
+| `/outreach/schedule` | day-count badges in the accent `#c04b24` on the `--app-card-2` tint — 4.27:1 at 10px |
+| `/settings/offer` | "Save profile" button: white on `#D85A30` — 3.87:1. `app/(app)/settings/offer/page.tsx` and `…/plan/page.tsx` each had their own `const ACCENT = '#D85A30'` that the Session 51 sweep (scoped to `components/` and `lib/`) did not reach. |
+
+### Changes
+
+| File | Change |
+|---|---|
+| `components/platform/workspace.css` | `.sg-segmented button` `#5f7290 → #56698a` (5.03:1 on the control's tint); `.sg-tabs button` `#657183 → #5c6a7f` (4.89:1 on the badge tint), which also lifts the tab labels themselves. |
+| `lib/modes.ts` + every file that carried `#c04b24` (the outreach modules, connection chips, avatar palette, stage colours, hidden-mode widgets) | Outreach/marketing accent one notch darker, `#c04b24 → #b4441e`: 5.55:1 on white, 4.82:1 on `--app-card-2`, 5.02:1 on `#f0f4fa`. White-on-accent buttons ("Add prospects", "Save profile") go from 4.9:1 to 5.6:1. |
+| `app/(app)/settings/offer/page.tsx`, `app/(app)/settings/plan/page.tsx` | Local `ACCENT` constants → `#b4441e`. |
+| `app/api/outreach/unsubscribe/[token]/route.ts` | The confirm button on the public unsubscribe landing page, the last `#D85A30` in the tree, → `#b4441e`. |
+
+### Verification
+
+Re-scanned after the change: `/settings/offer` (50 text nodes), `/inbox` (131), `/email` (46), `/outreach/schedule` (932) all report zero below 4.5:1. `tsc --noEmit` clean. Not scanned: the Sending settings, Manage templates and Campaigns modals on the pipeline page (they need to be opened by hand).
+
+### Residuals
+
+- The three outreach modals above.
+- Facebook badge (brand colour, deliberate).
+- Carried from Session 51: three client-side 400s on first `/today` load, `templates-modal.tsx:57` lint error, `APP_URL` repoint.

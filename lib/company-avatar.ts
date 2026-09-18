@@ -1,7 +1,7 @@
 const COLORS = [
   { bg: '#1e3a5f', text: '#2173c5' },
   { bg: '#1a3a2a', text: '#17805f' },
-  { bg: '#3a1a0a', text: '#c04b24' },
+  { bg: '#3a1a0a', text: '#b4441e' },
   { bg: '#2e1a3a', text: '#C4B5FD' },
   { bg: '#3a2a00', text: '#9f6414' },
   { bg: '#1a1a3a', text: '#93C5FD' },

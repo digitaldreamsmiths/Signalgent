@@ -87,7 +87,7 @@ export function PinterestConnectionChip() {
         href={getPinterestConnectUrl(companyId)}
         style={{
           fontSize: 11,
-          color: 'var(--mode-accent-text, #c04b24)',
+          color: 'var(--mode-accent-text, #b4441e)',
           background: 'var(--mode-card-bg, #1a1a1a)',
           border: '1px solid var(--mode-card-border, #272727)',
           borderRadius: 6,
@@ -103,7 +103,7 @@ export function PinterestConnectionChip() {
             width: 6,
             height: 6,
             borderRadius: '50%',
-            background: 'var(--mode-accent, #c04b24)',
+            background: 'var(--mode-accent, #b4441e)',
             display: 'inline-block',
           }}
         />
@@ -212,7 +212,7 @@ export function PinterestConnectionChip() {
                   flex: 1,
                   textAlign: 'center',
                   fontSize: 11,
-                  color: 'var(--mode-accent-text, #c04b24)',
+                  color: 'var(--mode-accent-text, #b4441e)',
                   background: 'var(--mode-card-bg, #1a1a1a)',
                   border: '1px solid var(--mode-card-border, #272727)',
                   borderRadius: 6,

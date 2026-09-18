@@ -7,7 +7,7 @@ import { DEFAULT_OFFER_PROFILE, type OfferProfile } from '@/lib/integrations/out
 
 const BORDER = 'var(--app-border)'
 const MUTED = 'var(--app-muted)'
-const ACCENT = '#D85A30'
+const ACCENT = '#b4441e'
 
 const label: React.CSSProperties = { display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--app-text-2)', marginBottom: 4 }
 const hint: React.CSSProperties = { fontSize: 10, color: MUTED, marginTop: 3, lineHeight: 1.4 }

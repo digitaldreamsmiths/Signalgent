@@ -13,7 +13,7 @@ const INPUT = 'var(--app-input)'
 const TEXT = 'var(--app-text)'
 const TEXT2 = 'var(--app-text-2)'
 const MUTED = 'var(--app-muted)'
-const ACCENT = '#c04b24'
+const ACCENT = '#b4441e'
 
 
 type FormState = { id: string | null; name: string; subject: string; body: string; weight: number; active: boolean }

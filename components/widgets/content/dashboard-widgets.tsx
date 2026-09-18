@@ -32,7 +32,7 @@ const SOURCE_COLORS: Record<string, string> = {
   communications: '#17805f',
   finance: '#9f6414',
   analytics: '#507c1c',
-  marketing: '#c04b24',
+  marketing: '#b4441e',
 }
 
 export function IntelligenceBriefing() {

@@ -9,7 +9,7 @@ const CARD = 'var(--app-card)'
 const CARD2 = 'var(--app-card-2)'
 const TEXT = 'var(--app-text)'
 const MUTED = 'var(--app-muted)'
-const ACCENT = '#c04b24'
+const ACCENT = '#b4441e'
 
 /**
  * Deep link to the conversation in Gmail. Answering happens there — composing

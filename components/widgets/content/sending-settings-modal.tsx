@@ -11,7 +11,7 @@ const CARD = 'var(--app-card)'
 const INPUT = 'var(--app-input)'
 const TEXT = 'var(--app-text)'
 const MUTED = 'var(--app-muted)'
-const ACCENT = '#c04b24'
+const ACCENT = '#b4441e'
 
 const DEFAULTS: SendSettings = {
   sender_name: '', sender_email: '', reply_to: '',

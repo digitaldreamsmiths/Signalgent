@@ -13,7 +13,7 @@
 import type { Filter, StageBucket } from './views'
 import type { Disposition, SendStatus } from './types'
 
-const ACCENT = '#c04b24'
+const ACCENT = '#b4441e'
 const MUTED = 'var(--app-muted)'
 
 /** The draft fields every predicate here needs. `OutreachDraftView` is a superset. */

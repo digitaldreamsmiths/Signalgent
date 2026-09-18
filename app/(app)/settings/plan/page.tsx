@@ -7,7 +7,7 @@ import { PLANS, fmtLimit } from '@/lib/billing/plans'
 
 const BORDER = 'var(--app-border)'
 const MUTED = 'var(--app-muted)'
-const ACCENT = '#D85A30'
+const ACCENT = '#b4441e'
 
 /** Usage bar. Uncapped metrics show a count with no bar — a progress bar
  * against Infinity is meaningless. */
