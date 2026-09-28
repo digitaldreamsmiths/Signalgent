@@ -175,10 +175,10 @@ export function OutreachChrome({ children }: { children: React.ReactNode }) {
 
       {/* Pipeline-stopping states. Each of these silently halts sends/scans, so
           they go first — above everything else, impossible to miss. */}
-      {snapshot?.sending?.gmail && snapshot.sending.gmail.status !== 'connected' && (
+      {snapshot?.sending?.mailbox && snapshot.sending.mailbox.status !== 'connected' && (
         <Banner color="#b04545">
-          ⚠ Gmail connection {snapshot.sending.gmail.status === 'not_connected' ? 'missing' : `in ${snapshot.sending.gmail.status} state`} — sending and reply detection are stopped
-          {snapshot.sending.gmail.last_error ? `: ${snapshot.sending.gmail.last_error}` : ''}. Reconnect Gmail in Settings → Connections.
+          ⚠ {snapshot.sending.provider === 'outlook' ? 'Microsoft 365' : 'Gmail'} connection {snapshot.sending.mailbox.status === 'not_connected' ? 'missing' : `in ${snapshot.sending.mailbox.status} state`} — sending is stopped
+          {snapshot.sending.mailbox.last_error ? `: ${snapshot.sending.mailbox.last_error}` : ''}. Reconnect in Connections.
         </Banner>
       )}
       {snapshot?.sending?.pause_reason === 'bounce_rate' && !snapshot.sending.active && (

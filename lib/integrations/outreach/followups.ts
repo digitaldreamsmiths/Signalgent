@@ -232,6 +232,7 @@ export interface SweepResult {
 export async function runFollowupSweep(supabase: DB, companyId: string): Promise<SweepResult> {
   const settings = await loadSettings(supabase, companyId)
   if (!settings.active) return { candidates: 0, queued: 0, review: 0, errors: 0, skipped: 'sending off' }
+  if (settings.provider === 'outlook') return { candidates: 0, queued: 0, review: 0, errors: 0, skipped: 'Microsoft 365 reply detection is not enabled' }
 
   const campaigns = await loadCampaigns(supabase, companyId)
   const campaignById = new Map(campaigns.map((c) => [c.id, c]))

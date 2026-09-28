@@ -263,12 +263,11 @@ export async function getOutreachWorkspace(
   const settings = await loadSettings(supabase, companyId)
   const { rate: bounce_rate_7d } = await recentBounceStats(supabase, companyId, 7)
   const opens = await openStats(supabase, companyId)
-  // Gmail health: token refresh failures mark the account 'error', which makes
-  // the worker/scanner silently skip — surface it so the user can reconnect.
-  let gmail: OutreachSnapshot['sending']['gmail'] = null
-  if (settings.provider === 'gmail') {
-    const account = await getAccount(companyId, 'gmail')
-    gmail = account
+  // Token refresh failures mark the account 'error'; surface the selected mailbox.
+  let mailbox: OutreachSnapshot['sending']['mailbox'] = null
+  if (settings.provider === 'gmail' || settings.provider === 'outlook') {
+    const account = await getAccount(companyId, settings.provider)
+    mailbox = account
       ? { status: account.status, last_error: account.last_error }
       : { status: 'not_connected', last_error: null }
   }
@@ -293,7 +292,7 @@ export async function getOutreachWorkspace(
     warmup_day: warmupDayIndex(settings),
     bounce_rate_7d,
     provider: settings.provider,
-    gmail,
+    mailbox,
   }
 
   return {

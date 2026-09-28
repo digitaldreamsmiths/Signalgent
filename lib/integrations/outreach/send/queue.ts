@@ -49,9 +49,9 @@ export async function autoQueueDraftSend(supabase: DB, companyId: string, draftI
     const { data: company } = await supabase.from('companies').select('is_sample').eq('id', companyId).single()
     if (!company || (company.is_sample && settings.provider !== 'dry_run')) return false
     if (!settings.active || !settings.sender_email?.trim()) return false
-    if (settings.provider === 'gmail') {
-      const gmail = await getAccount(companyId, 'gmail', supabase)
-      if (gmail?.status !== 'connected') return false
+    if (settings.provider === 'gmail' || settings.provider === 'outlook') {
+      const mailbox = await getAccount(companyId, settings.provider, supabase)
+      if (mailbox?.status !== 'connected' || mailbox.account_identifier?.toLowerCase() !== settings.sender_email.toLowerCase()) return false
     }
 
     const { data: draft } = await supabase

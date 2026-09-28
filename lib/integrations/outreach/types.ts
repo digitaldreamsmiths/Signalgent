@@ -132,7 +132,7 @@ export interface SendSettings {
   signature: string | null
   physical_address: string | null
   unsubscribe_line: string | null
-  provider: 'dry_run' | 'gmail' | 'resend'
+  provider: 'dry_run' | 'gmail' | 'outlook' | 'resend'
   active: boolean
   /** Why sending is off, when active=false: 'manual' (user) or 'bounce_rate'
    * (auto-paused). null when active or never paused. */
@@ -291,10 +291,9 @@ export interface OutreachSnapshot {
     warmup_day: number | null
     /** Bounce rate over the last 7 days, as a fraction. */
     bounce_rate_7d: number
-    provider: 'dry_run' | 'gmail' | 'resend'
-    /** Gmail connection health (null unless provider is 'gmail'). Anything but
-     * 'connected' means sends and reply scans are silently skipped — surface it. */
-    gmail: {
+    provider: 'dry_run' | 'gmail' | 'outlook' | 'resend'
+    /** Selected sending mailbox health. */
+    mailbox: {
       status: 'connected' | 'expired' | 'revoked' | 'error' | 'disconnected' | 'not_connected'
       last_error: string | null
     } | null

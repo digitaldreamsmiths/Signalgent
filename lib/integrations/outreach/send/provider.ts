@@ -13,8 +13,10 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/lib/types/database.types'
 import { sendOutreachEmail } from '../../gmail/send'
+import { loadOutlookCredentials } from '../../outlook/tokens'
+import { sendMail } from '../../outlook/fetch'
 
-export type ProviderName = 'dry_run' | 'gmail' | 'resend'
+export type ProviderName = 'dry_run' | 'gmail' | 'outlook' | 'resend'
 
 /** Context a provider may need to act for a specific company (token loading,
  * etc.). The Supabase client lets the cron/service-role path work without an
@@ -92,6 +94,22 @@ function gmailProvider(ctx: SendContext): EmailProvider {
 export function getProvider(name: ProviderName, ctx: SendContext): EmailProvider {
   if (name === 'dry_run') return dryRunProvider
   if (name === 'gmail') return gmailProvider(ctx)
+  if (name === 'outlook') return {
+    name: 'outlook',
+    async send(msg) {
+      try {
+        const creds = await loadOutlookCredentials(ctx.companyId, ctx.supabase)
+        if (!creds) return { ok: false, error: 'Microsoft 365 mailbox is not connected.' }
+        if (msg.from.toLowerCase() !== creds.emailAddress.toLowerCase()) {
+          return { ok: false, error: 'Sender email must match the connected Microsoft 365 mailbox.' }
+        }
+        await sendMail(creds.accessToken, msg)
+        return { ok: true }
+      } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : 'Microsoft send failed' }
+      }
+    },
+  }
   // TODO(send): Resend — only after the AUP check + dedicated sending domain
   // decision. Until then this is the explicit pluggable seam.
   throw new Error(`Email provider "${name}" is not configured yet.`)

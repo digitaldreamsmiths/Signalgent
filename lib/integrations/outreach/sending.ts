@@ -40,6 +40,10 @@ export async function saveSendSettings(
   if (!company) return { ok: false, error: 'Company profile unavailable.' }
   const effectiveProvider = patch.provider ?? (await loadSettings(supabase, companyId)).provider
   if (company.is_sample && effectiveProvider !== 'dry_run' && patch.active !== false) return { ok: false, error: 'Sample companies can only use Dry run sending.' }
+  if (effectiveProvider === 'outlook') {
+    patch.followup_enabled = false
+    patch.bounce_pause_enabled = false
+  }
   // Normalize the send window to 24h "HH:MM" — scheduling reads it back with
   // parseWallTime, but a canonical stored form keeps the UI and any other
   // reader honest. Reject what can't be parsed instead of storing it.
@@ -126,10 +130,10 @@ export async function queueDraftSend(companyId: string, draftId: string): Promis
   if (!company || (company.is_sample && settings.provider !== 'dry_run')) return { ok: false, error: 'Sample companies can only use Dry run sending.' }
   if (!settings.active) return { ok: false, error: 'Turn on sending in Sending settings first.' }
   if (!settings.sender_email?.trim()) return { ok: false, error: 'Set a sender email in Sending settings first.' }
-  if (settings.provider === 'gmail') {
-    const gmail = await getAccount(companyId, 'gmail')
-    if (gmail?.status !== 'connected') {
-      return { ok: false, error: 'Connect Gmail in Settings → Connections first.' }
+  if (settings.provider === 'gmail' || settings.provider === 'outlook') {
+    const mailbox = await getAccount(companyId, settings.provider)
+    if (mailbox?.status !== 'connected' || mailbox.account_identifier?.toLowerCase() !== settings.sender_email.trim().toLowerCase()) {
+      return { ok: false, error: 'Connect the sender mailbox in Connections first.' }
     }
   }
 
@@ -241,9 +245,9 @@ type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>
 async function ensureSendable(supabase: SupabaseServerClient, companyId: string, settings: SendSettings): Promise<string | null> {
   if (!settings.active) return 'Turn on sending in Sending settings first.'
   if (!settings.sender_email?.trim()) return 'Set a sender email in Sending settings first.'
-  if (settings.provider === 'gmail') {
-    const gmail = await getAccount(companyId, 'gmail')
-    if (gmail?.status !== 'connected') return 'Connect Gmail in Settings → Connections first.'
+  if (settings.provider === 'gmail' || settings.provider === 'outlook') {
+    const mailbox = await getAccount(companyId, settings.provider)
+    if (mailbox?.status !== 'connected' || mailbox.account_identifier?.toLowerCase() !== settings.sender_email.trim().toLowerCase()) return 'Connect the sender mailbox in Connections first.'
   }
   return null
 }

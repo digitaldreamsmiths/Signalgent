@@ -167,6 +167,7 @@ export function SendingSettingsModal({ companyId, onClose, onSaved }: { companyI
               <select value={form.provider} onChange={(e) => set('provider', e.target.value as SendSettings['provider'])} style={inputStyle}>
                 <option value="dry_run">Dry run (test — records sent, no real email)</option>
                 <option value="gmail">Gmail (sends from your connected mailbox)</option>
+                <option value="outlook">Microsoft 365 (sends from your connected mailbox)</option>
                 <option value="resend" disabled>Resend (coming soon)</option>
               </select>
               {form.provider === 'gmail' && (
@@ -203,7 +204,7 @@ export function SendingSettingsModal({ companyId, onClose, onSaved }: { companyI
                 <span style={sectionLabel}>Warmup ramp</span>
               </label>
               <div style={{ fontSize: 10, color: MUTED, marginTop: -4 }}>
-                Ramps the daily cap up to your limit over the first sending days, protecting a new mailbox's reputation.
+                Ramps the daily cap up to your limit over the first sending days, protecting a new mailbox&apos;s reputation.
               </div>
               {form.warmup_enabled && (
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
@@ -216,13 +217,13 @@ export function SendingSettingsModal({ companyId, onClose, onSaved }: { companyI
             {/* Auto-pause on bounces */}
             <div style={sectionStyle}>
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: TEXT }}>
-                <input type="checkbox" checked={form.bounce_pause_enabled} onChange={(e) => set('bounce_pause_enabled', e.target.checked)} />
+                <input type="checkbox" checked={form.provider === 'outlook' ? false : form.bounce_pause_enabled} disabled={form.provider === 'outlook'} onChange={(e) => set('bounce_pause_enabled', e.target.checked)} />
                 <span style={sectionLabel}>Auto-pause on high bounce rate</span>
               </label>
               <div style={{ fontSize: 10, color: MUTED, marginTop: -4 }}>
-                Stops sending automatically when too many recent emails bounce, so a bad list can't burn your domain.
+                {form.provider === 'outlook' ? 'Microsoft 365 bounce detection is not available yet.' : <>Stops sending automatically when too many recent emails bounce, so a bad list can&apos;t burn your domain.</>}
               </div>
-              {form.bounce_pause_enabled && (
+              {form.provider !== 'outlook' && form.bounce_pause_enabled && (
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
                   <div><label style={labelStyle}>Threshold %</label><input type="number" value={Math.round(form.bounce_pause_threshold * 100)} onChange={(e) => set('bounce_pause_threshold', Math.max(1, parseInt(e.target.value) || 1) / 100)} style={inputStyle} /></div>
                   <div><label style={labelStyle}>Window (days)</label><input type="number" value={form.bounce_pause_window_days} onChange={(e) => set('bounce_pause_window_days', Math.max(1, parseInt(e.target.value) || 1))} style={inputStyle} /></div>
@@ -234,16 +235,16 @@ export function SendingSettingsModal({ companyId, onClose, onSaved }: { companyI
             {/* Automatic follow-up sequences */}
             <div style={sectionStyle}>
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: TEXT }}>
-                <input type="checkbox" checked={form.followup_enabled} onChange={(e) => set('followup_enabled', e.target.checked)} />
+                <input type="checkbox" checked={form.provider === 'outlook' ? false : form.followup_enabled} disabled={form.provider === 'outlook'} onChange={(e) => set('followup_enabled', e.target.checked)} />
                 <span style={sectionLabel}>Automatic follow-ups</span>
               </label>
               <div style={{ fontSize: 10, color: MUTED, marginTop: -4 }}>
-                When a sent email gets no reply, the next touch is drafted and queued automatically after the wait.
+                {form.provider === 'outlook' ? 'Microsoft 365 follow-ups are unavailable until reply detection is connected.' : <>When a sent email gets no reply, the next touch is drafted and queued automatically after the wait.
                 Template nudges and clean personalized drafts go straight to the queue; anything the fact-check flags
                 waits in “To review”. Replies, bounces, and opt-outs always stop a sequence. Threads older than ~45
-                days are left alone.
+                days are left alone.</>}
               </div>
-              {form.followup_enabled && (
+              {form.provider !== 'outlook' && form.followup_enabled && (
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                   <div><label style={labelStyle}>Wait (business days)</label><input type="number" value={form.followup_wait_days} onChange={(e) => set('followup_wait_days', Math.max(1, parseInt(e.target.value) || 1))} style={inputStyle} /></div>
                   <div><label style={labelStyle}>Max touches (incl. opener)</label><input type="number" value={form.followup_max_touches} onChange={(e) => set('followup_max_touches', Math.max(1, parseInt(e.target.value) || 1))} style={inputStyle} /></div>

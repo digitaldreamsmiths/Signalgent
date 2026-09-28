@@ -39,7 +39,7 @@ export const SERVICES: ServiceDef[] = [
   {
     id: 'outlook',
     label: 'Outlook',
-    description: 'Microsoft Outlook inbox with AI triage and smart replies',
+    description: 'Microsoft 365 mailbox for outreach sending',
     mode: 'communications',
     color: '#0078D4',
     connectPath: '/api/integrations/outlook/connect',
@@ -159,7 +159,7 @@ export const OAUTH_URLS: Partial<Record<ServiceId, string>> = {
 export const OAUTH_SCOPES: Partial<Record<ServiceId, string>> = {
   gmail:            'https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/userinfo.email',
   google_analytics: 'https://www.googleapis.com/auth/analytics.readonly https://www.googleapis.com/auth/userinfo.email',
-  outlook:          'offline_access Mail.Read User.Read',
+  outlook:          'offline_access User.Read Mail.Send',
   linkedin_page:    'r_organization_social w_organization_social r_basicprofile',
   facebook_page:    'pages_read_engagement pages_manage_posts pages_show_list',
   stripe_account:   'read_write',

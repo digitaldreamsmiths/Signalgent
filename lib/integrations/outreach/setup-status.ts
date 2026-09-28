@@ -49,16 +49,18 @@ export async function getSetupStatus(companyId: string): Promise<SetupStatus | n
   }
   const supabase = await createClient()
 
-  const [settings, profileRow, prospectCount, gmail] = await Promise.all([
+  const [settings, profileRow, prospectCount, gmail, outlook] = await Promise.all([
     loadSettings(supabase, companyId),
     supabase.from('outreach_offer_profiles').select('company_id').eq('company_id', companyId).maybeSingle().then((r) => r.data),
     supabase.from('outreach_prospects').select('id', { count: 'exact', head: true }).eq('company_id', companyId).then((r) => r.count ?? 0),
     getAccount(companyId, 'gmail').catch(() => null),
+    getAccount(companyId, 'outlook').catch(() => null),
   ])
 
   const senderEmail = settings.sender_email?.trim() ?? ''
   const senderDomain = senderEmail.split('@')[1]?.trim() ?? ''
-  const mailboxReady = settings.provider === 'dry_run' || gmail?.status === 'connected'
+  const mailbox = settings.provider === 'outlook' ? outlook : gmail
+  const mailboxReady = settings.provider === 'dry_run' || (mailbox?.status === 'connected' && mailbox.account_identifier?.toLowerCase() === senderEmail.toLowerCase())
 
   const steps: SetupStep[] = [
     {
@@ -74,7 +76,7 @@ export async function getSetupStatus(companyId: string): Promise<SetupStatus | n
       title: 'Connect a mailbox',
       why: 'Email sends from your own mailbox, so replies land in your inbox and threads stay together.',
       state: mailboxReady ? 'done' : 'todo',
-      detail: settings.provider === 'dry_run' ? 'Dry run (nothing is actually sent)' : gmail?.status === 'connected' ? 'Gmail connected' : gmail ? `Gmail ${gmail.status}` : 'Not connected',
+      detail: settings.provider === 'dry_run' ? 'Dry run (nothing is actually sent)' : mailboxReady ? `${settings.provider === 'outlook' ? 'Microsoft 365' : 'Gmail'} connected` : 'Sender mailbox not connected',
       action: 'connections',
     },
     {

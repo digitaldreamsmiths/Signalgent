@@ -405,7 +405,7 @@ export async function recoverStaleSending(supabase: DB, companyId: string): Prom
     .from('outreach_sends')
     .update({
       status: 'failed',
-      error: 'interrupted mid-send, verify in Gmail Sent folder before re-queuing',
+      error: 'interrupted mid-send, verify in the connected mailbox Sent folder before re-queuing',
       updated_at: new Date().toISOString(),
     })
     .eq('company_id', companyId)
@@ -497,6 +497,13 @@ export async function runQueue(supabase: DB, companyId: string): Promise<{ sent:
   let sent = 0
   let failed = 0
   for (const s of due ?? []) {
+    if (settings.provider === 'outlook') {
+      const { data: draft } = await supabase.from('outreach_drafts').select('step').eq('id', s.draft_id).eq('company_id', companyId).maybeSingle()
+      if (!draft || draft.step > 1) {
+        await supabase.from('outreach_sends').update({ status: 'canceled', error: 'Microsoft 365 follow-ups require reply detection' }).eq('id', s.id).eq('company_id', companyId)
+        continue
+      }
+    }
     // Suppression re-check at send time.
     const { data: p } = await supabase.from('outreach_prospects').select('disposition').eq('id', s.prospect_id).maybeSingle()
     if (p && p.disposition !== 'open') {

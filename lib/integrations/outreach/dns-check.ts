@@ -60,6 +60,7 @@ const PROVIDER_INCLUDE: Record<string, { needle: RegExp; label: string; include:
   // record is "v=spf1 redirect=_spf.google.com", and matching only include:
   // reported a false failure against it.
   gmail: { needle: /(include:|redirect=)_?spf\.google\.com|include:google\.com/i, label: 'Gmail / Google Workspace', include: 'include:_spf.google.com' },
+  outlook: { needle: /(?:include:|redirect=)spf\.protection\.outlook\.com/i, label: 'Microsoft 365', include: 'include:spf.protection.outlook.com' },
   resend: { needle: /(include:|redirect=)(amazonses\.com|_spf\.resend\.com)/i, label: 'Resend', include: 'include:_spf.resend.com' },
 }
 

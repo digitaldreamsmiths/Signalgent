@@ -19,7 +19,7 @@ export interface Provider {
  */
 export const PROVIDERS: Provider[] = [
   { id: 'gmail', name: 'Gmail', short: '@', color: '#3461db', group: 'email', multi: true, path: '/api/integrations/gmail/connect', description: 'Read, search, compose, and reply. Connect more than one mailbox.', capability: 'Mailbox operations' },
-  { id: 'outlook', name: 'Outlook', short: 'O', color: '#1267b2', group: 'email', path: '', description: 'Microsoft email support is planned for a future release.', capability: 'Mailbox integration pending' },
+  { id: 'outlook', name: 'Microsoft 365', short: 'O', color: '#1267b2', group: 'email', path: '/api/integrations/outlook/connect', description: 'Connect a Microsoft 365 mailbox for outreach sending. Automatic reply checks are not available yet.', capability: 'Mailbox sending' },
   { id: 'linkedin', name: 'LinkedIn', short: 'in', color: '#0a66c2', group: 'social', path: '/api/integrations/linkedin/connect', description: 'Connect your identity. Publishing needs additional approved access.', capability: 'Identity connection' },
   { id: 'instagram', name: 'Instagram', short: 'ig', color: '#b3437e', group: 'social', path: '', description: 'Plan your Instagram content now. Publishing and inbox access are not enabled.', capability: 'Publishing integration pending' },
   { id: 'facebook', name: 'Facebook', short: 'f', color: '#1877f2', group: 'social', path: '', description: 'Draft Facebook content alongside the rest of your channels.', capability: 'Publishing integration pending' },

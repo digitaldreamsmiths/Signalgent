@@ -564,7 +564,7 @@ export interface Database {
           signature: string | null
           physical_address: string | null
           unsubscribe_line: string | null
-          provider: 'dry_run' | 'gmail' | 'resend'
+          provider: 'dry_run' | 'gmail' | 'outlook' | 'resend'
           active: boolean
           last_reply_scan_at: string | null
           warmup_enabled: boolean
@@ -595,7 +595,7 @@ export interface Database {
           signature?: string | null
           physical_address?: string | null
           unsubscribe_line?: string | null
-          provider?: 'dry_run' | 'gmail' | 'resend'
+          provider?: 'dry_run' | 'gmail' | 'outlook' | 'resend'
           active?: boolean
           last_reply_scan_at?: string | null
           warmup_enabled?: boolean
@@ -625,7 +625,7 @@ export interface Database {
           signature?: string | null
           physical_address?: string | null
           unsubscribe_line?: string | null
-          provider?: 'dry_run' | 'gmail' | 'resend'
+          provider?: 'dry_run' | 'gmail' | 'outlook' | 'resend'
           active?: boolean
           last_reply_scan_at?: string | null
           warmup_enabled?: boolean
