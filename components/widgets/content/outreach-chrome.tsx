@@ -55,6 +55,9 @@ export function OutreachChrome({ children }: { children: React.ReactNode }) {
     async (text: string, onSuccess?: () => void) => {
       if (!companyId || !text.trim()) return
       // New prospects join the currently selected campaign ('all'/'none' → pool).
+      if (campaignFilter !== 'all' && campaignFilter !== 'none' && !campaigns.some(c => c.id === campaignFilter && c.status === 'active')) {
+        return pushToast('Select an active campaign before adding prospects.', 'error')
+      }
       const target = campaignFilter !== 'all' && campaignFilter !== 'none' ? campaignFilter : null
       const r = await ingestProspects(companyId, text, target)
       if (!r.ok) return pushToast(r.error, 'error')
@@ -66,7 +69,7 @@ export function OutreachChrome({ children }: { children: React.ReactNode }) {
       )
       refresh()
     },
-    [companyId, campaignFilter, refresh, pushToast],
+    [companyId, campaignFilter, campaigns, refresh, pushToast],
   )
 
   const handleIngest = useCallback(() => ingest(raw, () => setRaw('')), [ingest, raw])

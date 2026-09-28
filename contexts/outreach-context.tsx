@@ -139,6 +139,16 @@ export function OutreachProvider({ children }: { children: React.ReactNode }) {
   const [limit, setLimit] = useState(PROSPECT_PAGE_SIZE)
   const [campaignFilter, setCampaignFilterState] = useState<string>('all')
 
+  // Keep the intake destination across reloads. The key includes the company
+  // so a campaign from another company's workspace can never be restored.
+  useEffect(() => {
+    if (!companyId) return
+    const saved = window.localStorage.getItem(`outreach-campaign:${companyId}`)
+    if (!saved) return
+    const frame = window.requestAnimationFrame(() => setCampaignFilterState(saved))
+    return () => window.cancelAnimationFrame(frame)
+  }, [companyId])
+
   // Sort, stage filter and the loaded window belong to a view; changing view
   // resets all three. Adjusted during render (React's documented pattern for
   // state derived from something else) rather than in an effect, so the fetch
@@ -178,8 +188,9 @@ export function OutreachProvider({ children }: { children: React.ReactNode }) {
 
   const setCampaignFilter = useCallback((v: string) => {
     setCampaignFilterState(v)
+    if (companyId) window.localStorage.setItem(`outreach-campaign:${companyId}`, v)
     setLimit(PROSPECT_PAGE_SIZE)
-  }, [])
+  }, [companyId])
 
   const loadMore = useCallback(() => setLimit((n) => Math.min(n + PROSPECT_PAGE_SIZE, PROSPECT_MAX_LOADED)), [])
 
@@ -281,6 +292,13 @@ export function OutreachProvider({ children }: { children: React.ReactNode }) {
   }, [companyId, refresh, loadScheduled])
 
   const campaigns = useMemo(() => snapshot?.campaigns ?? [], [snapshot])
+  useEffect(() => {
+    if (!snapshot || !companyId || campaignFilter === 'all' || campaignFilter === 'none') return
+    if (!campaigns.some(campaign => campaign.id === campaignFilter && campaign.status === 'active')) {
+      const frame = window.requestAnimationFrame(() => setCampaignFilter('all'))
+      return () => window.cancelAnimationFrame(frame)
+    }
+  }, [snapshot, companyId, campaignFilter, campaigns, setCampaignFilter])
   const campaignStats = useMemo(
     () => new Map(Object.entries(snapshot?.campaign_stats ?? {})),
     [snapshot],
