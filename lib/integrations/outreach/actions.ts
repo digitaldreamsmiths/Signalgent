@@ -21,6 +21,7 @@ import { loadSettings, getEffectiveDailyCap, todayBounds, warmupDayIndex } from 
 import { generateFollowupTouch } from './followups'
 import { loadOfferProfile } from './offer-profile'
 import { usesUsaspending } from './usaspending-preference'
+import { processingBlockReason } from './processing-readiness'
 import { fetchStoredContactNames, resolveContactName } from './contact-name'
 import { loadCampaigns } from './campaigns'
 import { effectiveLimits, loadBilling, planDailySendCap } from '@/lib/billing/billing'
@@ -159,6 +160,8 @@ export async function runNewProspects(
   }
 
   const supabase = await createClient()
+  const blocked = await processingBlockReason(supabase, companyId)
+  if (blocked) return { ok: false, error: blocked }
   const data = await runEnrichmentBatch(supabase, companyId, limit, access.userId)
   revalidatePath('/outreach')
   return { ok: true, data }
@@ -185,6 +188,8 @@ export async function processProspects(
     return { ok: true, data: { processed: 0, drafted: 0, skipped: 0, remaining: 0, cost_usd: 0, processedIds: [] } }
   }
   const supabase = await createClient()
+  const blocked = await processingBlockReason(supabase, companyId)
+  if (blocked) return { ok: false, error: blocked }
   const data = await runEnrichmentBatchForIds(supabase, companyId, prospectIds, limit, access.userId)
   revalidatePath('/outreach')
   return { ok: true, data }
@@ -204,6 +209,8 @@ export async function enrichWaveNow(
     throw err
   }
   const supabase = await createClient()
+  const blocked = await processingBlockReason(supabase, companyId)
+  if (blocked) return { ok: false, error: blocked }
   const data = await enrichToBuffer(supabase, companyId, access.userId)
   revalidatePath('/outreach')
   return { ok: true, data }

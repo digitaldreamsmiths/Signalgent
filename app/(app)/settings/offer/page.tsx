@@ -90,7 +90,7 @@ export default function OfferProfilePage() {
         signature fallbacks all read from here. Existing drafts are not rewritten — this applies to new ones.
       </p>
 
-      <Field title="Federal contract research" help="When off, new prospects go straight to your email templates. No USAspending lookup or federal-award personalization runs for this company.">
+      <Field title="Federal contract research" help="When off, processing uses your email templates after you save this offer profile. No USAspending lookup or federal-award personalization runs for this company.">
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}><input type="checkbox" checked={useUsaspending} onChange={(e) => setUseUsaspending(e.target.checked)} /> Search USAspending for these contacts</label>
         <button type="button" onClick={savePreference} disabled={savingPreference} style={{ marginTop: 8, fontSize: 11, border: `1px solid ${BORDER}`, borderRadius: 5, padding: "5px 10px", background: "var(--app-input)", color: "var(--app-text)" }}>{savingPreference ? "Saving…" : "Save research setting"}</button>
       </Field>
