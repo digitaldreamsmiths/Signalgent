@@ -83,6 +83,7 @@ export interface Database {
           name: string
           slug: string
           industry: string | null
+          use_usaspending: boolean
           logo_url: string | null
           website: string | null
           created_at: string
@@ -94,6 +95,7 @@ export interface Database {
           name: string
           slug: string
           industry?: string | null
+          use_usaspending?: boolean
           logo_url?: string | null
           website?: string | null
           created_at?: string
@@ -103,6 +105,7 @@ export interface Database {
           name?: string
           slug?: string
           industry?: string | null
+          use_usaspending?: boolean
           logo_url?: string | null
           website?: string | null
           updated_at?: string

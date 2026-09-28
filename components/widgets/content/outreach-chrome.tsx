@@ -62,7 +62,7 @@ export function OutreachChrome({ children }: { children: React.ReactNode }) {
       pushToast(
         `Added ${r.data.added}. ${r.data.duplicates} duplicate(s), ${r.data.invalid} invalid` +
           (r.data.undeliverable > 0 ? `, ${r.data.undeliverable} undeliverable (no mail server)` : '') +
-          '.',
+          '. Select contacts to process them; nothing is queued to send.',
       )
       refresh()
     },
@@ -82,9 +82,8 @@ export function OutreachChrome({ children }: { children: React.ReactNode }) {
     [ingest],
   )
 
-  // Wave-based: enrich one buffer's worth (~3 days of send capacity) per click
-  // so time-sensitive facts stay fresh. The cron tops up automatically too;
-  // click again (or wait) to enrich the next wave.
+  // Wave-based: enrich one buffer's worth (~3 days of send capacity) only
+  // after an explicit click. Importing contacts never starts this work.
   const handleRun = useCallback(async () => {
     if (!companyId) return
     setRunning(true)
@@ -295,11 +294,10 @@ export function OutreachChrome({ children }: { children: React.ReactNode }) {
             </div>
             <div style={{ fontSize: 12, color: MUTED, lineHeight: 1.6 }}>
               Paste or upload contact emails above{campaignFilter !== 'all' && campaignFilter !== 'none' ? ' — they’ll join this campaign' : ''}.
-              Enrichment then researches each company’s federal awards, writes a personalized email, and fact-checks it
-              against what it found. Anything it can’t personalize gets one of your templates instead.
+              Processing uses the company’s USAspending setting. When enabled, it researches federal awards and drafts a fact-checked email; otherwise, it creates a template draft.
             </div>
             <div style={{ fontSize: 11, color: MUTED, marginTop: 10, lineHeight: 1.6 }}>
-              You approve the personalized drafts; nothing sends until you turn sending on.
+              Importing only saves contacts. Process them when ready, then review and schedule any emails you want to send.
             </div>
           </div>
         </div>

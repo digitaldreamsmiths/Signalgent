@@ -20,6 +20,7 @@ export async function POST(request: Request) {
     companyName?: string
     industry?: string | null
     website?: string | null
+    useUsaspending?: boolean
   }
   try {
     body = await request.json()
@@ -68,6 +69,7 @@ export async function POST(request: Request) {
       slug: slugify(companyName),
       industry: body.industry ?? null,
       website: body.website ?? null,
+      use_usaspending: body.useUsaspending !== false,
     })
   if (companyError) {
     return NextResponse.json({ error: companyError.message, step: 'company' }, { status: 500 })

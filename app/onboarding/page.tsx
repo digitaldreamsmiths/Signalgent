@@ -50,6 +50,7 @@ export default function OnboardingPage() {
   const [companyName, setCompanyName] = useState('')
   const [industry, setIndustry] = useState('')
   const [website, setWebsite] = useState('')
+  const [useUsaspending, setUseUsaspending] = useState(true)
 
   function handleWorkspaceNameChange(value: string) {
     setWorkspaceName(value)
@@ -76,6 +77,7 @@ export default function OnboardingPage() {
           companyName,
           industry: industry || null,
           website: normalizeWebsiteUrl(website),
+          useUsaspending,
         }),
       })
 
@@ -217,6 +219,7 @@ export default function OnboardingPage() {
                   placeholder="example.com"
                 />
               </div>
+              <label className="flex items-start gap-2 text-sm text-foreground"><input type="checkbox" checked={useUsaspending} onChange={(e) => setUseUsaspending(e.target.checked)} className="mt-1" /><span>Search USAspending for federal contract activity<span className="block text-xs text-muted-foreground">Turn this off if your outreach contacts are not federal contractors. They will receive your approved email templates instead.</span></span></label>
               <div className="flex gap-3">
                 <Button
                   type="button"

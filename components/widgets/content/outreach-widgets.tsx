@@ -126,9 +126,9 @@ function downloadCsv(filename: string, csv: string): void {
 const EMPTY_MSG: Record<Filter, string> = {
   contacts: 'No contacts yet — paste or upload a list of email addresses above. Everything else follows from this.',
   review: 'Nothing waiting for review. Personalized drafts land here after enrichment, for you to approve before they can send.',
-  templates: 'No template drafts waiting — templates are pre-approved copy, so they skip review and go straight to “Ready to email”.',
+  templates: 'No template drafts waiting — process contacts to create them, then review and schedule any you want to send.',
   needs_review: 'Nothing needs a manual match. Prospects appear here when the resolver finds a company but isn’t confident enough to use it.',
-  approved: 'Nothing ready to email yet. Approve drafts from “To review”, and templates land here on their own.',
+  approved: 'Nothing ready to email yet. Approve personalized drafts from “To review”, or process contacts to create template drafts.',
   exported: 'Nothing sent yet. Emails move here once they actually go out.',
   replied: 'No replies recorded yet. “Scan replies” checks your mailbox and files responses here automatically.',
   bounced: 'No bounces or unsubscribes. Anyone who lands here is suppressed from all future sending.',

@@ -20,6 +20,7 @@ import { persistOutcome, recordUsage, runEnrichmentBatch, runEnrichmentBatchForI
 import { loadSettings, getEffectiveDailyCap, todayBounds, warmupDayIndex } from './send/worker'
 import { generateFollowupTouch } from './followups'
 import { loadOfferProfile } from './offer-profile'
+import { usesUsaspending } from './usaspending-preference'
 import { fetchStoredContactNames, resolveContactName } from './contact-name'
 import { loadCampaigns } from './campaigns'
 import { effectiveLimits, loadBilling, planDailySendCap } from '@/lib/billing/billing'
@@ -499,6 +500,7 @@ export async function resolveManual(
   if (!name) return { ok: false, error: 'Enter a company name to resolve against.' }
 
   const supabase = await createClient()
+  if (!(await usesUsaspending(supabase, companyId))) return { ok: false, error: 'USAspending search is turned off for this company.' }
   const { data: prospect } = await supabase
     .from('outreach_prospects')
     .select('email')

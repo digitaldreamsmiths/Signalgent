@@ -13,11 +13,11 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database, Json } from '@/lib/types/database.types'
 import { runPipeline, type PipelineOutcome } from './pipeline'
+import { usesUsaspending } from './usaspending-preference'
 import { fetchAllPages } from './fetch-all'
 import { loadOfferProfile, DEFAULT_OFFER_PROFILE, type OfferProfile } from './offer-profile'
 import { enrichmentHeadroom } from '@/lib/billing/billing'
 import { applyGreeting, fetchStoredContactNames, resolveContactName } from './contact-name'
-import { autoQueueDraftSend } from './send/queue'
 import { buildTemplateDraft, renderTemplate } from './template'
 import type { DraftResult } from './types'
 import type { LLMUsage } from '../../llm/client'
@@ -147,11 +147,10 @@ export async function persistOutcome(
     // Can't personalize -> attach a generic, sendable template (empty
     // facts_for_draft marks it as a template, no fabricated claims). Rotate a
     // random active user template, stamping template_id for performance tracking.
-    // Templates are pre-approved copy, so the draft skips review ('approved')
-    // and goes straight for the send queue; autoQueueDraftSend silently leaves
-    // it in Ready to email when sending isn't configured yet.
+    // Templates are pre-approved copy, so they skip text review. A person
+    // must still schedule the send explicitly.
     const { draft: tmpl, template_id } = await pickTemplateDraft(supabase, companyId, enriched?.recipient_name ?? null, prospectId, profile)
-    const { data: created } = await supabase
+    await supabase
       .from('outreach_drafts')
       .upsert(
         {
@@ -171,9 +170,6 @@ export async function persistOutcome(
         },
         { onConflict: 'prospect_id,step' },
       )
-      .select('id')
-      .maybeSingle()
-    if (created) await autoQueueDraftSend(supabase, companyId, created.id)
   }
 }
 
@@ -227,12 +223,10 @@ export async function backfillTemplateDrafts(supabase: DB, companyId: string): P
       template_id,
     })
   }
-  const { data: created, error } = await supabase
+  const { error } = await supabase
     .from('outreach_drafts')
     .upsert(rows, { onConflict: 'prospect_id,step' })
-    .select('id')
   if (error) return 0
-  for (const d of created ?? []) await autoQueueDraftSend(supabase, companyId, d.id)
   return rows.length
 }
 
@@ -252,7 +246,8 @@ export interface EnrichBatchResult {
 export async function runEnrichmentBatch(supabase: DB, companyId: string, limit: number, userId: string | null): Promise<EnrichBatchResult> {
   // Plan quota first: enrichment is the LLM spend, so an exhausted month has to
   // stop before any calls are made. Infinity for unmanaged/uncapped tenants.
-  const headroom = await enrichmentHeadroom(supabase, companyId)
+  const useUsaspending = await usesUsaspending(supabase, companyId)
+  const headroom = useUsaspending ? await enrichmentHeadroom(supabase, companyId) : Infinity
   if (headroom <= 0) {
     await backfillTemplateDrafts(supabase, companyId)
     const { count } = await supabase
@@ -282,7 +277,9 @@ export async function runEnrichmentBatch(supabase: DB, companyId: string, limit:
   let drafted = 0
   let skipped = 0
   for (const p of pending) {
-    const outcome = await runPipeline(p.email, usage, profile)
+    const outcome: PipelineOutcome = useUsaspending
+      ? await runPipeline(p.email, usage, profile)
+      : { status: 'skipped', email: p.email, stage: 'enrich', reason: 'USAspending search disabled for this company' }
     await persistOutcome(supabase, companyId, p.id, outcome, profile, resolveContactName(storedNames.get(p.id), p.email))
     if (outcome.status === 'drafted') drafted += 1
     else skipped += 1
@@ -317,7 +314,8 @@ export async function runEnrichmentBatchForIds(
 
   // Same quota gate as the wave path — a hand-picked "Process selected" spends
   // the same LLM budget as an automatic run.
-  const headroom = await enrichmentHeadroom(supabase, companyId)
+  const useUsaspending = await usesUsaspending(supabase, companyId)
+  const headroom = useUsaspending ? await enrichmentHeadroom(supabase, companyId) : Infinity
   if (headroom <= 0) {
     return { processed: 0, drafted: 0, skipped: 0, remaining: ids.length, cost_usd: 0, processedIds: [], quota_exhausted: true }
   }
@@ -343,7 +341,9 @@ export async function runEnrichmentBatchForIds(
   let skipped = 0
   const processedIds: string[] = []
   for (const p of pending) {
-    const outcome = await runPipeline(p.email, usage, profile)
+    const outcome: PipelineOutcome = useUsaspending
+      ? await runPipeline(p.email, usage, profile)
+      : { status: 'skipped', email: p.email, stage: 'enrich', reason: 'USAspending search disabled for this company' }
     await persistOutcome(supabase, companyId, p.id, outcome, profile, resolveContactName(storedNames.get(p.id), p.email))
     processedIds.push(p.id)
     if (outcome.status === 'drafted') drafted += 1

@@ -44,6 +44,7 @@ export function AddCompanyModal({ open, onClose }: AddCompanyModalProps) {
   const [name, setName] = useState('')
   const [industry, setIndustry] = useState('')
   const [website, setWebsite] = useState('')
+  const [useUsaspending, setUseUsaspending] = useState(true)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -53,6 +54,7 @@ export function AddCompanyModal({ open, onClose }: AddCompanyModalProps) {
     setName('')
     setIndustry('')
     setWebsite('')
+    setUseUsaspending(true)
     setError(null)
     setLoading(false)
   }
@@ -99,6 +101,7 @@ export function AddCompanyModal({ open, onClose }: AddCompanyModalProps) {
         slug,
         industry: industry || null,
         website: normalizeWebsiteUrl(website),
+        use_usaspending: useUsaspending,
       })
       .select()
       .single()
@@ -113,7 +116,8 @@ export function AddCompanyModal({ open, onClose }: AddCompanyModalProps) {
           name: name.trim(),
           slug,
           industry: industry || null,
-          website: website || null,
+          website: normalizeWebsiteUrl(website),
+          use_usaspending: useUsaspending,
         })
         .select()
         .single()
@@ -243,6 +247,8 @@ export function AddCompanyModal({ open, onClose }: AddCompanyModalProps) {
               placeholder="yoursite.com"
             />
           </div>
+
+          <label style={{ display: 'flex', gap: 8, color: '#ddd', fontSize: 12 }}><input type="checkbox" checked={useUsaspending} onChange={(e) => setUseUsaspending(e.target.checked)} /><span>Search USAspending for federal contract activity<br /><small style={{ color: '#888' }}>Turn off for non-federal contacts; use email templates instead.</small></span></label>
 
           <button
             type="submit"

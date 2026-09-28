@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useCompany } from '@/contexts/company-context'
 import { getOfferProfile, saveOfferProfile } from '@/lib/integrations/outreach/offer-actions'
 import { DEFAULT_OFFER_PROFILE, type OfferProfile } from '@/lib/integrations/outreach/offer-profile'
+import { setUsaspendingPreference } from '@/lib/integrations/outreach/usaspending-actions'
 
 const BORDER = 'var(--app-border)'
 const MUTED = 'var(--app-muted)'
@@ -33,12 +34,14 @@ function Field({ title, help, children }: { title: string; help?: string; childr
  * runs on the built-in defaults shown here.
  */
 export default function OfferProfilePage() {
-  const { activeCompany } = useCompany()
+  const { activeCompany, refreshCompanies } = useCompany()
   const companyId = activeCompany?.id ?? null
 
   const [profile, setProfile] = useState<OfferProfile | null>(null)
   const [artifactsText, setArtifactsText] = useState('')
   const [saving, setSaving] = useState(false)
+  const [savingPreference, setSavingPreference] = useState(false)
+  const [useUsaspending, setUseUsaspending] = useState(true)
   const [status, setStatus] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null)
 
   useEffect(() => {
@@ -47,11 +50,12 @@ export default function OfferProfilePage() {
     ;(async () => {
       const p = (await getOfferProfile(companyId)) ?? { ...DEFAULT_OFFER_PROFILE }
       if (!active) return
+      setUseUsaspending(activeCompany?.use_usaspending ?? true)
       setProfile(p)
       setArtifactsText(p.artifacts.join('\n'))
     })()
     return () => { active = false }
-  }, [companyId])
+  }, [companyId, activeCompany?.use_usaspending])
 
   if (!companyId) return <div style={{ fontSize: 12, color: MUTED }}>Select a company first.</div>
   if (!profile) return <div style={{ fontSize: 12, color: MUTED }}>Loading…</div>
@@ -69,6 +73,15 @@ export default function OfferProfilePage() {
     setStatus(r.ok ? { kind: 'ok', text: 'Saved. New drafts and sends use this profile.' } : { kind: 'error', text: r.error })
   }
 
+  const savePreference = async () => {
+    setSavingPreference(true)
+    setStatus(null)
+    const result = await setUsaspendingPreference(companyId, useUsaspending)
+    if (result.ok) await refreshCompanies()
+    setSavingPreference(false)
+    setStatus(result.ok ? { kind: 'ok', text: 'USAspending setting saved for this company.' } : { kind: 'error', text: result.error })
+  }
+
   return (
     <div style={{ maxWidth: 560 }}>
       <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--app-text)', marginBottom: 4 }}>Offer profile</div>
@@ -77,6 +90,10 @@ export default function OfferProfilePage() {
         signature fallbacks all read from here. Existing drafts are not rewritten — this applies to new ones.
       </p>
 
+      <Field title="Federal contract research" help="When off, new prospects go straight to your email templates. No USAspending lookup or federal-award personalization runs for this company.">
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}><input type="checkbox" checked={useUsaspending} onChange={(e) => setUseUsaspending(e.target.checked)} /> Search USAspending for these contacts</label>
+        <button type="button" onClick={savePreference} disabled={savingPreference} style={{ marginTop: 8, fontSize: 11, border: `1px solid ${BORDER}`, borderRadius: 5, padding: "5px 10px", background: "var(--app-input)", color: "var(--app-text)" }}>{savingPreference ? "Saving…" : "Save research setting"}</button>
+      </Field>
       <Field title="Product name" help="As it appears mid-sentence in an email.">
         <input style={input} value={profile.product} onChange={(e) => set({ product: e.target.value })} />
       </Field>
