@@ -36,6 +36,10 @@ export async function saveSendSettings(
     throw err
   }
   const supabase = await createClient()
+  const { data: company } = await supabase.from('companies').select('is_sample').eq('id', companyId).single()
+  if (!company) return { ok: false, error: 'Company profile unavailable.' }
+  const effectiveProvider = patch.provider ?? (await loadSettings(supabase, companyId)).provider
+  if (company.is_sample && effectiveProvider !== 'dry_run' && patch.active !== false) return { ok: false, error: 'Sample companies can only use Dry run sending.' }
   // Normalize the send window to 24h "HH:MM" — scheduling reads it back with
   // parseWallTime, but a canonical stored form keeps the UI and any other
   // reader honest. Reject what can't be parsed instead of storing it.
@@ -118,6 +122,8 @@ export async function queueDraftSend(companyId: string, draftId: string): Promis
   const supabase = await createClient()
 
   const settings = await loadSettings(supabase, companyId)
+  const { data: company } = await supabase.from('companies').select('is_sample').eq('id', companyId).single()
+  if (!company || (company.is_sample && settings.provider !== 'dry_run')) return { ok: false, error: 'Sample companies can only use Dry run sending.' }
   if (!settings.active) return { ok: false, error: 'Turn on sending in Sending settings first.' }
   if (!settings.sender_email?.trim()) return { ok: false, error: 'Set a sender email in Sending settings first.' }
   if (settings.provider === 'gmail') {

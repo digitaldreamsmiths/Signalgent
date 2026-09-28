@@ -78,6 +78,15 @@ export interface Database {
       }
       companies: {
         Row: {
+          is_sample: boolean
+          legacy_sourcegent_defaults: boolean
+          description: string
+          contact_email: string
+          contact_phone: string
+          linkedin_name: string
+          instagram_name: string
+          facebook_name: string
+          pinterest_name: string
           id: string
           workspace_id: string
           name: string
@@ -90,6 +99,15 @@ export interface Database {
           updated_at: string
         }
         Insert: {
+          is_sample?: boolean
+          legacy_sourcegent_defaults?: boolean
+          description?: string
+          contact_email?: string
+          contact_phone?: string
+          linkedin_name?: string
+          instagram_name?: string
+          facebook_name?: string
+          pinterest_name?: string
           id?: string
           workspace_id: string
           name: string
@@ -102,6 +120,15 @@ export interface Database {
           updated_at?: string
         }
         Update: {
+          is_sample?: boolean
+          legacy_sourcegent_defaults?: boolean
+          description?: string
+          contact_email?: string
+          contact_phone?: string
+          linkedin_name?: string
+          instagram_name?: string
+          facebook_name?: string
+          pinterest_name?: string
           name?: string
           slug?: string
           industry?: string | null

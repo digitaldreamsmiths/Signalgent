@@ -36,8 +36,6 @@ export async function saveOfferProfile(companyId: string, profile: OfferProfile)
     ['site', 'Site'],
     ['sign_off', 'Sign-off'],
     ['signature_name', 'Signature name'],
-    ['user_count', 'User count phrase'],
-    ['pipeline', 'Results phrase'],
     ['audience', 'Audience'],
     ['pitch', 'Pitch'],
   ]

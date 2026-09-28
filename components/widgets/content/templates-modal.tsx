@@ -2,7 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { listTemplates, createTemplate, updateTemplate, deleteTemplate } from '@/lib/integrations/outreach/template-actions'
-import { TEMPLATE_LIBRARY } from '@/lib/integrations/outreach/template-library'
+import { templateLibraryFor, generalTemplateLibraryFor } from '@/lib/integrations/outreach/template-library'
+import { getOfferProfile } from '@/lib/integrations/outreach/offer-actions'
+import { useCompany } from '@/contexts/company-context'
 import { replyRiskWarnings } from '@/lib/integrations/outreach/hygiene'
 import type { OutreachTemplate, TemplateStat } from '@/lib/integrations/outreach/types'
 
@@ -46,6 +48,8 @@ export function TemplatesModal({
   onClose: () => void
   onChanged: () => void
 }) {
+  const { activeCompany } = useCompany()
+  const [starters, setStarters] = useState<ReturnType<typeof templateLibraryFor>>([])
   const [templates, setTemplates] = useState<OutreachTemplate[] | null>(null)
   const [form, setForm] = useState<FormState | null>(null)
   const [busy, setBusy] = useState(false)
@@ -54,7 +58,17 @@ export function TemplatesModal({
   const fileRef = useRef<HTMLInputElement>(null)
 
   const load = async () => setTemplates(await listTemplates(companyId))
-  useEffect(() => { load() }, [companyId]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    getOfferProfile(companyId).then(profile => {
+      if (profile?.product) setStarters(activeCompany?.use_usaspending === false ? generalTemplateLibraryFor(profile) : templateLibraryFor(profile))
+      else setStarters([])
+    })
+  }, [companyId, activeCompany?.use_usaspending])
+  useEffect(() => {
+    let active = true
+    listTemplates(companyId).then(rows => { if (active) setTemplates(rows) })
+    return () => { active = false }
+  }, [companyId])
 
   function set<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((f) => (f ? { ...f, [key]: value } : f))
@@ -70,7 +84,7 @@ export function TemplatesModal({
 
   /** Load one of the built-in variants into the editor as a starting point. */
   function startFrom(key: string) {
-    const v = TEMPLATE_LIBRARY.find((t) => t.key === key)
+    const v = starters.find((t) => t.key === key)
     if (!v) return
     setError(null)
     setForm((f) => ({ ...(f ?? EMPTY_FORM), id: f?.id ?? null, name: f?.name?.trim() || v.name, subject: v.subject, body: v.body }))
@@ -209,7 +223,7 @@ export function TemplatesModal({
             <div>
               <label style={labelStyle}>Start from</label>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                {TEMPLATE_LIBRARY.map((v) => (
+                {starters.map((v) => (
                   <button key={v.key} onClick={() => startFrom(v.key)} style={{ ...btnGhost(), fontWeight: 500, fontSize: 11, padding: '4px 9px' }}>
                     {v.name}
                   </button>

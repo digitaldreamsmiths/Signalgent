@@ -69,6 +69,7 @@ async function pickTemplateDraft(
   recipientName: string | null,
   prospectId: string,
   profile: OfferProfile = DEFAULT_OFFER_PROFILE,
+  federal = true,
 ): Promise<{ draft: DraftResult; template_id: string | null }> {
   const { data: templates } = await supabase
     .from('outreach_templates')
@@ -79,7 +80,7 @@ async function pickTemplateDraft(
   // No user templates: rotate the five built-in variants instead of sending one
   // email to everybody. Keyed off the prospect id rather than randomly, so a
   // later follow-up derives the same variant without a column to remember it.
-  if (active.length === 0) return { draft: buildTemplateDraft(recipientName, prospectId, profile), template_id: null }
+  if (active.length === 0) return { draft: buildTemplateDraft(recipientName, prospectId, profile, federal), template_id: null }
 
   // Weighted random across the active set.
   const total = active.reduce((s, t) => s + Math.max(1, t.weight), 0)
@@ -104,6 +105,7 @@ export async function persistOutcome(
   contactName: string | null = null,
 ): Promise<void> {
   const enriched = 'enriched' in outcome ? outcome.enriched : undefined
+  const federal = await usesUsaspending(supabase, companyId)
   const prospectUpdate: ProspectUpdate = { enriched_at: new Date().toISOString() }
   if (enriched) {
     prospectUpdate.recipient_name = enriched.recipient_name
@@ -149,7 +151,7 @@ export async function persistOutcome(
     // random active user template, stamping template_id for performance tracking.
     // Templates are pre-approved copy, so they skip text review. A person
     // must still schedule the send explicitly.
-    const { draft: tmpl, template_id } = await pickTemplateDraft(supabase, companyId, enriched?.recipient_name ?? null, prospectId, profile)
+    const { draft: tmpl, template_id } = await pickTemplateDraft(supabase, companyId, enriched?.recipient_name ?? null, prospectId, profile, federal)
     await supabase
       .from('outreach_drafts')
       .upsert(
@@ -203,10 +205,11 @@ export async function backfillTemplateDrafts(supabase: DB, companyId: string): P
 
   // Rotate independently per prospect so the fallback pool is spread across the list.
   const profile = await loadOfferProfile(supabase, companyId)
+  const federal = await usesUsaspending(supabase, companyId)
   const storedNames = await fetchStoredContactNames(supabase, companyId, missing.map((p) => p.id))
   const rows = []
   for (const p of missing) {
-    const { draft: tmpl, template_id } = await pickTemplateDraft(supabase, companyId, p.recipient_name ?? null, p.id, profile)
+    const { draft: tmpl, template_id } = await pickTemplateDraft(supabase, companyId, p.recipient_name ?? null, p.id, profile, federal)
     rows.push({
       prospect_id: p.id,
       company_id: companyId,

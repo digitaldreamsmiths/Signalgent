@@ -1,8 +1,9 @@
 'use client'
 
 import { useState } from 'react'
-import { createClient } from '@/lib/supabase/client'
-import { normalizeWebsiteUrl } from '@/lib/utils'
+import { CompanyProfileFields } from '@/components/company-profile-fields'
+import { EMPTY_COMPANY_PROFILE, EMPTY_OFFER_PROFILE } from '@/lib/company-profile'
+import { createCompanyWithProfile } from '@/lib/company-profile-actions'
 import { useCompany } from '@/contexts/company-context'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -27,24 +28,19 @@ const INDUSTRIES = [
   'Other',
 ]
 
-function slugify(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '')
-}
-
 interface AddCompanyModalProps {
   open: boolean
   onClose: () => void
 }
 
 export function AddCompanyModal({ open, onClose }: AddCompanyModalProps) {
-  const { refreshCompanies, setActiveCompany } = useCompany()
+  const { activeCompany, refreshCompanies, setActiveCompany } = useCompany()
   const [name, setName] = useState('')
   const [industry, setIndustry] = useState('')
   const [website, setWebsite] = useState('')
-  const [useUsaspending, setUseUsaspending] = useState(true)
+  const [useUsaspending, setUseUsaspending] = useState(false)
+  const [identity, setIdentity] = useState({ ...EMPTY_COMPANY_PROFILE })
+  const [offer, setOffer] = useState({ ...EMPTY_OFFER_PROFILE })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -54,7 +50,9 @@ export function AddCompanyModal({ open, onClose }: AddCompanyModalProps) {
     setName('')
     setIndustry('')
     setWebsite('')
-    setUseUsaspending(true)
+    setUseUsaspending(false)
+    setIdentity({ ...EMPTY_COMPANY_PROFILE })
+    setOffer({ ...EMPTY_OFFER_PROFILE })
     setError(null)
     setLoading(false)
   }
@@ -76,79 +74,24 @@ export function AddCompanyModal({ open, onClose }: AddCompanyModalProps) {
     setLoading(true)
     setError(null)
 
-    const supabase = createClient()
-
-    // Get workspace ID
-    const { data: workspaces } = await supabase
-      .from('workspaces')
-      .select('id')
-      .limit(1)
-      .single()
-
-    if (!workspaces) {
-      setError('No workspace found. Please complete onboarding first.')
+    if (!activeCompany) {
+      setError('Select a company in the workspace first.')
       setLoading(false)
       return
     }
 
-    let slug = slugify(name.trim())
-
-    const { data, error: insertError } = await supabase
-      .from('companies')
-      .insert({
-        workspace_id: workspaces.id,
-        name: name.trim(),
-        slug,
-        industry: industry || null,
-        website: normalizeWebsiteUrl(website),
-        use_usaspending: useUsaspending,
-      })
-      .select()
-      .single()
-
-    // Handle slug conflict — retry with random suffix
-    if (insertError?.code === '23505') {
-      slug = `${slug}-${Math.floor(1000 + Math.random() * 9000)}`
-      const { data: retryData, error: retryError } = await supabase
-        .from('companies')
-        .insert({
-          workspace_id: workspaces.id,
-          name: name.trim(),
-          slug,
-          industry: industry || null,
-          website: normalizeWebsiteUrl(website),
-          use_usaspending: useUsaspending,
-        })
-        .select()
-        .single()
-
-      if (retryError) {
-        setError('Could not add company. Please try again.')
-        setLoading(false)
-        return
-      }
-
-      if (retryData) {
-        await refreshCompanies()
-        setActiveCompany(retryData)
-        resetForm()
-        onClose()
-        return
-      }
-    }
-
-    if (insertError) {
-      setError('Could not add company. Please try again.')
+    const result = await createCompanyWithProfile(activeCompany.id, {
+      name, industry, website, useUsaspending, identity, offer,
+    })
+    if (!result.ok) {
+      setError(result.error)
       setLoading(false)
       return
     }
-
-    if (data) {
-      await refreshCompanies()
-      setActiveCompany(data)
-      resetForm()
-      onClose()
-    }
+    await refreshCompanies()
+    setActiveCompany(result.data)
+    resetForm()
+    onClose()
   }
 
   return (
@@ -170,7 +113,9 @@ export function AddCompanyModal({ open, onClose }: AddCompanyModalProps) {
           border: '1px solid #2a2a2a',
           borderRadius: 14,
           padding: 28,
-          width: 420,
+          width: 680,
+          maxHeight: '90vh',
+          overflowY: 'auto',
           maxWidth: 'calc(100vw - 40px)',
           position: 'relative',
         }}
@@ -247,6 +192,8 @@ export function AddCompanyModal({ open, onClose }: AddCompanyModalProps) {
               placeholder="yoursite.com"
             />
           </div>
+
+          <CompanyProfileFields identity={identity} setIdentity={setIdentity} offer={offer} setOffer={setOffer} />
 
           <label style={{ display: 'flex', gap: 8, color: '#ddd', fontSize: 12 }}><input type="checkbox" checked={useUsaspending} onChange={(e) => setUseUsaspending(e.target.checked)} /><span>Search USAspending for federal contract activity<br /><small style={{ color: '#888' }}>Turn off for non-federal contacts; use email templates instead.</small></span></label>
 

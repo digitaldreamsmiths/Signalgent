@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server'
 import { createClient as createSsrClient } from '@/lib/supabase/server'
 import { createClient as createServiceClient } from '@supabase/supabase-js'
 import type { Database } from '@/lib/types/database.types'
+import { companyProfileValues, type CompanyProfileInput } from '@/lib/company-profile'
+import type { OfferProfile } from '@/lib/integrations/outreach/offer-profile'
 
 function slugify(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')
@@ -21,6 +23,8 @@ export async function POST(request: Request) {
     industry?: string | null
     website?: string | null
     useUsaspending?: boolean
+    identity?: CompanyProfileInput
+    offer?: OfferProfile
   }
   try {
     body = await request.json()
@@ -33,6 +37,14 @@ export async function POST(request: Request) {
   const companyName = body.companyName?.trim()
   if (!workspaceName || !workspaceSlug || !companyName) {
     return NextResponse.json({ error: 'workspaceName, workspaceSlug, and companyName are required' }, { status: 400 })
+  }
+
+  const identity = body.identity
+  const offer = body.offer
+  if (!identity?.description?.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(identity.contact_email ?? '') ||
+      !offer?.product?.trim() || !offer.site?.trim() || !offer.signature_name?.trim() ||
+      !offer.audience?.trim() || !offer.pitch?.trim() || !offer.artifacts?.some(a => a.trim())) {
+    return NextResponse.json({ error: 'Complete the company identity and outreach offer.' }, { status: 400 })
   }
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
@@ -58,10 +70,11 @@ export async function POST(request: Request) {
     .from('workspace_members')
     .insert({ workspace_id: workspace.id, user_id: user.id, role: 'owner' })
   if (memberError) {
+    await svc.from('workspaces').delete().eq('id', workspace.id)
     return NextResponse.json({ error: memberError.message, step: 'member' }, { status: 500 })
   }
 
-  const { error: companyError } = await svc
+  const { data: company, error: companyError } = await svc
     .from('companies')
     .insert({
       workspace_id: workspace.id,
@@ -69,10 +82,25 @@ export async function POST(request: Request) {
       slug: slugify(companyName),
       industry: body.industry ?? null,
       website: body.website ?? null,
-      use_usaspending: body.useUsaspending !== false,
+      use_usaspending: body.useUsaspending === true,
+      ...companyProfileValues(identity),
     })
-  if (companyError) {
-    return NextResponse.json({ error: companyError.message, step: 'company' }, { status: 500 })
+    .select('id')
+    .single()
+  if (companyError || !company) {
+    await svc.from('workspaces').delete().eq('id', workspace.id)
+    return NextResponse.json({ error: companyError?.message ?? 'company insert failed', step: 'company' }, { status: 500 })
+  }
+
+  const { error: offerError } = await svc.from('outreach_offer_profiles').insert({
+    company_id: company.id, product: offer.product.trim(), site: offer.site.trim(),
+    sign_off: offer.sign_off.trim() || 'Best', signature_name: offer.signature_name.trim(),
+    user_count: offer.user_count.trim(), pipeline: offer.pipeline.trim(), audience: offer.audience.trim(),
+    pitch: offer.pitch.trim(), artifacts: offer.artifacts.map(a => a.trim()).filter(Boolean),
+  })
+  if (offerError) {
+    await svc.from('workspaces').delete().eq('id', workspace.id)
+    return NextResponse.json({ error: offerError.message, step: 'offer profile' }, { status: 500 })
   }
 
   return NextResponse.json({ ok: true, workspaceId: workspace.id })

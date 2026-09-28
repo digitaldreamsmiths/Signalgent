@@ -28,6 +28,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/lib/types/database.types'
 import { draftEmail } from './draft'
 import { buildTemplateFollowup } from './template'
+import { usesUsaspending } from './usaspending-preference'
 import { loadOfferProfile } from './offer-profile'
 import { applyGreeting, fetchStoredContactNames, resolveContactName } from './contact-name'
 import { autoQueueDraftSend } from './send/queue'
@@ -151,7 +152,7 @@ export async function generateFollowupTouch(
   } else {
     // Same seed as the opener, so the nudge continues that variant's question
     // rather than opening an unrelated one.
-    const tmpl = buildTemplateFollowup(p.recipient_name ?? null, prospectId, profile)
+    const tmpl = buildTemplateFollowup(p.recipient_name ?? null, prospectId, profile, await usesUsaspending(supabase, companyId))
     row = {
       subject: tmpl.subject,
       body: applyGreeting(tmpl.body, contactName),

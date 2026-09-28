@@ -59,6 +59,9 @@ function header(raw: string) { return raw.replace(/[\r\n]/g, ' ').trim() }
 export async function sendMail(companyId: string, accountId: string, input: MailInput): Promise<Result<string>> {
   let claimed = false
   try {
+    const db = await createClient()
+    const { data: company } = await db.from('companies').select('is_sample').eq('id', companyId).single()
+    if (!company || company.is_sample) return { ok: false, error: 'Sample companies cannot send live email.' }
     const creds = await credentials(companyId, accountId)
     if (!validUuid(input.operationId) || !input.body.trim() || input.body.length > 100000 || input.subject.length > 300) return { ok: false, error: 'Add a message and a subject under 300 characters.' }
     let to = addresses(input.to)
@@ -78,7 +81,6 @@ export async function sendMail(companyId: string, accountId: string, input: Mail
       if (value('Message-ID')) { threadHeaders.push(`In-Reply-To: ${value('Message-ID')}`); threadHeaders.push(`References: ${value('References')} ${value('Message-ID')}`) }
     }
     if (!to || !subject) return { ok: false, error: 'Add a recipient and subject.' }
-    const db = await createClient()
     const operation = await db.from('platform_mail_operations').insert({ id: input.operationId, company_id: companyId, account_id: accountId, status: 'sending' })
     if (operation.error) {
       const { data: previous } = await db.from('platform_mail_operations').select('status, provider_message_id').eq('id', input.operationId).eq('company_id', companyId).eq('account_id', accountId).maybeSingle()

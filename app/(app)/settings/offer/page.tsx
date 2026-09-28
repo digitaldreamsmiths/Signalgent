@@ -2,142 +2,74 @@
 
 import { useEffect, useState } from 'react'
 import { useCompany } from '@/contexts/company-context'
+import { CompanyProfileFields } from '@/components/company-profile-fields'
+import { EMPTY_COMPANY_PROFILE, EMPTY_OFFER_PROFILE, type CompanyProfileInput } from '@/lib/company-profile'
 import { getOfferProfile, saveOfferProfile } from '@/lib/integrations/outreach/offer-actions'
-import { DEFAULT_OFFER_PROFILE, type OfferProfile } from '@/lib/integrations/outreach/offer-profile'
-import { setUsaspendingPreference } from '@/lib/integrations/outreach/usaspending-actions'
+import type { OfferProfile } from '@/lib/integrations/outreach/offer-profile'
+import { saveCompanyProfile } from '@/lib/company-profile-actions'
 
-const BORDER = 'var(--app-border)'
-const MUTED = 'var(--app-muted)'
-const ACCENT = '#b4441e'
-
-const label: React.CSSProperties = { display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--app-text-2)', marginBottom: 4 }
-const hint: React.CSSProperties = { fontSize: 10, color: MUTED, marginTop: 3, lineHeight: 1.4 }
-const input: React.CSSProperties = {
-  width: '100%', background: 'var(--app-input)', border: `1px solid ${BORDER}`, borderRadius: 6,
-  color: 'var(--app-text)', fontSize: 12, padding: '7px 9px',
-}
-
-function Field({ title, help, children }: { title: string; help?: string; children: React.ReactNode }) {
-  return (
-    <div style={{ marginBottom: 14 }}>
-      <label style={label}>{title}</label>
-      {children}
-      {help && <div style={hint}>{help}</div>}
-    </div>
-  )
-}
-
-/**
- * Settings → Offer profile. What the outreach pipeline pitches: fed into the
- * drafting register, the built-in template rotation, and signature fallbacks.
- * Until a profile is saved (or before its migration is applied) the pipeline
- * runs on the built-in defaults shown here.
- */
-export default function OfferProfilePage() {
+export default function CompanyProfilePage() {
   const { activeCompany, refreshCompanies } = useCompany()
   const companyId = activeCompany?.id ?? null
-
-  const [profile, setProfile] = useState<OfferProfile | null>(null)
-  const [artifactsText, setArtifactsText] = useState('')
-  const [saving, setSaving] = useState(false)
-  const [savingPreference, setSavingPreference] = useState(false)
+  const [name, setName] = useState('')
+  const [industry, setIndustry] = useState('')
+  const [website, setWebsite] = useState('')
   const [useUsaspending, setUseUsaspending] = useState(true)
-  const [status, setStatus] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null)
+  const [identity, setIdentity] = useState<CompanyProfileInput>({ ...EMPTY_COMPANY_PROFILE })
+  const [offer, setOffer] = useState<OfferProfile>({ ...EMPTY_OFFER_PROFILE })
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [status, setStatus] = useState('')
 
   useEffect(() => {
-    if (!companyId) return
+    if (!activeCompany) return
     let active = true
     ;(async () => {
-      const p = (await getOfferProfile(companyId)) ?? { ...DEFAULT_OFFER_PROFILE }
+      const savedOffer = await getOfferProfile(activeCompany.id)
       if (!active) return
-      setUseUsaspending(activeCompany?.use_usaspending ?? true)
-      setProfile(p)
-      setArtifactsText(p.artifacts.join('\n'))
+      setName(activeCompany.name)
+      setIndustry(activeCompany.industry ?? '')
+      setWebsite(activeCompany.website ?? '')
+      setUseUsaspending(activeCompany.use_usaspending)
+      setIdentity({
+        description: activeCompany.description, contact_email: activeCompany.contact_email,
+        contact_phone: activeCompany.contact_phone, linkedin_name: activeCompany.linkedin_name,
+        instagram_name: activeCompany.instagram_name, facebook_name: activeCompany.facebook_name,
+        pinterest_name: activeCompany.pinterest_name,
+      })
+      setOffer(savedOffer ?? { ...EMPTY_OFFER_PROFILE })
+      setLoading(false)
     })()
     return () => { active = false }
-  }, [companyId, activeCompany?.use_usaspending])
+  }, [activeCompany])
 
-  if (!companyId) return <div style={{ fontSize: 12, color: MUTED }}>Select a company first.</div>
-  if (!profile) return <div style={{ fontSize: 12, color: MUTED }}>Loading…</div>
+  if (!companyId) return <p>Select a company first.</p>
+  if (loading) return <p>Loading company profile…</p>
 
-  const set = (patch: Partial<OfferProfile>) => setProfile((p) => (p ? { ...p, ...patch } : p))
-
-  const save = async () => {
+  const save = async (event: React.FormEvent) => {
+    event.preventDefault()
     setSaving(true)
-    setStatus(null)
-    const r = await saveOfferProfile(companyId, {
-      ...profile,
-      artifacts: artifactsText.split('\n').map((a) => a.trim()).filter(Boolean),
-    })
+    setStatus('')
+    const business = await saveCompanyProfile(companyId, { name, industry, website, useUsaspending, identity })
+    if (!business.ok) { setStatus(business.error); setSaving(false); return }
+    const pitch = await saveOfferProfile(companyId, { ...offer, artifacts: offer.artifacts.map(a => a.trim()).filter(Boolean) })
+    if (!pitch.ok) { setStatus(pitch.error); setSaving(false); return }
+    await refreshCompanies()
+    setStatus('Company profile saved. Each workspace tab now uses this company’s details.')
     setSaving(false)
-    setStatus(r.ok ? { kind: 'ok', text: 'Saved. New drafts and sends use this profile.' } : { kind: 'error', text: r.error })
   }
 
-  const savePreference = async () => {
-    setSavingPreference(true)
-    setStatus(null)
-    const result = await setUsaspendingPreference(companyId, useUsaspending)
-    if (result.ok) await refreshCompanies()
-    setSavingPreference(false)
-    setStatus(result.ok ? { kind: 'ok', text: 'USAspending setting saved for this company.' } : { kind: 'error', text: result.error })
-  }
-
-  return (
-    <div style={{ maxWidth: 560 }}>
-      <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--app-text)', marginBottom: 4 }}>Offer profile</div>
-      <p style={{ fontSize: 11, color: MUTED, marginTop: 0, marginBottom: 18, lineHeight: 1.5 }}>
-        What outreach pitches on your behalf. The AI drafting rules, the built-in template rotation, and
-        signature fallbacks all read from here. Existing drafts are not rewritten — this applies to new ones.
-      </p>
-
-      <Field title="Federal contract research" help="When off, processing uses your email templates after you save this offer profile. No USAspending lookup or federal-award personalization runs for this company.">
-        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}><input type="checkbox" checked={useUsaspending} onChange={(e) => setUseUsaspending(e.target.checked)} /> Search USAspending for these contacts</label>
-        <button type="button" onClick={savePreference} disabled={savingPreference} style={{ marginTop: 8, fontSize: 11, border: `1px solid ${BORDER}`, borderRadius: 5, padding: "5px 10px", background: "var(--app-input)", color: "var(--app-text)" }}>{savingPreference ? "Saving…" : "Save research setting"}</button>
-      </Field>
-      <Field title="Product name" help="As it appears mid-sentence in an email.">
-        <input style={input} value={profile.product} onChange={(e) => set({ product: e.target.value })} />
-      </Field>
-      <Field title="Site" help="Bare domain for the signature, e.g. sourcegent.io — no https://.">
-        <input style={input} value={profile.site} onChange={(e) => set({ site: e.target.value })} />
-      </Field>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-        <Field title="Sign-off" help='e.g. "Best".'>
-          <input style={input} value={profile.sign_off} onChange={(e) => set({ sign_off: e.target.value })} />
-        </Field>
-        <Field title="Signature name">
-          <input style={input} value={profile.signature_name} onChange={(e) => set({ signature_name: e.target.value })} />
-        </Field>
-      </div>
-      <Field title="Audience" help='Who receives these emails, e.g. "a government contractor". Completes the sentence "a cold outreach email to …".'>
-        <input style={input} value={profile.audience} onChange={(e) => set({ audience: e.target.value })} />
-      </Field>
-      <Field title="Pitch" help="One or two concrete sentences describing what the product does. Lands mid-paragraph in emails, so it must read as prose. Name real artifacts, not benefits.">
-        <textarea style={{ ...input, minHeight: 64, resize: 'vertical' }} value={profile.pitch} onChange={(e) => set({ pitch: e.target.value })} />
-      </Field>
-      <Field title="Concrete artifacts" help="One per line. The AI must name at least one of these in every personalized email — they are what makes the pitch specific.">
-        <textarea style={{ ...input, minHeight: 96, resize: 'vertical', fontFamily: 'var(--font-mono)' }} value={artifactsText} onChange={(e) => setArtifactsText(e.target.value)} />
-      </Field>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-        <Field title="User count phrase" help='Social proof, phrased for prose: "About twenty contractors". Never inflated.'>
-          <input style={input} value={profile.user_count} onChange={(e) => set({ user_count: e.target.value })} />
-        </Field>
-        <Field title="Results phrase" help='Aggregate outcome: "over $4M in active pursuits".'>
-          <input style={input} value={profile.pipeline} onChange={(e) => set({ pipeline: e.target.value })} />
-        </Field>
-      </div>
-
-      <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 6 }}>
-        <button
-          onClick={save}
-          disabled={saving}
-          style={{ fontSize: 12, fontWeight: 600, color: '#fff', background: ACCENT, border: 'none', borderRadius: 6, padding: '7px 16px', cursor: 'pointer' }}
-        >
-          {saving ? 'Saving…' : 'Save profile'}
-        </button>
-        {status && (
-          <span style={{ fontSize: 11, color: status.kind === 'ok' ? '#1D9E75' : '#d98a8a' }}>{status.text}</span>
-        )}
-      </div>
+  const input = 'w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground'
+  return <form onSubmit={save} className="max-w-2xl space-y-5">
+    <div><h2 className="text-lg font-semibold text-foreground">Company profile</h2><p className="text-sm text-muted-foreground">Details for this company only. Edit its contact, social, and outreach identity here.</p></div>
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <label className="block space-y-1 text-sm font-medium text-foreground">Company name<input className={input} value={name} onChange={e => setName(e.target.value)} required /></label>
+      <label className="block space-y-1 text-sm font-medium text-foreground">Industry<input className={input} value={industry} onChange={e => setIndustry(e.target.value)} /></label>
+      <label className="block space-y-1 text-sm font-medium text-foreground">Website<input className={input} value={website} onChange={e => setWebsite(e.target.value)} placeholder="example.com" /></label>
     </div>
-  )
+    <CompanyProfileFields identity={identity} setIdentity={setIdentity} offer={offer} setOffer={setOffer} />
+    <label className="flex items-start gap-2 text-sm text-foreground"><input type="checkbox" checked={useUsaspending} onChange={e => setUseUsaspending(e.target.checked)} className="mt-1" /><span>Search USAspending for federal contract activity<span className="block text-xs text-muted-foreground">Turn this off for non-federal contacts. Processing then uses general email templates based on this company’s offer.</span></span></label>
+    <button type="submit" disabled={saving} className="rounded-md bg-foreground px-4 py-2 text-sm font-semibold text-background">{saving ? 'Saving…' : 'Save company profile'}</button>
+    {status && <p role="status" className="text-sm text-foreground">{status}</p>}
+  </form>
 }

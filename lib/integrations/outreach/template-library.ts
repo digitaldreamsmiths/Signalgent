@@ -158,6 +158,22 @@ export function templateLibraryFor(p: OfferProfile): readonly TemplateVariant[] 
   ]
 }
 
+/** Neutral starters for companies that do not use federal award research. */
+export function generalTemplateLibraryFor(p: OfferProfile): readonly TemplateVariant[] {
+  const proof = [p.user_count, p.pipeline].filter(Boolean).join('; ')
+  const intro = `${p.pitch}${proof ? ` ${proof}.` : ''}`
+  return [
+    { key: 'general-intro', name: 'Simple introduction', subject: `question about ${p.product}`,
+      body: ['Hi,', '', `I work on ${p.product}. ${intro}`, '', 'Would this be relevant to your team?'].join('\n'),
+      followupSubject: `question about ${p.product}`,
+      followupBody: ['Hi,', '', `Following up on my note about ${p.product}.`, '', 'Would a short example be useful?'].join('\n') },
+    { key: 'general-routing', name: 'Find the right person', subject: 'quick question',
+      body: ['Hi,', '', `Who handles ${p.audience} at {company}?`, '', `${intro}`, '', 'Could you point me to the right person?'].join('\n'),
+      followupSubject: 'quick question',
+      followupBody: ['Hi,', '', 'Just checking whether you saw my earlier question.', '', 'Who would be the right person to speak with?'].join('\n') },
+  ]
+}
+
 /** The default-profile library, for client surfaces that have no tenant profile
  * in hand yet (the template editor's starters). */
 export const TEMPLATE_LIBRARY: readonly TemplateVariant[] = templateLibraryFor(DEFAULT_OFFER_PROFILE)

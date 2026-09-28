@@ -433,6 +433,8 @@ export async function runQueue(supabase: DB, companyId: string): Promise<{ sent:
 
   const settings = await loadSettings(supabase, companyId)
   if (!settings.active) return { sent: 0, failed: 0, recovered }
+  const { data: company } = await supabase.from('companies').select('is_sample').eq('id', companyId).single()
+  if (!company || (company.is_sample && settings.provider !== 'dry_run')) return { sent: 0, failed: 0, recovered }
 
   let provider
   try {

@@ -64,7 +64,7 @@ export async function getSetupStatus(companyId: string): Promise<SetupStatus | n
     {
       key: 'offer',
       title: 'Describe what you sell',
-      why: 'Every email is written from this. Without it, drafts pitch the built-in example instead of your offer.',
+      why: 'Every email is written from this company’s offer. Complete it before processing contacts.',
       state: profileRow ? 'done' : 'todo',
       detail: profileRow ? 'Saved' : undefined,
       action: 'offer_profile',
@@ -100,7 +100,7 @@ export async function getSetupStatus(companyId: string): Promise<SetupStatus | n
     {
       key: 'prospects',
       title: 'Add prospects',
-      why: 'Paste or upload a list of contact emails. Enrichment researches each one and drafts the email.',
+      why: 'Paste or upload contact emails. Importing saves them; processing is a separate step.',
       state: prospectCount > 0 ? 'done' : 'todo',
       detail: prospectCount > 0 ? `${prospectCount.toLocaleString('en-US')} added` : undefined,
       action: 'add_prospects',

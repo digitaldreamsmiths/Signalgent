@@ -18,6 +18,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/lib/types/database.types'
+import { EMPTY_OFFER_PROFILE } from '@/lib/company-profile'
 
 export interface OfferProfile {
   /** Product name as it appears in prose ("SourceGent"). */
@@ -85,8 +86,10 @@ export async function loadOfferProfile(supabase: DB, companyId: string): Promise
     .select('*')
     .eq('company_id', companyId)
     .maybeSingle()
-  if (error || !data) return { ...DEFAULT_OFFER_PROFILE }
-  const d = DEFAULT_OFFER_PROFILE
+  const { data: company, error: companyError } = await supabase.from('companies').select('legacy_sourcegent_defaults').eq('id', companyId).single()
+  if (companyError || !company) throw new Error('Could not load the company profile.')
+  const d = company.legacy_sourcegent_defaults ? DEFAULT_OFFER_PROFILE : EMPTY_OFFER_PROFILE
+  if (error || !data) return { ...d }
   return {
     product: data.product?.trim() || d.product,
     site: data.site?.trim() || d.site,

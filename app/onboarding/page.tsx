@@ -14,6 +14,8 @@ import {
 } from '@/components/ui/select'
 import { Card, CardContent } from '@/components/ui/card'
 import { normalizeWebsiteUrl } from '@/lib/utils'
+import { CompanyProfileFields } from '@/components/company-profile-fields'
+import { EMPTY_COMPANY_PROFILE, EMPTY_OFFER_PROFILE } from '@/lib/company-profile'
 
 const INDUSTRIES = [
   'Technology',
@@ -50,7 +52,9 @@ export default function OnboardingPage() {
   const [companyName, setCompanyName] = useState('')
   const [industry, setIndustry] = useState('')
   const [website, setWebsite] = useState('')
-  const [useUsaspending, setUseUsaspending] = useState(true)
+  const [useUsaspending, setUseUsaspending] = useState(false)
+  const [identity, setIdentity] = useState({ ...EMPTY_COMPANY_PROFILE })
+  const [offer, setOffer] = useState({ ...EMPTY_OFFER_PROFILE })
 
   function handleWorkspaceNameChange(value: string) {
     setWorkspaceName(value)
@@ -78,6 +82,8 @@ export default function OnboardingPage() {
           industry: industry || null,
           website: normalizeWebsiteUrl(website),
           useUsaspending,
+          identity,
+          offer,
         }),
       })
 
@@ -109,7 +115,7 @@ export default function OnboardingPage() {
       </div>
 
       {/* Progress bar */}
-      <div className="mb-8 w-full max-w-md">
+      <div className="mb-8 w-full max-w-2xl">
         <div className="flex items-center gap-2 mb-2">
           <span className={`text-xs font-medium ${step >= 1 ? 'text-foreground' : 'text-muted-foreground'}`}>
             Workspace
@@ -126,7 +132,7 @@ export default function OnboardingPage() {
         </div>
       </div>
 
-      <Card className="w-full max-w-md">
+      <Card className="w-full max-w-2xl">
         <CardContent className="pt-6">
           {error && (
             <div className="mb-4 rounded-lg bg-destructive/10 px-3 py-2.5 text-sm text-destructive">
@@ -220,6 +226,7 @@ export default function OnboardingPage() {
                 />
               </div>
               <label className="flex items-start gap-2 text-sm text-foreground"><input type="checkbox" checked={useUsaspending} onChange={(e) => setUseUsaspending(e.target.checked)} className="mt-1" /><span>Search USAspending for federal contract activity<span className="block text-xs text-muted-foreground">Turn this off if your outreach contacts are not federal contractors. They will receive your approved email templates instead.</span></span></label>
+              <CompanyProfileFields identity={identity} setIdentity={setIdentity} offer={offer} setOffer={setOffer} />
               <div className="flex gap-3">
                 <Button
                   type="button"

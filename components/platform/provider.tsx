@@ -4,12 +4,13 @@ import { createContext, useContext, useEffect, useState, useCallback, type React
 import { readWorkspace, readWorkspaceAccounts, saveContent, saveContact, saveCampaign, disconnectAccount } from '@/lib/platform/actions'
 import { validateContent, validateContact, validateCampaign } from '@/lib/platform/validation'
 import { previewWorkspace } from '@/lib/platform/preview'
+import type { Company } from '@/lib/types'
 import { EMPTY_WORKSPACE, type WorkspaceData, type ContentItem, type Contact, type Campaign, type Result } from '@/lib/platform/types'
 
 type Editor = { kind: 'content'; item?: ContentItem; channel?: 'email' | 'linkedin'; date?: string } | { kind: 'contact'; item?: Contact } | { kind: 'campaign'; item?: Campaign } | null
 interface PlatformContextValue {
   data: WorkspaceData; loading: boolean; error: string; notice: string; preview: boolean;
-  companyId: string; companyName: string; editor: Editor; setEditor: (e: Editor) => void;
+  companyId: string; companyName: string; company: Company | null; editor: Editor; setEditor: (e: Editor) => void;
   refresh: () => Promise<void>; notify: (message: string) => void;
   persistContent: (item: ContentItem) => Promise<Result<ContentItem>>;
   persistContact: (item: Contact) => Promise<Result<Contact>>;
@@ -18,7 +19,7 @@ interface PlatformContextValue {
   href: (path: string) => string;
 }
 const Context = createContext<PlatformContextValue | null>(null)
-export function PlatformProvider({ children, companyId = '', companyName = 'Your workspace', preview = false }: { children: ReactNode; companyId?: string; companyName?: string; preview?: boolean }) {
+export function PlatformProvider({ children, companyId = '', companyName = 'Your workspace', company = null, preview = false }: { children: ReactNode; companyId?: string; companyName?: string; company?: Company | null; preview?: boolean }) {
   const [data, setData] = useState<WorkspaceData>(EMPTY_WORKSPACE)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -76,6 +77,6 @@ export function PlatformProvider({ children, companyId = '', companyName = 'Your
     if (result.ok) { setData(d => ({ ...d, accounts: d.accounts.filter(a => a.id !== id) })); setNotice('Account disconnected') } else setNotice(result.error)
     return result
   }
-  return <Context.Provider value={{ data, loading, error, notice, preview, companyId, companyName, editor, setEditor, refresh, notify: setNotice, persistContent, persistContact, persistCampaign, removeAccount, href: path => preview ? `/preview${path}` : path }}>{children}</Context.Provider>
+  return <Context.Provider value={{ data, loading, error, notice, preview, companyId, companyName, company, editor, setEditor, refresh, notify: setNotice, persistContent, persistContact, persistCampaign, removeAccount, href: path => preview ? `/preview${path}` : path }}>{children}</Context.Provider>
 }
 export function usePlatform() { const context = useContext(Context); if (!context) throw new Error('Platform provider missing'); return context }

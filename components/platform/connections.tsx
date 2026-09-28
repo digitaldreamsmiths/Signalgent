@@ -8,7 +8,7 @@ import { usePlatform } from './provider'
 const PREVIEW_NOTICE = 'Connections are disabled in the sample workspace. Sign in to manage your accounts.'
 
 export function Connections() {
-  const { data, preview, companyId, notify, removeAccount } = usePlatform()
+  const { data, preview, companyId, company, notify, removeAccount } = usePlatform()
   const connectHref = (provider: Provider) => companyId ? `${provider.path}?companyId=${encodeURIComponent(companyId)}` : undefined
   const legacy = PROVIDERS.filter(p => p.group === 'other' && data.accounts.some(a => a.service === p.id))
   const groups: { id: string; title: string; note?: string; providers: Provider[] }[] = [
@@ -32,6 +32,7 @@ export function Connections() {
 
   return <>
     <div className="sg-page-heading"><div><h1>Your channels. One home.</h1><p>Connect your accounts and see exactly what each connection supports.</p></div></div>
+    {company && <section className="sg-connections-group"><h2>Company identities</h2><p className="sg-group-note">Names supplied in the company profile. A name here does not mean the account is connected.</p><div className="sg-connections-grid">{([['Email', company.contact_email], ['LinkedIn', company.linkedin_name], ['Instagram', company.instagram_name], ['Facebook', company.facebook_name], ['Pinterest', company.pinterest_name]] as const).map(([service, value]) => <article className="sg-connection-card" key={service}><h3>{service}</h3><p>{value || 'Not added yet'}</p></article>)}</div></section>}
     {groups.map(group => <section className="sg-connections-group" key={group.id} aria-labelledby={`connections-${group.id}`}>
       <h2 id={`connections-${group.id}`}>{group.title}</h2>
       {group.note && <p className="sg-group-note">{group.note}</p>}

@@ -154,6 +154,7 @@ export function CompanySwitcher() {
                     <CompanyAvatar name={company.name} size={32} />
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 13, color: 'var(--app-text)' }}>{company.name}</div>
+                      {company.is_sample && <div style={{ fontSize: 10, color: 'var(--app-muted)', marginTop: 1 }}>Sample · Dry run only</div>}
                       {company.industry && (
                         <div style={{ fontSize: 11, color: 'var(--app-muted)', marginTop: 1 }}>{company.industry}</div>
                       )}

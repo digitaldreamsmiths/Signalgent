@@ -9,11 +9,11 @@ import { LogOut } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 export function AppWorkspace({ children }: { children: React.ReactNode }) {
-  return <ModeProvider><CompanyProvider><ConnectedAccountsProvider><CompanyWorkspace>{children}</CompanyWorkspace></ConnectedAccountsProvider></CompanyProvider></ModeProvider>
+  return <ModeProvider><CompanyProvider><CompanyWorkspace>{children}</CompanyWorkspace></CompanyProvider></ModeProvider>
 }
 function CompanyWorkspace({ children }: { children: React.ReactNode }) {
   const { activeCompany, isLoading } = useCompany()
   const router = useRouter()
   if (isLoading) return <div className="sg-workspace sg-loading">Opening your business…</div>
-  return <PlatformProvider key={activeCompany?.id ?? 'none'} companyId={activeCompany?.id} companyName={activeCompany?.name}><WorkspaceShell companyControl={<CompanySwitcher />} userControl={<button className="sg-nav-link" onClick={async () => { await createClient().auth.signOut(); router.push('/login'); router.refresh() }}><LogOut size={16} />Sign out</button>}>{children}</WorkspaceShell></PlatformProvider>
+  return <ConnectedAccountsProvider key={activeCompany?.id ?? 'none'}><PlatformProvider key={activeCompany?.id ?? 'none'} companyId={activeCompany?.id} companyName={activeCompany?.name} company={activeCompany}><WorkspaceShell companyControl={<CompanySwitcher />} userControl={<button className="sg-nav-link" onClick={async () => { await createClient().auth.signOut(); router.push('/login'); router.refresh() }}><LogOut size={16} />Sign out</button>}>{children}</WorkspaceShell></PlatformProvider></ConnectedAccountsProvider>
 }

@@ -16,7 +16,7 @@
 
 import { sanitizeDashes } from './draft'
 import { DEFAULT_OFFER_PROFILE, type OfferProfile } from './offer-profile'
-import { TEMPLATE_LIBRARY, templateLibraryFor, type TemplateVariant } from './template-library'
+import { TEMPLATE_LIBRARY, templateLibraryFor, generalTemplateLibraryFor, type TemplateVariant } from './template-library'
 import type { DraftResult } from './types'
 
 export { TEMPLATE_LIBRARY, type TemplateVariant }
@@ -108,8 +108,8 @@ function hashKey(key: string): number {
 
 /** The built-in variant this prospect is assigned to. Stable across calls
  * because the library length is fixed and the hash keys off the prospect id. */
-export function variantFor(seed?: string | null, profile: OfferProfile = DEFAULT_OFFER_PROFILE): TemplateVariant {
-  const library = templateLibraryFor(profile)
+export function variantFor(seed?: string | null, profile: OfferProfile = DEFAULT_OFFER_PROFILE, federal = true): TemplateVariant {
+  const library = federal ? templateLibraryFor(profile) : generalTemplateLibraryFor(profile)
   if (!seed) return library[0]
   return library[hashKey(seed) % library.length]
 }
@@ -119,8 +119,9 @@ export function buildTemplateDraft(
   recipientName?: string | null,
   seed?: string | null,
   profile: OfferProfile = DEFAULT_OFFER_PROFILE,
+  federal = true,
 ): DraftResult {
-  const v = variantFor(seed, profile)
+  const v = variantFor(seed, profile, federal)
   const rendered = renderTemplate({ subject: v.subject, body: v.body }, recipientName)
   return { ...rendered, body: sanitizeDashes(rendered.body.trimEnd() + defaultSignature(profile)) }
 }
@@ -133,8 +134,9 @@ export function buildTemplateFollowup(
   recipientName?: string | null,
   seed?: string | null,
   profile: OfferProfile = DEFAULT_OFFER_PROFILE,
+  federal = true,
 ): DraftResult {
-  const v = variantFor(seed, profile)
+  const v = variantFor(seed, profile, federal)
   const rendered = renderTemplate({ subject: v.followupSubject, body: v.followupBody }, recipientName)
   return { ...rendered, body: sanitizeDashes(rendered.body.trimEnd() + defaultSignature(profile)) }
 }

@@ -46,6 +46,8 @@ export async function insertSendRows(
 export async function autoQueueDraftSend(supabase: DB, companyId: string, draftId: string): Promise<boolean> {
   try {
     const settings = await loadSettings(supabase, companyId)
+    const { data: company } = await supabase.from('companies').select('is_sample').eq('id', companyId).single()
+    if (!company || (company.is_sample && settings.provider !== 'dry_run')) return false
     if (!settings.active || !settings.sender_email?.trim()) return false
     if (settings.provider === 'gmail') {
       const gmail = await getAccount(companyId, 'gmail', supabase)
