@@ -72,7 +72,7 @@ export function ScheduleDialog({
         <div style={{ fontSize: 11, color: MUTED, marginBottom: 12, lineHeight: 1.5 }}>
           {count} email{count === 1 ? '' : 's'} starting <span style={{ color: TEXT }}>{whenLabel}</span>
           {gapMinutes ? `, ~${gapMinutes} min apart` : ''}
-          {dailyLimit ? `, up to ${dailyLimit}/day (overflow rolls to the next day).` : '.'}
+          {dailyLimit ? `, up to ${dailyLimit}/day.` : '.'} Sends on unselected days roll to the next allowed day in Sending settings.
         </div>
 
         {error && <div style={{ fontSize: 11, color: '#d98a8a', marginBottom: 10 }}>{error}</div>}

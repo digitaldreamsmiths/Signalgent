@@ -40,6 +40,12 @@ export async function saveSendSettings(
   if (!company) return { ok: false, error: 'Company profile unavailable.' }
   const effectiveProvider = patch.provider ?? (await loadSettings(supabase, companyId)).provider
   if (company.is_sample && effectiveProvider !== 'dry_run' && patch.active !== false) return { ok: false, error: 'Sample companies can only use Dry run sending.' }
+  if (patch.send_days !== undefined &&
+      (!Array.isArray(patch.send_days) || patch.send_days.length < 1 || patch.send_days.length > 7 ||
+       new Set(patch.send_days).size !== patch.send_days.length ||
+       !patch.send_days.every((day) => Number.isInteger(day) && day >= 0 && day <= 6))) {
+    return { ok: false, error: 'Select at least one valid sending day.' }
+  }
   if (effectiveProvider === 'outlook') {
     patch.followup_enabled = false
     patch.bounce_pause_enabled = false

@@ -12,11 +12,13 @@ const INPUT = 'var(--app-input)'
 const TEXT = 'var(--app-text)'
 const MUTED = 'var(--app-muted)'
 const ACCENT = '#b4441e'
+const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
 const DEFAULTS: SendSettings = {
   sender_name: '', sender_email: '', reply_to: '',
   daily_send_limit: 25, send_window_start: '09:00', send_window_end: '17:00',
   timezone: 'America/New_York', min_gap_minutes: 6,
+  send_days: [1, 2, 3, 4, 5],
   signature: '', physical_address: '', unsubscribe_line: '',
   provider: 'dry_run', active: false, pause_reason: null,
   warmup_enabled: true, warmup_start_per_day: 10, warmup_increment_per_day: 5, warmup_started_at: null,
@@ -191,6 +193,15 @@ export function SendingSettingsModal({ companyId, onClose, onSaved }: { companyI
               <div><label style={labelStyle}>Window end</label><input value={form.send_window_end} onChange={(e) => set('send_window_end', e.target.value)} style={inputStyle} placeholder="17:00" /></div>
             </div>
             <div style={{ fontSize: 10, color: MUTED, marginTop: -6 }}>24-hour HH:MM, or add am/pm (e.g. “8:00 pm”).</div>
+            <div>
+              <span style={labelStyle}>Send on</span>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {DAYS.map((day, index) => <label key={day} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: TEXT }}>
+                  <input type="checkbox" checked={form.send_days.includes(index)} onChange={(e) => set('send_days', e.target.checked ? [...form.send_days, index].sort() : form.send_days.filter((d) => d !== index))} />{day}
+                </label>)}
+              </div>
+              <div style={{ fontSize: 10, color: MUTED, marginTop: 4 }}>Only selected days in this company’s timezone. At least one day is required.</div>
+            </div>
 
             <div><label style={labelStyle}>Physical address (CAN-SPAM)</label><textarea value={form.physical_address ?? ''} onChange={(e) => set('physical_address', e.target.value)} rows={2} style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit' }} placeholder="123 Main St, City, ST 00000" /></div>
             <div><label style={labelStyle}>Unsubscribe line</label><input value={form.unsubscribe_line ?? ''} onChange={(e) => set('unsubscribe_line', e.target.value)} style={inputStyle} placeholder="Reply STOP to opt out." /></div>

@@ -30,6 +30,7 @@ export const SETTINGS_DEFAULTS: SendSettings = {
   send_window_start: '09:00',
   send_window_end: '17:00',
   timezone: 'America/New_York',
+  send_days: [1, 2, 3, 4, 5],
   min_gap_minutes: 6,
   signature: null,
   physical_address: null,
@@ -61,6 +62,7 @@ export async function loadSettings(supabase: DB, companyId: string): Promise<Sen
     send_window_start: data.send_window_start,
     send_window_end: data.send_window_end,
     timezone: data.timezone,
+    send_days: data.send_days ?? SETTINGS_DEFAULTS.send_days,
     min_gap_minutes: data.min_gap_minutes,
     signature: data.signature,
     physical_address: data.physical_address,
@@ -136,16 +138,9 @@ function dayKeyOf(w: { y: number; mo: number; d: number }): string {
   return `${w.y}-${w.mo}-${w.d}`
 }
 
-/**
- * Whether a day may carry sends under the weekend policy: weekdays always, and
- * a weekend day only when it is the one the user explicitly asked to start on.
- *
- * Pure and exported for testing — the scheduling functions around it need a
- * Supabase client, and this rule is the part worth pinning down.
- */
-export function isSendableDay(w: { y: number; mo: number; d: number; weekday: number }, explicitDayKey: string | null): boolean {
-  const weekend = w.weekday === 0 || w.weekday === 6
-  return !weekend || dayKeyOf(w) === explicitDayKey
+/** A send day is selected in the company's timezone (0=Sunday). */
+export function isSendableDay(w: { weekday: number }, sendDays: number[]): boolean {
+  return sendDays.includes(w.weekday)
 }
 
 function nextDayWindowStart(w: Wall, tz: string, wsH: number, wsM: number): Date {
@@ -161,22 +156,22 @@ function wallDayNum(w: { y: number; mo: number; d: number }): number {
   return Math.floor(Date.UTC(w.y, w.mo - 1, w.d) / 86400000)
 }
 
-/** Count Mon–Fri days in [aNum, bNum] inclusive, given the weekday of aNum (0=Sun). */
-function countWeekdaysInclusive(aNum: number, bNum: number, aWeekday: number): number {
+/** Count selected days in [aNum, bNum] inclusive, given the weekday of aNum. */
+function countSendDaysInclusive(aNum: number, bNum: number, aWeekday: number, sendDays: number[]): number {
   if (bNum < aNum) return 0
   const total = bNum - aNum + 1
   const fullWeeks = Math.floor(total / 7)
-  let weekdays = fullWeeks * 5
+  let allowed = fullWeeks * sendDays.length
   const rem = total - fullWeeks * 7
   for (let i = 0; i < rem; i++) {
     const wd = (aWeekday + i) % 7
-    if (wd !== 0 && wd !== 6) weekdays++
+    if (sendDays.includes(wd)) allowed++
   }
-  return weekdays
+  return allowed
 }
 
 /** Build the per-day effective send cap. With warmup on, the cap ramps from
- * warmup_start_per_day, +warmup_increment_per_day each sending weekday since the
+ * warmup_start_per_day, +warmup_increment_per_day each selected send day since the
  * anchor (warmup_started_at, defaulting to now), up to daily_send_limit. */
 function makeCapForDay(settings: SendSettings, tz: string): (w: Wall) => number {
   const limit = settings.daily_send_limit
@@ -184,7 +179,7 @@ function makeCapForDay(settings: SendSettings, tz: string): (w: Wall) => number 
   const anchor = wallParts(settings.warmup_started_at ? new Date(settings.warmup_started_at) : new Date(), tz)
   const anchorNum = wallDayNum(anchor)
   return (w: Wall) => {
-    const idx = Math.max(0, countWeekdaysInclusive(anchorNum, wallDayNum(w), anchor.weekday) - 1)
+    const idx = Math.max(0, countSendDaysInclusive(anchorNum, wallDayNum(w), anchor.weekday, settings.send_days) - 1)
     return Math.min(limit, settings.warmup_start_per_day + idx * settings.warmup_increment_per_day)
   }
 }
@@ -210,7 +205,7 @@ export function todayBounds(settings: SendSettings, now: Date = new Date()): { s
 }
 
 /**
- * How far into the warmup ramp today is: 1-based sending-weekday index from the
+ * How far into the warmup ramp today is: 1-based selected-send-day index from the
  * anchor, or null when warmup is off or already at the full limit. Drives the
  * "day N of the ramp" hint, so a user can see why today's cap is below the
  * limit they configured.
@@ -220,12 +215,12 @@ export function warmupDayIndex(settings: SendSettings, now: Date = new Date()): 
   if (getEffectiveDailyCap(settings, now) >= settings.daily_send_limit) return null
   const tz = settings.timezone
   const anchor = wallParts(settings.warmup_started_at ? new Date(settings.warmup_started_at) : now, tz)
-  return Math.max(1, countWeekdaysInclusive(wallDayNum(anchor), wallDayNum(wallParts(now, tz)), anchor.weekday))
+  return Math.max(1, countSendDaysInclusive(wallDayNum(anchor), wallDayNum(wallParts(now, tz)), anchor.weekday, settings.send_days))
 }
 
 /**
  * The next available send slot: after the last planned send + min gap, clamped
- * into the Mon–Fri business-hours window, rolling to the next day once the daily
+ * into the selected-day send window, rolling to the next day once the daily
  * cap is hit. Returns an ISO string.
  */
 export async function nextSlot(supabase: DB, companyId: string, settings: SendSettings): Promise<string> {
@@ -280,7 +275,7 @@ export async function nextSlot(supabase: DB, companyId: string, settings: SendSe
   let slot = new Date(now.getTime())
   for (let i = 0; i < 500; i++) {
     const w = wallParts(slot, tz)
-    if (w.weekday === 0 || w.weekday === 6) { slot = nextDayWindowStart(w, tz, wsH, wsM); continue }
+    if (!isSendableDay(w, settings.send_days)) { slot = nextDayWindowStart(w, tz, wsH, wsM); continue }
     const key = `${w.y}-${w.mo}-${w.d}`
     const winStart = fromZonedWall(w.y, w.mo, w.d, wsH, wsM, tz)
     const winEnd = fromZonedWall(w.y, w.mo, w.d, weH, weM, tz)
@@ -317,15 +312,6 @@ export async function computeBatchSlots(
   const startH = startWall.h
   const startM = startWall.mi
 
-  // Weekend policy. Cold email that lands Saturday morning is both less likely
-  // to be read and more likely to read as automated, so overflow never rolls
-  // onto a weekend — but a weekend day the user *picked* is honoured, since the
-  // schedule dialog defaults to the next weekday and choosing otherwise is a
-  // deliberate act. Keyed off the REQUESTED start, not `cur`: a start clamped
-  // forward to "now" that happens to land on a Saturday was never chosen.
-  const requested = new Date(startAtIso)
-  const explicitDayKey = isNaN(requested.getTime()) ? null : dayKeyOf(wallParts(requested, tz))
-
   const exclude = new Set(excludeSendIds)
   // Same bound + paging as nextSlot: `cur` never starts before now, so older
   // rows can't affect day counts, and paging keeps a large queued backlog from
@@ -358,11 +344,10 @@ export async function computeBatchSlots(
   const capForDay = (w: Wall) => Math.min(rampForDay(w), planMax)
   const slots: string[] = []
   for (let i = 0; i < count; i++) {
-    // Roll forward past any day that's at capacity, or that the weekend policy
-    // rules out.
+    // Roll forward past any day that's at capacity or not selected.
     for (let guard = 0; guard < 800; guard++) {
       const w = wallParts(cur, tz)
-      if (isSendableDay(w, explicitDayKey) && (counts.get(dayKeyOf(w)) ?? 0) < capForDay(w)) break
+      if (isSendableDay(w, settings.send_days) && (counts.get(dayKeyOf(w)) ?? 0) < capForDay(w)) break
       cur = nextDayWindowStart(w, tz, startH, startM)
     }
     const w = wallParts(cur, tz)
@@ -433,6 +418,7 @@ export async function runQueue(supabase: DB, companyId: string): Promise<{ sent:
 
   const settings = await loadSettings(supabase, companyId)
   if (!settings.active) return { sent: 0, failed: 0, recovered }
+  if (!isSendableDay(wallParts(new Date(), settings.timezone), settings.send_days)) return { sent: 0, failed: 0, recovered }
   const { data: company } = await supabase.from('companies').select('is_sample').eq('id', companyId).single()
   if (!company || (company.is_sample && settings.provider !== 'dry_run')) return { sent: 0, failed: 0, recovered }
 

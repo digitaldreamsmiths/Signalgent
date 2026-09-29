@@ -560,6 +560,7 @@ export interface Database {
           send_window_start: string
           send_window_end: string
           timezone: string
+          send_days: number[]
           min_gap_minutes: number
           signature: string | null
           physical_address: string | null
@@ -591,6 +592,7 @@ export interface Database {
           send_window_start?: string
           send_window_end?: string
           timezone?: string
+          send_days?: number[]
           min_gap_minutes?: number
           signature?: string | null
           physical_address?: string | null
@@ -621,6 +623,7 @@ export interface Database {
           send_window_start?: string
           send_window_end?: string
           timezone?: string
+          send_days?: number[]
           min_gap_minutes?: number
           signature?: string | null
           physical_address?: string | null

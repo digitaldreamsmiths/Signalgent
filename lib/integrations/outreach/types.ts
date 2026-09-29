@@ -128,6 +128,8 @@ export interface SendSettings {
   send_window_start: string
   send_window_end: string
   timezone: string
+  /** Allowed sending days in company timezone; 0=Sunday, 6=Saturday. */
+  send_days: number[]
   min_gap_minutes: number
   signature: string | null
   physical_address: string | null

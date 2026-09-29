@@ -42,6 +42,7 @@ export async function createCompanyWithProfile(currentCompanyId: string, input: 
   const values = {
     workspace_id: access.workspaceId, name, industry: input.industry?.trim() || null,
     website: normalizeWebsiteUrl(input.website ?? ''), use_usaspending: input.useUsaspending === true,
+    is_sample: false, legacy_sourcegent_defaults: false,
     ...companyProfileValues(identity),
   }
   let slug = slugify(name)
@@ -65,6 +66,31 @@ export async function createCompanyWithProfile(currentCompanyId: string, input: 
   }
   revalidatePath('/today')
   return { ok: true, data: company }
+}
+
+export async function setCompanySampleMode(companyId: string, isSample: boolean): Promise<ActionResult> {
+  if (typeof isSample !== 'boolean') return { ok: false, error: 'Invalid company mode.' }
+  let access
+  try { access = await requireCompanyAccess(companyId) }
+  catch (error) {
+    if (error instanceof IntegrationAuthError) return { ok: false, error: 'You don’t have access to this company.' }
+    throw error
+  }
+  const userDb = await createClient()
+  const { data: membership, error: membershipError } = await userDb.from('workspace_members')
+    .select('role').eq('workspace_id', access.workspaceId).eq('user_id', access.userId).maybeSingle()
+  if (membershipError || !membership || !['owner', 'admin'].includes(membership.role)) {
+    return { ok: false, error: 'Only a workspace owner or admin can change company mode.' }
+  }
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY
+  if (!url || !key) return { ok: false, error: 'Server is missing Supabase configuration.' }
+  const db = createServiceClient<Database>(url, key, { auth: { persistSession: false, autoRefreshToken: false } })
+  const { data, error } = await db.from('companies').update({ is_sample: isSample })
+    .eq('id', companyId).eq('workspace_id', access.workspaceId).select('id').maybeSingle()
+  if (error || !data) return { ok: false, error: 'Could not change company mode.' }
+  revalidatePath('/settings/offer')
+  return { ok: true, data: undefined }
 }
 
 export async function saveCompanyProfile(companyId: string, input: {
