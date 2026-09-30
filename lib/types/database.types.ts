@@ -447,6 +447,7 @@ export interface Database {
           company_id: string
           name: string
           status: 'active' | 'archived'
+          timezone: string | null
           followup_enabled: boolean | null
           followup_wait_days: number | null
           followup_max_touches: number | null
@@ -458,6 +459,7 @@ export interface Database {
           company_id: string
           name: string
           status?: 'active' | 'archived'
+          timezone?: string | null
           followup_enabled?: boolean | null
           followup_wait_days?: number | null
           followup_max_touches?: number | null
@@ -467,6 +469,7 @@ export interface Database {
         Update: {
           name?: string
           status?: 'active' | 'archived'
+          timezone?: string | null
           followup_enabled?: boolean | null
           followup_wait_days?: number | null
           followup_max_touches?: number | null

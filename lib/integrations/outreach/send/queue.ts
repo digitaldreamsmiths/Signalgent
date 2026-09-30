@@ -11,6 +11,7 @@ import { getAccount } from '@/lib/integrations/accounts'
 import { composeEmail } from './compose'
 import { loadOfferProfile } from '../offer-profile'
 import { loadSettings, nextSlot } from './worker'
+import { timezoneForProspect } from '../campaigns'
 
 type DB = SupabaseClient<Database>
 
@@ -83,7 +84,7 @@ export async function autoQueueDraftSend(supabase: DB, companyId: string, draftI
     const unsub_token = randomUUID()
     const profile = await loadOfferProfile(supabase, companyId)
     const composed = composeEmail(draft.subject, draft.body, settings, unsub_token, profile)
-    const scheduled_at = await nextSlot(supabase, companyId, settings)
+    const scheduled_at = await nextSlot(supabase, companyId, await timezoneForProspect(supabase, companyId, draft.prospect_id, settings), settings.timezone)
 
     const base = {
       company_id: companyId,

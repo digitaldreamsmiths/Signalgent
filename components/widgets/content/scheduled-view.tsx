@@ -211,7 +211,7 @@ export function ScheduledView({ companyId, sends, onChanged }: { companyId: stri
           confirmLabel="Reschedule"
           busy={busy}
           error={error}
-          onConfirm={(iso) => act(() => rescheduleSends(companyId, selectedIds, iso))}
+          onConfirm={(iso, wall) => act(() => rescheduleSends(companyId, selectedIds, iso, wall))}
           onClose={() => setDialogOpen(false)}
         />
       )}

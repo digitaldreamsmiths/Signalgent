@@ -12,6 +12,7 @@ import { getProvider, type ProviderName } from './provider'
 import { listUnsubscribeHeaders, openPixelUrl, textToHtml, unsubscribeUrl } from './tracking'
 import { fetchAllPages } from '../fetch-all'
 import { planDailySendCap } from '@/lib/billing/billing'
+import { loadCampaigns } from '../campaigns'
 
 type DB = SupabaseClient<Database>
 
@@ -133,6 +134,17 @@ function fromZonedWall(y: number, mo: number, d: number, h: number, mi: number, 
   return new Date(guess - offset)
 }
 
+/** Interpret a chosen wall-clock date/time in a campaign's timezone. */
+export function zonedStartIso(date: string, time: string, timezone: string): string | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date)
+  const wallTime = parseWallTime(time)
+  if (!match || !wallTime) return null
+  const [, year, month, day] = match.map(Number)
+  const validDate = new Date(Date.UTC(year, month - 1, day))
+  if (validDate.getUTCFullYear() !== year || validDate.getUTCMonth() + 1 !== month || validDate.getUTCDate() !== day) return null
+  return fromZonedWall(year, month, day, wallTime[0], wallTime[1], timezone).toISOString()
+}
+
 /** Stable per-day key for the capacity map ("2026-8-7"). */
 function dayKeyOf(w: { y: number; mo: number; d: number }): string {
   return `${w.y}-${w.mo}-${w.d}`
@@ -223,7 +235,7 @@ export function warmupDayIndex(settings: SendSettings, now: Date = new Date()): 
  * into the selected-day send window, rolling to the next day once the daily
  * cap is hit. Returns an ISO string.
  */
-export async function nextSlot(supabase: DB, companyId: string, settings: SendSettings): Promise<string> {
+export async function nextSlot(supabase: DB, companyId: string, settings: SendSettings, capTimezone = settings.timezone): Promise<string> {
   const tz = settings.timezone
   let [wsH, wsM] = parseWallTime(settings.send_window_start) ?? [9, 0]
   let [weH, weM] = parseWallTime(settings.send_window_end) ?? [17, 0]
@@ -258,9 +270,10 @@ export async function nextSlot(supabase: DB, companyId: string, settings: SendSe
   const dayLatest = new Map<string, number>() // ms of the last send already on each day
   for (const d of planned) {
     const w = wallParts(d, tz)
-    const key = `${w.y}-${w.mo}-${w.d}`
-    counts.set(key, (counts.get(key) ?? 0) + 1)
-    dayLatest.set(key, Math.max(dayLatest.get(key) ?? 0, d.getTime()))
+    const capKey = dayKeyOf(wallParts(d, capTimezone))
+    counts.set(capKey, (counts.get(capKey) ?? 0) + 1)
+    const regionKey = dayKeyOf(w)
+    dayLatest.set(regionKey, Math.max(dayLatest.get(regionKey) ?? 0, d.getTime()))
   }
 
   // Fill the EARLIEST open slot from now — NOT after the whole queue. Roll forward
@@ -270,7 +283,7 @@ export async function nextSlot(supabase: DB, companyId: string, settings: SendSe
   // Plan ceiling clamps the warmup ramp, so scheduling never lays out more
   // sends per day than the tenant is entitled to.
   const planMax = await planDailySendCap(supabase, companyId)
-  const rampForDay = makeCapForDay(settings, tz)
+  const rampForDay = makeCapForDay(settings, capTimezone)
   const capForDay = (w: Wall) => Math.min(rampForDay(w), planMax)
   let slot = new Date(now.getTime())
   for (let i = 0; i < 500; i++) {
@@ -283,7 +296,8 @@ export async function nextSlot(supabase: DB, companyId: string, settings: SendSe
     const earliest = Math.max(slot.getTime(), winStart.getTime(), lastThatDay ? lastThatDay + settings.min_gap_minutes * 60000 : 0)
     slot = new Date(earliest)
     if (slot.getTime() >= winEnd.getTime()) { slot = nextDayWindowStart(w, tz, wsH, wsM); continue }
-    if ((counts.get(key) ?? 0) >= capForDay(w)) { slot = nextDayWindowStart(w, tz, wsH, wsM); continue }
+    const capWall = wallParts(slot, capTimezone)
+    if ((counts.get(dayKeyOf(capWall)) ?? 0) >= capForDay(capWall)) { slot = nextDayWindowStart(w, tz, wsH, wsM); continue }
     return slot.toISOString()
   }
   return slot.toISOString()
@@ -303,6 +317,8 @@ export async function computeBatchSlots(
   startAtIso: string,
   count: number,
   excludeSendIds: string[] = [],
+  reservedSlots: string[] = [],
+  capTimezone = settings.timezone,
 ): Promise<string[]> {
   const tz = settings.timezone
   const now = new Date()
@@ -332,26 +348,29 @@ export async function computeBatchSlots(
   const counts = new Map<string, number>()
   for (const r of rows) {
     if (exclude.has(r.id)) continue // rows being rescheduled shouldn't count against themselves
-    const w = wallParts(new Date(r.scheduled_at as string), tz)
-    const key = `${w.y}-${w.mo}-${w.d}`
+    const key = dayKeyOf(wallParts(new Date(r.scheduled_at as string), capTimezone))
+    counts.set(key, (counts.get(key) ?? 0) + 1)
+  }
+  for (const slot of reservedSlots) {
+    const key = dayKeyOf(wallParts(new Date(slot), capTimezone))
     counts.set(key, (counts.get(key) ?? 0) + 1)
   }
 
   // Plan ceiling clamps the warmup ramp, so scheduling never lays out more
   // sends per day than the tenant is entitled to.
   const planMax = await planDailySendCap(supabase, companyId)
-  const rampForDay = makeCapForDay(settings, tz)
+  const rampForDay = makeCapForDay(settings, capTimezone)
   const capForDay = (w: Wall) => Math.min(rampForDay(w), planMax)
   const slots: string[] = []
   for (let i = 0; i < count; i++) {
     // Roll forward past any day that's at capacity or not selected.
     for (let guard = 0; guard < 800; guard++) {
       const w = wallParts(cur, tz)
-      if (isSendableDay(w, settings.send_days) && (counts.get(dayKeyOf(w)) ?? 0) < capForDay(w)) break
+      const capWall = wallParts(cur, capTimezone)
+      if (isSendableDay(w, settings.send_days) && (counts.get(dayKeyOf(capWall)) ?? 0) < capForDay(capWall)) break
       cur = nextDayWindowStart(w, tz, startH, startM)
     }
-    const w = wallParts(cur, tz)
-    const key = dayKeyOf(w)
+    const key = dayKeyOf(wallParts(cur, capTimezone))
     counts.set(key, (counts.get(key) ?? 0) + 1)
     slots.push(cur.toISOString())
     cur = new Date(cur.getTime() + settings.min_gap_minutes * 60000)
@@ -418,7 +437,6 @@ export async function runQueue(supabase: DB, companyId: string): Promise<{ sent:
 
   const settings = await loadSettings(supabase, companyId)
   if (!settings.active) return { sent: 0, failed: 0, recovered }
-  if (!isSendableDay(wallParts(new Date(), settings.timezone), settings.send_days)) return { sent: 0, failed: 0, recovered }
   const { data: company } = await supabase.from('companies').select('is_sample').eq('id', companyId).single()
   if (!company || (company.is_sample && settings.provider !== 'dry_run')) return { sent: 0, failed: 0, recovered }
 
@@ -460,6 +478,23 @@ export async function runQueue(supabase: DB, companyId: string): Promise<{ sent:
     due = (plain.data ?? null) as DueRow[] | null
   } else {
     due = (withTokens.data ?? null) as unknown as DueRow[] | null
+  }
+
+  // A campaign may be in a different local day from the company. Filter before
+  // applying BATCH so a blocked region does not hide due work in another one.
+  if (due?.length) {
+    const { data: prospects, error: prospectError } = await supabase.from('outreach_prospects')
+      .select('id, campaign_id').eq('company_id', companyId)
+      .in('id', [...new Set(due.map((send) => send.prospect_id))])
+    if (prospectError) return { sent: 0, failed: 0, recovered }
+    const campaigns = new Map((await loadCampaigns(supabase, companyId)).map((campaign) => [campaign.id, campaign]))
+    const campaignByProspect = new Map((prospects ?? []).map((prospect) => [prospect.id, prospect.campaign_id]))
+    const now = new Date()
+    due = due.filter((send) => {
+      const campaignId = campaignByProspect.get(send.prospect_id)
+      const timezone = (campaignId && campaigns.get(campaignId)?.timezone) || settings.timezone
+      return isSendableDay(wallParts(now, timezone), settings.send_days)
+    })
   }
 
   // Personalized emails outrank templates. Sends carry no template marker

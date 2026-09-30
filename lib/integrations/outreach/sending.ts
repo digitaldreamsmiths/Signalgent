@@ -7,10 +7,11 @@ import { IntegrationAuthError, requireCompanyAccess } from '@/lib/integrations/a
 import type { ActionResult, ScheduledSendView, SendSettings } from './types'
 import { getAccount } from '@/lib/integrations/accounts'
 import { composeEmail } from './send/compose'
-import { computeBatchSlots, loadSettings, nextSlot, parseWallTime, runQueue } from './send/worker'
+import { computeBatchSlots, loadSettings, nextSlot, parseWallTime, runQueue, zonedStartIso } from './send/worker'
 import { insertSendRows } from './send/queue'
 import { loadOfferProfile } from './offer-profile'
 import { scanReplies } from './send/scan'
+import { loadCampaigns, timezoneForProspect } from './campaigns'
 
 const AUTH_ERROR = 'You don’t have access to this workspace.'
 
@@ -176,7 +177,7 @@ export async function queueDraftSend(companyId: string, draftId: string): Promis
   const unsub_token = randomUUID()
   const profile = await loadOfferProfile(supabase, companyId)
   const composed = composeEmail(draft.subject, draft.body, settings, unsub_token, profile)
-  const scheduled_at = await nextSlot(supabase, companyId, settings)
+  const scheduled_at = await nextSlot(supabase, companyId, await timezoneForProspect(supabase, companyId, draft.prospect_id, settings), settings.timezone)
 
   const base = {
     company_id: companyId,
@@ -263,6 +264,7 @@ export async function scheduleDraftSends(
   companyId: string,
   draftIds: string[],
   startAtIso: string,
+  startWall?: { date: string; time: string },
 ): Promise<ActionResult<{ scheduled: number; skipped: number }>> {
   try {
     await requireCompanyAccess(companyId)
@@ -292,7 +294,7 @@ export async function scheduleDraftSends(
   const prospectIds = [...new Set((drafts ?? []).map((d) => d.prospect_id))]
   const { data: prospects } = await supabase
     .from('outreach_prospects')
-    .select('id, email, disposition')
+    .select('id, email, disposition, campaign_id')
     .in('id', prospectIds.length ? prospectIds : ['00000000-0000-0000-0000-000000000000'])
   const pById = new Map((prospects ?? []).map((p) => [p.id, p]))
 
@@ -310,7 +312,22 @@ export async function scheduleDraftSends(
   const skipped = draftIds.length - eligible.length
   if (eligible.length === 0) return { ok: true, data: { scheduled: 0, skipped } }
 
-  const slots = await computeBatchSlots(supabase, companyId, settings, startAtIso, eligible.length)
+  const campaigns = new Map((await loadCampaigns(supabase, companyId)).map((campaign) => [campaign.id, campaign]))
+  const slots: string[] = Array(eligible.length)
+  const reserved: string[] = []
+  const groups = new Map<string, number[]>()
+  for (let i = 0; i < eligible.length; i++) {
+    const campaignId = pById.get(eligible[i].prospect_id)?.campaign_id
+    const timezone = (campaignId && campaigns.get(campaignId)?.timezone) || settings.timezone
+    groups.set(timezone, [...(groups.get(timezone) ?? []), i])
+  }
+  for (const [timezone, indices] of groups) {
+    const groupStart = startWall ? zonedStartIso(startWall.date, startWall.time, timezone) : startAtIso
+    if (!groupStart) return { ok: false, error: 'Choose a valid start date and time.' }
+    const groupSlots = await computeBatchSlots(supabase, companyId, { ...settings, timezone }, groupStart, indices.length, [], reserved, settings.timezone)
+    indices.forEach((index, position) => { slots[index] = groupSlots[position] })
+    reserved.push(...groupSlots)
+  }
   const profile = await loadOfferProfile(supabase, companyId)
   const rows = eligible.map((d, i) => {
     const p = pById.get(d.prospect_id)!
@@ -349,6 +366,7 @@ export async function rescheduleSends(
   companyId: string,
   sendIds: string[],
   startAtIso: string,
+  startWall?: { date: string; time: string },
 ): Promise<ActionResult<{ rescheduled: number }>> {
   try {
     await requireCompanyAccess(companyId)
@@ -362,14 +380,31 @@ export async function rescheduleSends(
 
   const { data: sends } = await supabase
     .from('outreach_sends')
-    .select('id')
+    .select('id, prospect_id')
     .eq('company_id', companyId)
     .eq('status', 'queued')
     .in('id', sendIds)
   const ids = (sends ?? []).map((s) => s.id)
   if (ids.length === 0) return { ok: true, data: { rescheduled: 0 } }
-
-  const slots = await computeBatchSlots(supabase, companyId, settings, startAtIso, ids.length, ids)
+  const campaigns = new Map((await loadCampaigns(supabase, companyId)).map((campaign) => [campaign.id, campaign]))
+  const { data: prospects } = await supabase.from('outreach_prospects').select('id, campaign_id')
+    .eq('company_id', companyId).in('id', [...new Set((sends ?? []).map((send) => send.prospect_id))])
+  const campaignByProspect = new Map((prospects ?? []).map((prospect) => [prospect.id, prospect.campaign_id]))
+  const slots: string[] = Array(ids.length)
+  const reserved: string[] = []
+  const groups = new Map<string, number[]>()
+  for (let i = 0; i < ids.length; i++) {
+    const campaignId = campaignByProspect.get(sends![i].prospect_id)
+    const timezone = (campaignId && campaigns.get(campaignId)?.timezone) || settings.timezone
+    groups.set(timezone, [...(groups.get(timezone) ?? []), i])
+  }
+  for (const [timezone, indices] of groups) {
+    const groupStart = startWall ? zonedStartIso(startWall.date, startWall.time, timezone) : startAtIso
+    if (!groupStart) return { ok: false, error: 'Choose a valid start date and time.' }
+    const groupSlots = await computeBatchSlots(supabase, companyId, { ...settings, timezone }, groupStart, indices.length, ids, reserved, settings.timezone)
+    indices.forEach((index, position) => { slots[index] = groupSlots[position] })
+    reserved.push(...groupSlots)
+  }
   for (let i = 0; i < ids.length; i++) {
     await supabase.from('outreach_sends').update({ scheduled_at: slots[i] }).eq('id', ids[i]).eq('company_id', companyId)
   }

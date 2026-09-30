@@ -44,11 +44,11 @@ export async function createCampaign(companyId: string, name: string): Promise<A
   return { ok: true, data: { id: data.id } }
 }
 
-/** Rename, archive/unarchive, or set follow-up overrides (null = inherit). */
+/** Rename, archive/unarchive, or set campaign overrides (null = inherit). */
 export async function updateCampaign(
   companyId: string,
   campaignId: string,
-  patch: Partial<Pick<OutreachCampaign, 'name' | 'status' | 'followup_enabled' | 'followup_wait_days' | 'followup_max_touches'>>,
+  patch: Partial<Pick<OutreachCampaign, 'name' | 'status' | 'timezone' | 'followup_enabled' | 'followup_wait_days' | 'followup_max_touches'>>,
 ): Promise<ActionResult> {
   try {
     await requireCompanyAccess(companyId)
@@ -57,6 +57,10 @@ export async function updateCampaign(
     throw err
   }
   if (typeof patch.name === 'string' && !patch.name.trim()) return { ok: false, error: 'A campaign needs a name.' }
+  if (patch.timezone !== undefined && patch.timezone !== null) {
+    try { new Intl.DateTimeFormat('en-US', { timeZone: patch.timezone }) }
+    catch { return { ok: false, error: 'Choose a valid timezone.' } }
+  }
   const supabase = await createClient()
   const { error } = await supabase
     .from('outreach_campaigns')

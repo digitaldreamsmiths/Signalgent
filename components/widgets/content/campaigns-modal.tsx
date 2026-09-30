@@ -11,6 +11,12 @@ const INPUT = 'var(--app-input)'
 const TEXT = 'var(--app-text)'
 const MUTED = 'var(--app-muted)'
 const ACCENT = '#b4441e'
+const US_TIMEZONES = [
+  ['America/New_York', 'Eastern'], ['America/Chicago', 'Central'],
+  ['America/Denver', 'Mountain'], ['America/Phoenix', 'Arizona (no DST)'],
+  ['America/Los_Angeles', 'Pacific'], ['America/Anchorage', 'Alaska'],
+  ['Pacific/Honolulu', 'Hawaii'],
+] as const
 
 const labelStyle: React.CSSProperties = { fontSize: 10, fontWeight: 600, color: MUTED, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4, display: 'block' }
 const inputStyle: React.CSSProperties = { width: '100%', background: INPUT, border: `1px solid ${BORDER}`, borderRadius: 6, color: TEXT, fontSize: 12, padding: '7px 9px' }
@@ -60,6 +66,14 @@ function CampaignRow({ campaign, stats, companyId, onChanged, onError }: {
       </div>
       <div style={{ fontSize: 10, color: MUTED, fontFamily: 'var(--font-mono)' }}>
         {s.prospects} prospect{s.prospects === 1 ? '' : 's'} · {s.sent} sent · {s.opened} opened · {s.replied} replied{replyRate}
+      </div>
+      <div>
+        <label style={labelStyle}>Sending timezone</label>
+        <select value={campaign.timezone ?? ''} onChange={(e) => patch({ timezone: e.target.value || null })} disabled={busy} style={inputStyle}>
+          <option value="">Inherit company timezone</option>
+          {US_TIMEZONES.map(([zone, label]) => <option key={zone} value={zone}>{label} ({zone})</option>)}
+        </select>
+        <div style={{ fontSize: 10, color: MUTED, marginTop: 4 }}>New send slots use this timezone. Existing queued sends keep their scheduled time; reschedule those you want to move.</div>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
         <div>

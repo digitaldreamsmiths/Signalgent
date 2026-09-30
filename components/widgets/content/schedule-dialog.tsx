@@ -34,7 +34,7 @@ export function ScheduleDialog({
   busy?: boolean
   error?: string | null
   confirmLabel?: string
-  onConfirm: (startIso: string) => void
+  onConfirm: (startIso: string, startWall: { date: string; time: string }) => void
   onClose: () => void
 }) {
   const init = defaultStart()
@@ -73,6 +73,7 @@ export function ScheduleDialog({
           {count} email{count === 1 ? '' : 's'} starting <span style={{ color: TEXT }}>{whenLabel}</span>
           {gapMinutes ? `, ~${gapMinutes} min apart` : ''}
           {dailyLimit ? `, up to ${dailyLimit}/day.` : '.'} Sends on unselected days roll to the next allowed day in Sending settings.
+          {' '}The chosen time is local to each campaign’s timezone (or the company timezone when inherited).
         </div>
 
         {error && <div style={{ fontSize: 11, color: '#d98a8a', marginBottom: 10 }}>{error}</div>}
@@ -81,7 +82,7 @@ export function ScheduleDialog({
           <button onClick={onClose} style={{ fontSize: 12, fontWeight: 600, color: MUTED, background: 'transparent', border: `1px solid ${BORDER}`, borderRadius: 6, padding: '7px 14px', cursor: 'pointer' }}>Cancel</button>
           <button
             disabled={busy || !valid}
-            onClick={() => valid && onConfirm(startDate!.toISOString())}
+            onClick={() => valid && onConfirm(startDate!.toISOString(), { date, time })}
             style={{ fontSize: 12, fontWeight: 600, color: '#fff', background: ACCENT, border: 'none', borderRadius: 6, padding: '7px 14px', cursor: 'pointer', opacity: busy || !valid ? 0.6 : 1 }}
           >
             {busy ? 'Scheduling…' : confirmLabel}

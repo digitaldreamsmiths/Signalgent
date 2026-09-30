@@ -19,6 +19,8 @@ export interface OutreachCampaign {
   id: string
   name: string
   status: 'active' | 'archived'
+  /** NULL = inherit the company sending timezone. */
+  timezone: string | null
   /** NULL = inherit the company-level setting; non-null wins. */
   followup_enabled: boolean | null
   followup_wait_days: number | null
@@ -44,14 +46,35 @@ export function resolveFollowupConfig(campaign: OutreachCampaign | null | undefi
   }
 }
 
+/** Apply a regional campaign timezone without changing company-wide limits. */
+export function settingsForCampaign(campaign: OutreachCampaign | null | undefined, settings: SendSettings): SendSettings {
+  return campaign?.timezone ? { ...settings, timezone: campaign.timezone } : settings
+}
+
+export async function timezoneForProspect(supabase: DB, companyId: string, prospectId: string, settings: SendSettings): Promise<SendSettings> {
+  const { data: prospect } = await supabase.from('outreach_prospects')
+    .select('campaign_id').eq('company_id', companyId).eq('id', prospectId).maybeSingle()
+  if (!prospect?.campaign_id) return settings
+  const { data: campaign } = await supabase.from('outreach_campaigns')
+    .select('timezone').eq('company_id', companyId).eq('id', prospect.campaign_id).maybeSingle()
+  return campaign?.timezone ? { ...settings, timezone: campaign.timezone } : settings
+}
+
 /** All campaigns for a company, active first then newest first. Returns [] on
  * any error (most likely: the migration hasn't been applied yet). */
 export async function loadCampaigns(supabase: DB, companyId: string): Promise<OutreachCampaign[]> {
   const { data, error } = await supabase
     .from('outreach_campaigns')
-    .select('id, name, status, followup_enabled, followup_wait_days, followup_max_touches, created_at')
+    .select('id, name, status, timezone, followup_enabled, followup_wait_days, followup_max_touches, created_at')
     .eq('company_id', companyId)
     .order('created_at', { ascending: false })
+  if (error && /timezone/.test(error.message)) {
+    const fallback = await supabase.from('outreach_campaigns')
+      .select('id, name, status, followup_enabled, followup_wait_days, followup_max_touches, created_at')
+      .eq('company_id', companyId).order('created_at', { ascending: false })
+    if (fallback.error || !fallback.data) return []
+    return fallback.data.map((campaign) => ({ ...campaign, timezone: null }))
+  }
   if (error || !data) return []
   const rows = data as OutreachCampaign[]
   return [...rows.filter((c) => c.status === 'active'), ...rows.filter((c) => c.status !== 'active')]

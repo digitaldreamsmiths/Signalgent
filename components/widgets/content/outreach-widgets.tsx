@@ -898,10 +898,10 @@ export function OutreachWorkspace({ section }: { section: Section }) {
     refresh()
   }
 
-  const handleSchedule = async (startIso: string) => {
+  const handleSchedule = async (startIso: string, startWall: { date: string; time: string }) => {
     if (!companyId || selectedDraftIds.size === 0) return
     setScheduling(true)
-    const r = await scheduleDraftSends(companyId, [...selectedDraftIds], startIso)
+    const r = await scheduleDraftSends(companyId, [...selectedDraftIds], startIso, startWall)
     setScheduling(false)
     if (!r.ok) return pushToast(r.error, 'error')
     pushToast(`Scheduled ${r.data.scheduled}${r.data.skipped ? `, ${r.data.skipped} skipped (closed or already queued)` : ''}.`)
