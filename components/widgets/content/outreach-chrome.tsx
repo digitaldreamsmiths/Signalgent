@@ -27,12 +27,14 @@ import { TemplatesModal } from './templates-modal'
  */
 export function OutreachChrome({ children }: { children: React.ReactNode }) {
   const {
-    companyId, snapshot, loading, refresh,
+    companyId, snapshot, loading, refresh, setView,
     campaigns, campaignStats, campaignFilter, setCampaignFilter,
     toasts, pushToast, dismissToast, setupKey,
   } = useOutreach()
 
   const [raw, setRaw] = useState('')
+  const [importing, setImporting] = useState(false)
+  const [prepareAfterImport, setPrepareAfterImport] = useState(false)
   const [running, setRunning] = useState(false)
   const [processing, setProcessing] = useState(false)
   const [scanning, setScanning] = useState(false)
@@ -54,22 +56,44 @@ export function OutreachChrome({ children }: { children: React.ReactNode }) {
   const ingest = useCallback(
     async (text: string, onSuccess?: () => void) => {
       if (!companyId || !text.trim()) return
+      if (importing) return
       // New prospects join the currently selected campaign ('all'/'none' → pool).
       if (campaignFilter !== 'all' && campaignFilter !== 'none' && !campaigns.some(c => c.id === campaignFilter && c.status === 'active')) {
         return pushToast('Select an active campaign before adding prospects.', 'error')
       }
-      const target = campaignFilter !== 'all' && campaignFilter !== 'none' ? campaignFilter : null
-      const r = await ingestProspects(companyId, text, target)
-      if (!r.ok) return pushToast(r.error, 'error')
-      onSuccess?.()
-      pushToast(
-        `Added ${r.data.added}. ${r.data.duplicates} duplicate(s), ${r.data.invalid} invalid` +
-          (r.data.undeliverable > 0 ? `, ${r.data.undeliverable} undeliverable (no mail server)` : '') +
-          '. Select contacts to process them; nothing is queued to send.',
-      )
-      refresh()
+      setImporting(true)
+      try {
+        const target = campaignFilter !== 'all' && campaignFilter !== 'none' ? campaignFilter : null
+        const r = await ingestProspects(companyId, text, target)
+        if (!r.ok) return pushToast(r.error, 'error')
+        onSuccess?.()
+        let prepared = ''
+        let prepareError = false
+        if (prepareAfterImport && r.data.added > 0) {
+          const wave = await enrichWaveNow(companyId)
+          prepareError = !wave.ok
+          prepared = wave.ok
+            ? ` Next wave: ${wave.data.drafted} draft(s) to review, ${wave.data.skipped} template prospect(s). Check Pipeline before scheduling.`
+            : ` Contacts were added, but draft preparation stopped: ${wave.error}`
+          if (wave.ok && (wave.data.drafted > 0 || wave.data.skipped > 0)) {
+            setView(wave.data.drafted > 0 ? 'review' : 'approved')
+            router.push('/outreach/pipeline')
+          }
+        }
+        pushToast(
+          `Added ${r.data.added}; ${r.data.duplicates} duplicate(s), ${r.data.invalid} invalid` +
+            (r.data.undeliverable > 0 ? `, ${r.data.undeliverable} undeliverable (no mail server)` : '') +
+            `.${prepared || ' Contacts are saved; prepare drafts when ready.'}`,
+          prepareError ? 'error' : 'info',
+        )
+        await refresh()
+      } catch {
+        pushToast('Import or draft preparation failed. Refresh Outreach to check what was saved.', 'error')
+      } finally {
+        setImporting(false)
+      }
     },
-    [companyId, campaignFilter, campaigns, refresh, pushToast],
+    [companyId, importing, campaignFilter, campaigns, prepareAfterImport, refresh, pushToast, router, setView],
   )
 
   const handleIngest = useCallback(() => ingest(raw, () => setRaw('')), [ingest, raw])
@@ -108,6 +132,11 @@ export function OutreachChrome({ children }: { children: React.ReactNode }) {
     const r = await processSendQueue(companyId)
     setProcessing(false)
     if (!r.ok) return pushToast(r.error, 'error')
+    if (r.data.sent === 0 && r.data.failed === 0 && r.data.recovered === 0) {
+      pushToast('No email sent. Check the scheduled time, allowed weekday, and sending status.')
+      refresh()
+      return
+    }
     pushToast(
       `Sent ${r.data.sent}${r.data.failed ? `, ${r.data.failed} failed` : ''}.` +
         (r.data.recovered ? ` Recovered ${r.data.recovered} send${r.data.recovered === 1 ? '' : 's'} stuck from an interrupted run — marked failed, verify in Gmail Sent before re-queuing.` : ''),
@@ -225,7 +254,7 @@ export function OutreachChrome({ children }: { children: React.ReactNode }) {
           placeholder="Paste contact emails (any separator)…"
           style={{ flex: 1, minWidth: 220, background: 'var(--app-input)', border: `1px solid ${BORDER}`, borderRadius: 6, color: 'var(--app-text)', fontSize: 12, padding: '8px 10px' }}
         />
-        <button onClick={handleIngest} disabled={!raw.trim()} style={btn(ACCENT)}>Add prospects</button>
+        <button onClick={handleIngest} disabled={importing || !raw.trim()} style={btn(ACCENT)}>{importing ? 'Importing…' : 'Add prospects'}</button>
         <input
           ref={fileInputRef}
           type="file"
@@ -233,14 +262,17 @@ export function OutreachChrome({ children }: { children: React.ReactNode }) {
           onChange={handleFileUpload}
           style={{ display: 'none' }}
         />
-        <button onClick={() => fileInputRef.current?.click()} style={btnGhost()} title="Upload a CSV or TXT file of email addresses">Upload file</button>
+        <button onClick={() => fileInputRef.current?.click()} disabled={importing} style={btnGhost()} title="Upload a CSV, TXT, or TSV file of email addresses">Upload file</button>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: MUTED }} title="After importing, prepare the next wave of drafts. Federal research uses billable AI credits; importing alone never sends email.">
+          <input type="checkbox" checked={prepareAfterImport} onChange={(e) => setPrepareAfterImport(e.target.checked)} disabled={importing} /> Prepare next draft wave after import
+        </label>
         <button onClick={() => setSendingModalOpen(true)} style={btnGhost()}>Sending</button>
         <button onClick={() => setTemplatesModalOpen(true)} style={btnGhost()} title="Manage the fallback templates rotated for prospects that can't be personalized, and see their performance">Manage templates</button>
         <button onClick={handleScanReplies} disabled={scanning} style={btnGhost()} title="Check Gmail for replies and bounces, then update outcomes">
           {scanning ? 'Scanning…' : 'Scan replies'}
         </button>
-        <button onClick={handleProcessQueue} disabled={processing || (c?.queued ?? 0) === 0} style={btnGhost(ACCENT)}>
-          {processing ? 'Processing…' : `Process queue${c?.queued ? ` (${c.queued})` : ''}`}
+        <button onClick={handleProcessQueue} disabled={processing || (c?.queued ?? 0) === 0} style={btnGhost(ACCENT)} title="Send queued emails whose scheduled time has arrived and whose weekday is allowed. Future sends wait for their scheduled time.">
+          {processing ? 'Sending…' : `Send due now${c?.queued ? ` (${c.queued} queued)` : ''}`}
         </button>
         <button onClick={handleRun} disabled={running || (c?.new ?? 0) === 0} style={btnGhost(ACCENT)} title="Enrich one wave (~3 days of send capacity). Keeps federal-award facts fresh instead of draining the whole list at once.">
           {running ? 'Enriching…' : `Enrich wave${c?.new ? ` (${c.new})` : ''}`}
@@ -300,7 +332,7 @@ export function OutreachChrome({ children }: { children: React.ReactNode }) {
               Processing uses the company’s USAspending setting. When enabled, it researches federal awards and drafts a fact-checked email; otherwise, it creates a template draft.
             </div>
             <div style={{ fontSize: 11, color: MUTED, marginTop: 10, lineHeight: 1.6 }}>
-              Importing only saves contacts. Process them when ready, then review and schedule any emails you want to send.
+              Choose “Prepare next draft wave after import” to create drafts in the same flow. Review personalized drafts, then schedule ready emails. Importing never sends email.
             </div>
           </div>
         </div>

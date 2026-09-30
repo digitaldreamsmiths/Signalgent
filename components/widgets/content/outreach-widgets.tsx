@@ -952,16 +952,16 @@ export function OutreachWorkspace({ section }: { section: Section }) {
                 </button>
               )}
               {filter === 'approved' && (() => {
-                // "Unqueued" mirrors what scheduleDraftSends would actually take:
-                // no send yet, or only a failed/canceled attempt.
+                // Direct path for drafts already reviewed and ready. The dialog
+                // still asks for a send time before anything enters the queue.
                 const unqueued = current.filter((p) => isUnqueued(p.draft))
                 return unqueued.length > 0 ? (
                   <button
-                    onClick={() => { setConfirmBulkDelete(false); setSelectedDraftIds(new Set(unqueued.map((p) => p.draft!.id))) }}
-                    style={btnGhost()}
-                    title={`Select only the loaded drafts that aren't already queued or sent${scopeNote}`}
+                    onClick={() => { setConfirmBulkDelete(false); setSelectedDraftIds(new Set(unqueued.map((p) => p.draft!.id))); setScheduleDialogOpen(true) }}
+                    style={btn(ACCENT)}
+                    title={`Schedule the ${unqueued.length} loaded drafts that aren't already queued or sent${scopeNote}`}
                   >
-                    Select unqueued ({unqueued.length})
+                    Schedule unqueued ({unqueued.length})
                   </button>
                 ) : null
               })()}
