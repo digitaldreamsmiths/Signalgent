@@ -7,7 +7,7 @@
 import { randomUUID } from 'node:crypto'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/lib/types/database.types'
-import { getAccount } from '@/lib/integrations/accounts'
+import { getAccountByIdentifier } from '@/lib/integrations/accounts'
 import { composeEmail } from './compose'
 import { loadOfferProfile } from '../offer-profile'
 import { loadSettings, nextSlot } from './worker'
@@ -51,8 +51,8 @@ export async function autoQueueDraftSend(supabase: DB, companyId: string, draftI
     if (!company || (company.is_sample && settings.provider !== 'dry_run')) return false
     if (!settings.active || !settings.sender_email?.trim()) return false
     if (settings.provider === 'gmail' || settings.provider === 'outlook') {
-      const mailbox = await getAccount(companyId, settings.provider, supabase)
-      if (mailbox?.status !== 'connected' || mailbox.account_identifier?.toLowerCase() !== settings.sender_email.toLowerCase()) return false
+      const mailbox = await getAccountByIdentifier(companyId, settings.provider, settings.sender_email, supabase)
+      if (mailbox?.status !== 'connected') return false
     }
 
     const { data: draft } = await supabase

@@ -43,6 +43,23 @@ export async function getAccount(
   return data
 }
 
+/** Fetch the exact mailbox selected in sending settings, not the oldest
+ * connection for this provider. A company can connect multiple mailboxes. */
+export async function getAccountByIdentifier(
+  companyId: string,
+  service: ConnectedService,
+  identifier: string,
+  client?: DbClient,
+): Promise<ConnectedAccount | null> {
+  const supabase = client ?? await createClient()
+  const { data, error } = await supabase.from('connected_accounts').select('*')
+    .eq('company_id', companyId)
+    .eq('service', service)
+  if (error) throw new Error(`getAccountByIdentifier failed: ${error.message}`)
+  const wanted = identifier.trim().toLowerCase()
+  return (data ?? []).find((account) => account.account_identifier?.toLowerCase() === wanted) ?? null
+}
+
 /** List all accounts for a company. Useful for settings pages. */
 export async function listAccounts(companyId: string): Promise<ConnectedAccount[]> {
   const supabase = await createClient()

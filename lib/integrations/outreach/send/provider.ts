@@ -82,6 +82,7 @@ function gmailProvider(ctx: SendContext): EmailProvider {
             htmlBody: msg.htmlBody, listUnsubscribe: msg.listUnsubscribe, listUnsubscribePost: msg.listUnsubscribePost,
           },
           ctx.supabase,
+          msg.from,
         )
         return { ok: true, providerMessageId: r.messageId, threadId: r.threadId, messageIdHeader: r.messageIdHeader }
       } catch (e) {

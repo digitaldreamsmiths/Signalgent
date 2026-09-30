@@ -2,7 +2,7 @@
 
 import { createClient } from '@/lib/supabase/server'
 import { IntegrationAuthError, requireCompanyAccess } from '@/lib/integrations/auth'
-import { getAccount } from '@/lib/integrations/accounts'
+import { getAccountByIdentifier } from '@/lib/integrations/accounts'
 import { loadSettings } from './send/worker'
 import { isConsumerDomain } from './dns-check'
 
@@ -49,17 +49,17 @@ export async function getSetupStatus(companyId: string): Promise<SetupStatus | n
   }
   const supabase = await createClient()
 
-  const [settings, profileRow, prospectCount, gmail, outlook] = await Promise.all([
-    loadSettings(supabase, companyId),
+  const settings = await loadSettings(supabase, companyId)
+  const senderEmail = settings.sender_email?.trim() ?? ''
+  const [profileRow, prospectCount, mailbox] = await Promise.all([
     supabase.from('outreach_offer_profiles').select('company_id').eq('company_id', companyId).maybeSingle().then((r) => r.data),
     supabase.from('outreach_prospects').select('id', { count: 'exact', head: true }).eq('company_id', companyId).then((r) => r.count ?? 0),
-    getAccount(companyId, 'gmail').catch(() => null),
-    getAccount(companyId, 'outlook').catch(() => null),
+    senderEmail && (settings.provider === 'gmail' || settings.provider === 'outlook')
+      ? getAccountByIdentifier(companyId, settings.provider, senderEmail).catch(() => null)
+      : Promise.resolve(null),
   ])
 
-  const senderEmail = settings.sender_email?.trim() ?? ''
   const senderDomain = senderEmail.split('@')[1]?.trim() ?? ''
-  const mailbox = settings.provider === 'outlook' ? outlook : gmail
   const mailboxReady = settings.provider === 'dry_run' || (mailbox?.status === 'connected' && mailbox.account_identifier?.toLowerCase() === senderEmail.toLowerCase())
 
   const steps: SetupStep[] = [

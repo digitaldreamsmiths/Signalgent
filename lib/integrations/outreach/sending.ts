@@ -5,7 +5,7 @@ import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { IntegrationAuthError, requireCompanyAccess } from '@/lib/integrations/auth'
 import type { ActionResult, ScheduledSendView, SendSettings } from './types'
-import { getAccount } from '@/lib/integrations/accounts'
+import { getAccountByIdentifier } from '@/lib/integrations/accounts'
 import { composeEmail } from './send/compose'
 import { computeBatchSlots, loadSettings, nextSlot, parseWallTime, runQueue, zonedStartIso } from './send/worker'
 import { insertSendRows } from './send/queue'
@@ -138,8 +138,8 @@ export async function queueDraftSend(companyId: string, draftId: string): Promis
   if (!settings.active) return { ok: false, error: 'Turn on sending in Sending settings first.' }
   if (!settings.sender_email?.trim()) return { ok: false, error: 'Set a sender email in Sending settings first.' }
   if (settings.provider === 'gmail' || settings.provider === 'outlook') {
-    const mailbox = await getAccount(companyId, settings.provider)
-    if (mailbox?.status !== 'connected' || mailbox.account_identifier?.toLowerCase() !== settings.sender_email.trim().toLowerCase()) {
+    const mailbox = await getAccountByIdentifier(companyId, settings.provider, settings.sender_email)
+    if (mailbox?.status !== 'connected') {
       return { ok: false, error: 'Connect the sender mailbox in Connections first.' }
     }
   }
@@ -253,8 +253,8 @@ async function ensureSendable(supabase: SupabaseServerClient, companyId: string,
   if (!settings.active) return 'Turn on sending in Sending settings first.'
   if (!settings.sender_email?.trim()) return 'Set a sender email in Sending settings first.'
   if (settings.provider === 'gmail' || settings.provider === 'outlook') {
-    const mailbox = await getAccount(companyId, settings.provider)
-    if (mailbox?.status !== 'connected' || mailbox.account_identifier?.toLowerCase() !== settings.sender_email.trim().toLowerCase()) return 'Connect the sender mailbox in Connections first.'
+    const mailbox = await getAccountByIdentifier(companyId, settings.provider, settings.sender_email)
+    if (mailbox?.status !== 'connected') return 'Connect the sender mailbox in Connections first.'
   }
   return null
 }

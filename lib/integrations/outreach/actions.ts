@@ -26,7 +26,7 @@ import { fetchStoredContactNames, resolveContactName } from './contact-name'
 import { loadCampaigns } from './campaigns'
 import { effectiveLimits, loadBilling, planDailySendCap } from '@/lib/billing/billing'
 import { openStats, recentBounceStats } from './send/scan'
-import { getAccount } from '../accounts'
+import { getAccountByIdentifier } from '../accounts'
 import { undeliverableDomains } from './deliverability'
 import { fetchAllPages } from './fetch-all'
 import {
@@ -266,7 +266,9 @@ export async function getOutreachWorkspace(
   // Token refresh failures mark the account 'error'; surface the selected mailbox.
   let mailbox: OutreachSnapshot['sending']['mailbox'] = null
   if (settings.provider === 'gmail' || settings.provider === 'outlook') {
-    const account = await getAccount(companyId, settings.provider)
+    const account = settings.sender_email?.trim()
+      ? await getAccountByIdentifier(companyId, settings.provider, settings.sender_email)
+      : null
     mailbox = account
       ? { status: account.status, last_error: account.last_error }
       : { status: 'not_connected', last_error: null }

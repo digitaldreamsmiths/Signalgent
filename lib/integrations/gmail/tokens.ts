@@ -12,6 +12,7 @@ import type { Database } from '@/lib/types/database.types'
 import { encryptNullable } from '../crypto'
 import {
   getAccount,
+  getAccountByIdentifier,
   upsertAccount,
   markError,
   markDisconnected as markAccountDisconnected,
@@ -67,9 +68,14 @@ export async function saveGmailCredentials(
 export async function loadGmailCredentials(
   companyId: string,
   client?: SupabaseClient<Database>,
-  accountId?: string
+  accountId?: string,
+  senderEmail?: string,
 ): Promise<{ accessToken: string; emailAddress: string } | null> {
-  const creds = await loadGoogleCredentials(companyId, SERVICE, client, accountId)
+  const selected = senderEmail
+    ? await getAccountByIdentifier(companyId, SERVICE, senderEmail, client)
+    : null
+  if (senderEmail && !selected) return null
+  const creds = await loadGoogleCredentials(companyId, SERVICE, client, selected?.id ?? accountId)
   if (!creds) return null
   return { accessToken: creds.accessToken, emailAddress: creds.accountIdentifier }
 }

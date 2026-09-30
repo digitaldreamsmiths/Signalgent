@@ -200,7 +200,7 @@ async function savePreview(
 export async function scanReplies(supabase: DB, companyId: string, opts: { force?: boolean } = {}): Promise<ScanResult> {
   const { data: settings } = await supabase
     .from('outreach_settings')
-    .select('active, provider, last_reply_scan_at')
+    .select('active, provider, sender_email, warmup_started_at, last_reply_scan_at')
     .eq('company_id', companyId)
     .maybeSingle()
 
@@ -212,11 +212,16 @@ export async function scanReplies(supabase: DB, companyId: string, opts: { force
     if (ageMin < SCAN_MIN_INTERVAL_MIN) return { replied: 0, bounced: 0, unsubscribed: 0, skipped: 'throttled' }
   }
 
-  const creds = await loadGmailCredentials(companyId, supabase)
+  if (!settings.sender_email?.trim()) return { replied: 0, bounced: 0, unsubscribed: 0, skipped: 'sender not set' }
+  const creds = await loadGmailCredentials(companyId, supabase, undefined, settings.sender_email)
   if (!creds) return { replied: 0, bounced: 0, unsubscribed: 0, skipped: 'gmail not connected' }
 
-  // Sent emails worth checking: recent, threaded.
-  const since = new Date(Date.now() - LOOKBACK_DAYS * 86400_000).toISOString()
+  // Threads from the previous sender are not visible in the newly selected
+  // mailbox. Changing sender resets warmup_started_at in saveSendSettings.
+  const since = new Date(Math.max(
+    Date.now() - LOOKBACK_DAYS * 86400_000,
+    settings.warmup_started_at ? new Date(settings.warmup_started_at).getTime() : 0,
+  )).toISOString()
   const { data: sends } = await supabase
     .from('outreach_sends')
     .select('id, prospect_id, thread_id, sent_at')

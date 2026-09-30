@@ -267,6 +267,9 @@ export async function runFollowupSweep(supabase: DB, companyId: string): Promise
       .eq('company_id', companyId)
       .eq('status', 'sent')
       .not('sent_at', 'is', null)
+      // A new sender cannot safely continue threads opened by the previous
+      // mailbox. saveSendSettings restarts this anchor on a sender switch.
+      .gte('sent_at', settings.warmup_started_at ?? '1970-01-01T00:00:00.000Z')
       .order('id')
       .range(from, to),
   )

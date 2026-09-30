@@ -186,9 +186,13 @@ export async function sendOutreachEmail(
   companyId: string,
   args: SendOutreachArgs,
   client?: SupabaseClient<Database>,
+  senderEmail?: string,
 ): Promise<SendOutreachResult> {
-  const creds = await loadGmailCredentials(companyId, client)
+  const creds = await loadGmailCredentials(companyId, client, undefined, senderEmail)
   if (!creds) throw new Error('Gmail is not connected for this company.')
+  if (senderEmail && creds.emailAddress.toLowerCase() !== senderEmail.trim().toLowerCase()) {
+    throw new Error('Sender email must match the connected Gmail mailbox.')
+  }
   if (!args.to.trim()) throw new Error('Recipient email is empty.')
   if (!args.body.trim()) throw new Error('Email body is empty.')
 
