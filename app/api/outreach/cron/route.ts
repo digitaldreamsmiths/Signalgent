@@ -48,18 +48,18 @@ async function handle(request: Request) {
   for (const c of companies ?? []) {
     // One company blowing up must not kill the tick for the rest.
     try {
-      // Deliverability: pause sending if the recent bounce rate is too high.
+      // Detect opt-outs and bounces before releasing any due mail.
+      const scan = await scanReplies(svc, c.company_id)
+      replied += scan.replied
+      bounced += scan.bounced
+      softBounced += scan.softBounced ?? 0
+      // Include newly detected hard bounces in this tick's pause decision.
       await enforceBouncePause(svc, c.company_id)
       // Drip: send what's due (runQueue bails if auto-pause just deactivated it).
       const r = await runQueue(svc, c.company_id)
       sent += r.sent
       failed += r.failed
       recovered += r.recovered
-      // Close the loop: detect inbound replies/bounces and suppress those prospects.
-      const scan = await scanReplies(svc, c.company_id)
-      replied += scan.replied
-      bounced += scan.bounced
-      softBounced += scan.softBounced ?? 0
       // Sequences: AFTER the reply scan, so a prospect who answered this tick is
       // already suppressed before the sweep considers nudging them.
       const fu = await runFollowupSweep(svc, c.company_id)

@@ -13,6 +13,7 @@ import { listUnsubscribeHeaders, openPixelUrl, textToHtml, unsubscribeUrl } from
 import { fetchAllPages } from '../fetch-all'
 import { planDailySendCap } from '@/lib/billing/billing'
 import { loadCampaigns } from '../campaigns'
+import { recipientIsSuppressed } from './suppression'
 
 type DB = SupabaseClient<Database>
 
@@ -526,8 +527,20 @@ export async function runQueue(supabase: DB, companyId: string): Promise<{ sent:
       }
     }
     // Suppression re-check at send time.
-    const { data: p } = await supabase.from('outreach_prospects').select('disposition').eq('id', s.prospect_id).maybeSingle()
-    if (p && p.disposition !== 'open') {
+    const { data: p, error: prospectError } = await supabase.from('outreach_prospects')
+      .select('email, disposition').eq('id', s.prospect_id).eq('company_id', companyId).maybeSingle()
+    if (prospectError) {
+      console.error(`[send-worker] suppression check failed for ${s.id}: ${prospectError.message}`)
+      continue
+    }
+    let suppressed = false
+    try {
+      suppressed = await recipientIsSuppressed(supabase, companyId, s.recipient_email)
+    } catch (err) {
+      console.error(`[send-worker] address suppression check failed for ${s.id}: ${err instanceof Error ? err.message : err}`)
+      continue
+    }
+    if (!p || p.email.trim().toLowerCase() !== s.recipient_email.trim().toLowerCase() || p.disposition !== 'open' || suppressed) {
       const { error: cancelErr } = await supabase.from('outreach_sends').update({ status: 'canceled', error: 'prospect closed before send' }).eq('id', s.id)
       // On failure the row stays 'queued' and is re-checked (and re-canceled) next tick.
       if (cancelErr) console.error(`[send-worker] could not cancel send ${s.id}: ${cancelErr.message}`)
@@ -549,6 +562,18 @@ export async function runQueue(supabase: DB, companyId: string): Promise<{ sent:
       continue
     }
     if (!claimed) continue // Another worker already claimed this send.
+    // Close the gap between the queued-row check and the claim. If an opt-out
+    // arrived during that interval, no provider call is allowed.
+    try {
+      if (await recipientIsSuppressed(supabase, companyId, s.recipient_email)) {
+        await supabase.from('outreach_sends').update({ status: 'canceled', error: 'recipient suppressed before provider send' }).eq('id', s.id).eq('status', 'sending')
+        continue
+      }
+    } catch (err) {
+      await supabase.from('outreach_sends').update({ status: 'failed', error: 'recipient suppression check unavailable' }).eq('id', s.id).eq('status', 'sending')
+      console.error(`[send-worker] final suppression check failed for ${s.id}: ${err instanceof Error ? err.message : err}`)
+      continue
+    }
     // Thread follow-ups under the prospect's most recent sent email.
     const { data: prior } = await supabase
       .from('outreach_sends')

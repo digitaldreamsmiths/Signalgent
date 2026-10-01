@@ -12,6 +12,8 @@ import { insertSendRows } from './send/queue'
 import { loadOfferProfile } from './offer-profile'
 import { scanReplies } from './send/scan'
 import { loadCampaigns, timezoneForProspect } from './campaigns'
+import { recipientIsSuppressed } from './send/suppression'
+import { fetchAllPagesResult } from './fetch-all'
 
 const AUTH_ERROR = 'You don’t have access to this workspace.'
 
@@ -161,6 +163,13 @@ export async function queueDraftSend(companyId: string, draftId: string): Promis
   if (prospect.disposition !== 'open') {
     return { ok: false, error: 'This prospect is closed (replied, bounced, or unsubscribed).' }
   }
+  try {
+    if (await recipientIsSuppressed(supabase, companyId, prospect.email)) {
+      return { ok: false, error: 'This email address has bounced or opted out.' }
+    }
+  } catch {
+    return { ok: false, error: 'Could not check the suppression list.' }
+  }
 
   // No duplicate active send for the same draft.
   const { data: existing } = await supabase
@@ -224,6 +233,11 @@ export async function processSendQueue(companyId: string): Promise<ActionResult<
     throw err
   }
   const supabase = await createClient()
+  try {
+    await scanReplies(supabase, companyId, { force: true })
+  } catch {
+    return { ok: false, error: 'Could not check the inbox for new replies and opt-outs. No emails were sent.' }
+  }
   const result = await runQueue(supabase, companyId)
   revalidatePath('/outreach')
   return { ok: true, data: result }
@@ -297,11 +311,17 @@ export async function scheduleDraftSends(
     .select('id, email, disposition, campaign_id')
     .in('id', prospectIds.length ? prospectIds : ['00000000-0000-0000-0000-000000000000'])
   const pById = new Map((prospects ?? []).map((p) => [p.id, p]))
+  const suppression = await fetchAllPagesResult((from, to) => supabase.from('outreach_prospects')
+    .select('id, email').eq('company_id', companyId)
+    .in('disposition', ['bounced', 'unsubscribed'])
+    .order('id').range(from, to))
+  if (suppression.error) return { ok: false, error: 'Could not check the suppression list.' }
+  const suppressedEmails = new Set(suppression.rows.map((p) => p.email.trim().toLowerCase()))
 
   const unsorted = (drafts ?? []).filter((d) => {
     if (alreadyQueued.has(d.id)) return false
     const p = pById.get(d.prospect_id)
-    return !!p && p.disposition === 'open' && !!p.email
+    return !!p && p.disposition === 'open' && !!p.email && !suppressedEmails.has(p.email.trim().toLowerCase())
   })
   // Personalized drafts (non-empty facts_for_draft) outrank templates: slots are
   // handed out by array index, so ordering here is what puts custom emails on

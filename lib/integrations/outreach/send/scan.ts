@@ -19,6 +19,7 @@ import type { Database } from '@/lib/types/database.types'
 import { loadSettings } from './worker'
 import { loadGmailCredentials } from '@/lib/integrations/gmail/tokens'
 import { getThread, type GmailMessage } from '@/lib/integrations/gmail/fetch'
+import { suppressRecipient } from './suppression'
 import {
   THREAD_FETCH_CONCURRENCY,
   INTER_BATCH_PAUSE_MS,
@@ -29,7 +30,7 @@ import {
 type DB = SupabaseClient<Database>
 
 /** Don't re-scan a company more often than this (cron fires every ~5 min). */
-const SCAN_MIN_INTERVAL_MIN = 20
+const SCAN_MIN_INTERVAL_MIN = 4
 /** Only consider sends from the last N days — bounds the working set. */
 const LOOKBACK_DAYS = 30
 /** Cap threads fetched per run for bounded latency. */
@@ -147,8 +148,8 @@ function classifyThread(messages: GmailMessage[], ourEmail: string): Verdict {
     if (labels.includes('SENT')) continue // our own outbound
     const from = header(m, 'From').toLowerCase()
     if (from.includes(mine)) continue // self / our address
-    // Inbound: Gmail labels received mail INBOX; daemons/DSNs land there too.
-    if (!labels.includes('INBOX')) continue
+    // An archived inbound message loses INBOX but is still a reply or opt-out.
+    if (labels.includes('DRAFT')) continue
     const ts = internalMs(m)
     const kind = bounceKind(m)
     if (kind === 'hard') {
@@ -198,11 +199,12 @@ async function savePreview(
  * outcomes. Pass `{ force: true }` (manual button) to bypass the throttle.
  */
 export async function scanReplies(supabase: DB, companyId: string, opts: { force?: boolean } = {}): Promise<ScanResult> {
-  const { data: settings } = await supabase
+  const { data: settings, error: settingsError } = await supabase
     .from('outreach_settings')
     .select('active, provider, sender_email, warmup_started_at, last_reply_scan_at')
     .eq('company_id', companyId)
     .maybeSingle()
+  if (settingsError) throw settingsError
 
   if (!settings || !settings.active) return { replied: 0, bounced: 0, unsubscribed: 0, skipped: 'sending inactive' }
   if (settings.provider !== 'gmail') return { replied: 0, bounced: 0, unsubscribed: 0, skipped: 'provider not gmail' }
@@ -222,7 +224,7 @@ export async function scanReplies(supabase: DB, companyId: string, opts: { force
     Date.now() - LOOKBACK_DAYS * 86400_000,
     settings.warmup_started_at ? new Date(settings.warmup_started_at).getTime() : 0,
   )).toISOString()
-  const { data: sends } = await supabase
+  const { data: sends, error: sendsError } = await supabase
     .from('outreach_sends')
     .select('id, prospect_id, thread_id, sent_at')
     .eq('company_id', companyId)
@@ -230,6 +232,7 @@ export async function scanReplies(supabase: DB, companyId: string, opts: { force
     .not('thread_id', 'is', null)
     .gte('sent_at', since)
     .order('sent_at', { ascending: false })
+  if (sendsError) throw sendsError
 
   if (!sends || sends.length === 0) {
     await supabase.from('outreach_settings').update({ last_reply_scan_at: new Date().toISOString() }).eq('company_id', companyId)
@@ -238,20 +241,35 @@ export async function scanReplies(supabase: DB, companyId: string, opts: { force
 
   // Keep only prospects still open.
   const prospectIds = [...new Set(sends.map((s) => s.prospect_id))]
-  const { data: prospects } = await supabase
+  const { data: prospects, error: prospectsError } = await supabase
     .from('outreach_prospects')
-    .select('id, disposition')
+    .select('id, email, disposition')
     .eq('company_id', companyId)
     .in('id', prospectIds)
+  if (prospectsError) throw prospectsError
   const open = new Set((prospects ?? []).filter((p) => p.disposition === 'open').map((p) => p.id))
 
   // One entry per thread (the most recent send, since sends are sorted desc).
+  const emailByProspect = new Map((prospects ?? []).map((p) => [p.id, p.email]))
   const byThread = new Map<string, { sendId: string; prospectId: string }>()
   for (const s of sends) {
     if (!s.thread_id || !open.has(s.prospect_id)) continue
     if (!byThread.has(s.thread_id)) byThread.set(s.thread_id, { sendId: s.id, prospectId: s.prospect_id })
   }
-  const threads = [...byThread.entries()].slice(0, MAX_THREADS)
+  const { data: due, error: dueError } = await supabase.from('outreach_sends')
+    .select('prospect_id')
+    .eq('company_id', companyId)
+    .eq('status', 'queued')
+    .lte('scheduled_at', new Date(Date.now() + 5 * 60_000).toISOString())
+  if (dueError) throw dueError
+  const dueProspects = new Set((due ?? []).map((s) => s.prospect_id))
+  const allThreads = [...byThread.entries()]
+  const urgent = allThreads.filter(([, ref]) => dueProspects.has(ref.prospectId))
+  const remaining = allThreads.filter(([, ref]) => !dueProspects.has(ref.prospectId))
+  if (urgent.length > MAX_THREADS) throw new Error('Too many due threads to check for replies before sending')
+  // Rotate the bounded scan so old open threads cannot starve forever.
+  const offset = remaining.length ? Math.floor(Date.now() / (SCAN_MIN_INTERVAL_MIN * 60_000)) % remaining.length : 0
+  const threads = [...urgent, ...remaining.slice(offset), ...remaining.slice(0, offset)].slice(0, MAX_THREADS)
   if (threads.length === 0) {
     await supabase.from('outreach_settings').update({ last_reply_scan_at: new Date().toISOString() }).eq('company_id', companyId)
     return { replied: 0, bounced: 0, unsubscribed: 0, skipped: 'no open threads' }
@@ -265,14 +283,17 @@ export async function scanReplies(supabase: DB, companyId: string, opts: { force
         const thread = await withRateLimitRetry(() =>
           getThread({ accessToken: creds.accessToken, id: threadId, format: 'metadata', metadataHeaders: ['From', 'Subject', 'Content-Type'] }),
         )
-        return { ref, verdict: classifyThread(thread.messages ?? [], creds.emailAddress) }
+        return { ref, verdict: classifyThread(thread.messages ?? [], creds.emailAddress), failed: false }
       } catch (err) {
         console.warn('[reply-scan] thread dropped:', err instanceof Error ? err.message.split('\n')[0] : err)
-        return { ref, verdict: null as Verdict }
+        return { ref, verdict: null as Verdict, failed: true }
       }
     },
     INTER_BATCH_PAUSE_MS,
   )
+  if (verdicts.some(({ ref, failed }) => failed && dueProspects.has(ref.prospectId))) {
+    throw new Error('Could not check a due recipient thread for an opt-out')
+  }
 
   let replied = 0
   let bounced = 0
@@ -288,13 +309,13 @@ export async function scanReplies(supabase: DB, companyId: string, opts: { force
     }
     if (verdict.kind === 'bounced') {
       await supabase.from('outreach_sends').update({ bounced_at: verdict.at }).eq('id', ref.sendId)
-      await supabase.from('outreach_prospects').update({ disposition: 'bounced', disposition_at: verdict.at }).eq('id', ref.prospectId).eq('company_id', companyId)
+      await suppressRecipient(supabase, companyId, emailByProspect.get(ref.prospectId) ?? '', 'bounced', verdict.at)
       bounced++
     } else if (verdict.kind === 'unsubscribed') {
       // Opt-out: record the inbound timestamp, then close the prospect as
       // unsubscribed so the send worker suppresses it permanently.
       await supabase.from('outreach_sends').update({ replied_at: verdict.at }).eq('id', ref.sendId)
-      await supabase.from('outreach_prospects').update({ disposition: 'unsubscribed', disposition_at: verdict.at }).eq('id', ref.prospectId).eq('company_id', companyId)
+      await suppressRecipient(supabase, companyId, emailByProspect.get(ref.prospectId) ?? '', 'unsubscribed', verdict.at)
       unsubscribed++
     } else {
       await supabase.from('outreach_sends').update({ replied_at: verdict.at }).eq('id', ref.sendId)

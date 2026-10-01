@@ -50,9 +50,11 @@ export async function GET(_request: Request, { params }: { params: Promise<{ tok
 export async function POST(request: Request, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params
   let result: Awaited<ReturnType<typeof recordUnsubscribe>> = 'unknown'
+  let failed = false
   try {
     if (token) result = await recordUnsubscribe(token)
   } catch (err) {
+    failed = true
     console.warn('[outreach:unsubscribe] failed:', err instanceof Error ? err.message : err)
   }
 
@@ -63,7 +65,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
   if (contentType.includes('application/x-www-form-urlencoded')) {
     const body = await request.text().catch(() => '')
     if (body.includes('List-Unsubscribe=One-Click')) {
-      return new Response(null, { status: 200 })
+      return new Response(null, { status: failed ? 503 : 200 })
     }
   }
 

@@ -12,6 +12,7 @@ import { composeEmail } from './compose'
 import { loadOfferProfile } from '../offer-profile'
 import { loadSettings, nextSlot } from './worker'
 import { timezoneForProspect } from '../campaigns'
+import { recipientIsSuppressed } from './suppression'
 
 type DB = SupabaseClient<Database>
 
@@ -69,6 +70,7 @@ export async function autoQueueDraftSend(supabase: DB, companyId: string, draftI
       .eq('id', draft.prospect_id)
       .maybeSingle()
     if (!prospect?.email || prospect.disposition !== 'open') return false
+    if (await recipientIsSuppressed(supabase, companyId, prospect.email)) return false
 
     const { data: existing } = await supabase
       .from('outreach_sends')

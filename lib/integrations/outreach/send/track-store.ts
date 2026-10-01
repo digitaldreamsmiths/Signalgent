@@ -11,6 +11,7 @@
 import { createClient as createServiceClient } from '@supabase/supabase-js'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/lib/types/database.types'
+import { suppressRecipient } from './suppression'
 
 /**
  * An open recorded within this many seconds of the send is almost never a
@@ -95,18 +96,15 @@ export async function recordUnsubscribe(token: string): Promise<UnsubscribeResul
   if (!send) return 'unknown'
 
   const at = new Date().toISOString()
-  await supabase.from('outreach_sends').update({ unsubscribed_at: at }).eq('id', send.id)
-  await supabase
+  const { data: prospect, error: prospectError } = await supabase
     .from('outreach_prospects')
-    .update({ disposition: 'unsubscribed', disposition_at: at })
+    .select('email')
     .eq('id', send.prospect_id)
     .eq('company_id', send.company_id)
-  await supabase
-    .from('outreach_sends')
-    .update({ status: 'canceled', error: 'recipient unsubscribed' })
-    .eq('prospect_id', send.prospect_id)
-    .eq('company_id', send.company_id)
-    .eq('status', 'queued')
+    .single()
+  if (prospectError || !prospect) return 'unknown'
+  await suppressRecipient(supabase, send.company_id, prospect.email, 'unsubscribed', at)
+  await supabase.from('outreach_sends').update({ unsubscribed_at: at }).eq('id', send.id)
 
   return 'done'
 }

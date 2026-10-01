@@ -29,6 +29,7 @@ import { openStats, recentBounceStats } from './send/scan'
 import { getAccountByIdentifier } from '../accounts'
 import { undeliverableDomains } from './deliverability'
 import { fetchAllPages } from './fetch-all'
+import { suppressRecipient } from './send/suppression'
 import {
   campaignStats,
   companyCounts,
@@ -331,6 +332,18 @@ export async function setDisposition(
     throw err
   }
   const supabase = await createClient()
+  if (disposition === 'bounced' || disposition === 'unsubscribed') {
+    const { data: prospect, error: lookupError } = await supabase.from('outreach_prospects')
+      .select('email').eq('id', prospectId).eq('company_id', companyId).maybeSingle()
+    if (lookupError || !prospect) return { ok: false, error: 'Could not find the contact.' }
+    try {
+      await suppressRecipient(supabase, companyId, prospect.email, disposition, new Date().toISOString())
+    } catch {
+      return { ok: false, error: 'Could not suppress the contact and cancel queued emails.' }
+    }
+    revalidatePath('/outreach')
+    return { ok: true, data: undefined }
+  }
   const { error } = await supabase
     .from('outreach_prospects')
     .update({ disposition, disposition_at: disposition === 'open' ? null : new Date().toISOString() })
