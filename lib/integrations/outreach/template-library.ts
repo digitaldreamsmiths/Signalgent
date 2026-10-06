@@ -26,7 +26,7 @@
  * Client-safe: imports nothing but ./offer-profile.
  */
 
-import { DEFAULT_OFFER_PROFILE, userCountMid, type OfferProfile } from './offer-profile'
+import { DEFAULT_OFFER_PROFILE, proofSentence, prose, type OfferProfile } from './offer-profile'
 
 /** One rotation variant: an opener and the follow-up that belongs with it. The
  * follow-up is paired rather than generic so touch 2 continues touch 1's
@@ -54,7 +54,7 @@ export function templateLibraryFor(p: OfferProfile): readonly TemplateVariant[] 
         '',
         'Is proposal writing handled in house at {company}, or do you bring someone in for the bigger pursuits?',
         '',
-        `I ask because I work on ${p.product}. ${p.pitch} ${p.user_count} run on it now, across ${p.pipeline}.`,
+        prose(`I ask because I work on ${p.product}.`, p.pitch, proofSentence(p, 'run on it now')),
         '',
         'If drafting is the slow part for you, want me to send a two minute example of it on a real RFP?',
       ].join('\n'),
@@ -76,7 +76,7 @@ export function templateLibraryFor(p: OfferProfile): readonly TemplateVariant[] 
         '',
         'How many solicitations does {company} pass on in a month purely because there is not enough runway to write the response properly?',
         '',
-        `That gap is the reason ${p.product} exists. ${p.pitch} ${p.user_count} use it, across ${p.pipeline}.`,
+        prose(`That gap is the reason ${p.product} exists.`, p.pitch, proofSentence(p)),
         '',
         'Is capacity what caps your bid count right now, or is it something else?',
       ].join('\n'),
@@ -98,7 +98,7 @@ export function templateLibraryFor(p: OfferProfile): readonly TemplateVariant[] 
         '',
         'Where does {company} keep past performance today, a shared drive, a laptop somewhere, or an actual library?',
         '',
-        `Asking because it is the piece contractors tell me eats the most time on a deadline. ${p.pitch} ${p.user_count} use it, across ${p.pipeline}.`,
+        prose('Asking because it is the piece contractors tell me eats the most time on a deadline.', p.pitch, proofSentence(p)),
         '',
         'Is past performance the part that slows you down, or is drafting worse?',
       ].join('\n'),
@@ -120,7 +120,7 @@ export function templateLibraryFor(p: OfferProfile): readonly TemplateVariant[] 
         '',
         'Do you have a recompete coming up in the next couple of quarters at {company}?',
         '',
-        `If so, that is usually where the crunch shows. ${p.pitch} ${p.user_count} use it now, across ${p.pipeline}.`,
+        prose('If so, that is usually where the crunch shows.', p.pitch, proofSentence(p, 'use it now')),
         '',
         'Worth a look before the next one drops, or is your process already tight?',
       ].join('\n'),
@@ -142,7 +142,7 @@ export function templateLibraryFor(p: OfferProfile): readonly TemplateVariant[] 
         '',
         'Who owns proposal production at {company} these days?',
         '',
-        `Happy to be pointed elsewhere if it is not you. The reason I ask: I work on ${p.product}, which ${userCountMid(p)} use, across ${p.pipeline}. ${p.pitch}`,
+        prose('Happy to be pointed elsewhere if it is not you.', `The reason I ask: I work on ${p.product}.`, proofSentence(p), p.pitch),
         '',
         'If that is worth two minutes, I will send a short example on a real RFP. Who should I be talking to?',
       ].join('\n'),
@@ -160,8 +160,7 @@ export function templateLibraryFor(p: OfferProfile): readonly TemplateVariant[] 
 
 /** Neutral starters for companies that do not use federal award research. */
 export function generalTemplateLibraryFor(p: OfferProfile): readonly TemplateVariant[] {
-  const proof = [p.user_count, p.pipeline].filter(Boolean).join('; ')
-  const intro = `${p.pitch}${proof ? ` ${proof}.` : ''}`
+  const intro = prose(p.pitch, proofSentence(p))
   return [
     { key: 'general-intro', name: 'Simple introduction', subject: `question about ${p.product}`,
       body: ['Hi,', '', `I work on ${p.product}. ${intro}`, '', 'Would this be relevant to your team?'].join('\n'),

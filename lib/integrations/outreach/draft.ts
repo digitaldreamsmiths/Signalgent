@@ -25,7 +25,7 @@
 
 import { callClaudeJSON } from './llm'
 import { SENDER } from './sender'
-import { DEFAULT_OFFER_PROFILE, userCountMid, type OfferProfile } from './offer-profile'
+import { DEFAULT_OFFER_PROFILE, proofSentence, type OfferProfile } from './offer-profile'
 import type { DraftResult, DraftReview, SynthesisResult } from './types'
 import type { LLMUsage } from '../../llm/client'
 
@@ -37,13 +37,21 @@ export { SENDER }
 /** The register, rendered against a tenant's offer profile. With the SourceGent
  * defaults this matches the original hardcoded prompt, plus an explicit "what
  * it does" sentence (previously implied by the artifact list alone). */
+/** How the model may use social proof: the profile's own sentence, or none at all. */
+function proofRule(p: OfferProfile): string {
+  const proof = proofSentence(p)
+  return proof
+    ? `Social proof in passing, at most once, phrased as "${proof}". Never a boast.`
+    : 'Do NOT claim any user count, customer count, or pipeline figure; none is available.'
+}
+
 function systemFor(p: OfferProfile): string {
   return `You write a single cold outreach email to ${p.audience}. The email exists to get a REPLY, not to explain a product. You may use ONLY the facts provided in facts_for_draft. Use nothing else about the company.
 
 Shape (follow exactly, in this order):
 1. Greet with exactly "Hi," on its own line. You do NOT know the recipient's name, so NEVER write a placeholder like "[Name]", "[First Name]", or "[Company]" anywhere. No square brackets at all.
 2. ONE sentence that earns the email from the facts. Specific, no flattery, no "I came across your company". Never congratulate.
-3. ONE or TWO sentences naming ${p.product} exactly once, as a live tool in active use. NEVER "building", "launching", "working on", or anything pre-launch. What it does: ${p.pitch} Include at least one CONCRETE artifact of the work from this list: ${p.artifacts.join(', ')}. Social proof in passing, at most once, phrased as "${userCountMid(p)} use it" and optionally "${p.pipeline}". Never a boast.
+3. ONE or TWO sentences naming ${p.product} exactly once, as a live tool in active use. NEVER "building", "launching", "working on", or anything pre-launch. What it does: ${p.pitch} Include at least one CONCRETE artifact of the work from this list: ${p.artifacts.join(', ')}. ${proofRule(p)}
 4. The LAST line of the body is a QUESTION ending in "?". One question, closed, answerable in a single line by someone who has never heard of you (e.g. "Is drafting the slow part, or is past performance worse?"). The body ends there.
 
 Hard rules:

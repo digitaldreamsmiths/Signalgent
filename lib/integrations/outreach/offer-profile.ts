@@ -66,6 +66,23 @@ export function userCountMid(profile: OfferProfile): string {
   return profile.user_count.charAt(0).toLowerCase() + profile.user_count.slice(1)
 }
 
+/** The social-proof sentence, or '' when the profile carries no proof. Either
+ * half may stand alone, so a tenant can claim a user count without a pipeline
+ * figure or the other way round. */
+export function proofSentence(profile: OfferProfile, verb = 'use it'): string {
+  const who = profile.user_count.trim()
+  const where = profile.pipeline.trim()
+  if (who && where) return `${who} ${verb}, across ${where}.`
+  if (who) return `${who} ${verb}.`
+  if (where) return `It is in use across ${where}.`
+  return ''
+}
+
+/** Join prose fragments with single spaces, dropping the empty ones. */
+export function prose(...parts: string[]): string {
+  return parts.map((part) => part.trim()).filter(Boolean).join(' ')
+}
+
 function asStringArray(v: unknown): string[] | null {
   if (!Array.isArray(v)) return null
   const out = v.filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
@@ -95,8 +112,10 @@ export async function loadOfferProfile(supabase: DB, companyId: string): Promise
     site: data.site?.trim() || d.site,
     sign_off: data.sign_off?.trim() || d.sign_off,
     signature_name: data.signature_name?.trim() || d.signature_name,
-    user_count: data.user_count?.trim() || d.user_count,
-    pipeline: data.pipeline?.trim() || d.pipeline,
+    // Proof is the one pair a tenant may deliberately leave blank: a saved
+    // empty field means "make no claim", never "use the default claim".
+    user_count: (data.user_count ?? d.user_count).trim(),
+    pipeline: (data.pipeline ?? d.pipeline).trim(),
     audience: data.audience?.trim() || d.audience,
     pitch: data.pitch?.trim() || d.pitch,
     artifacts: asStringArray(data.artifacts) ?? d.artifacts,
