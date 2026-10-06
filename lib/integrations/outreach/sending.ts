@@ -32,6 +32,25 @@ export async function getSendSettings(companyId: string): Promise<SendSettings |
   return loadSettings(supabase, companyId)
 }
 
+/** PostgREST sends an `.in()` list in the query string, so one request over
+ * roughly 300 ids overflows the URL and fails outright. Every id-list read or
+ * write here goes through these slices instead, so "Schedule unqueued" on a
+ * thousand drafts behaves like it does on a hundred. */
+const ID_CHUNK = 150
+
+async function readInChunks<T>(
+  ids: string[],
+  read: (slice: string[]) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
+): Promise<{ rows: T[]; error: { message: string } | null }> {
+  const rows: T[] = []
+  for (let i = 0; i < ids.length; i += ID_CHUNK) {
+    const { data, error } = await read(ids.slice(i, i + ID_CHUNK))
+    if (error) return { rows, error }
+    rows.push(...(data ?? []))
+  }
+  return { rows, error: null }
+}
+
 export async function saveSendSettings(
   companyId: string,
   patch: Partial<SendSettings>,
@@ -296,25 +315,30 @@ export async function scheduleDraftSends(
   if (gate) return { ok: false, error: gate }
   if (draftIds.length === 0) return { ok: true, data: { scheduled: 0, skipped: 0 } }
 
-  const { data: drafts } = await supabase
+  const draftsRead = await readInChunks(draftIds, (slice) => supabase
     .from('outreach_drafts')
     .select('id, subject, body, prospect_id, facts_for_draft')
     .eq('company_id', companyId)
-    .in('id', draftIds)
-  const { data: existing } = await supabase
+    .in('id', slice))
+  if (draftsRead.error) return { ok: false, error: 'Could not load the drafts to schedule.' }
+  const drafts = draftsRead.rows
+  const existingRead = await readInChunks(draftIds, (slice) => supabase
     .from('outreach_sends')
     .select('draft_id')
     .eq('company_id', companyId)
     .in('status', ['queued', 'sending', 'sent'])
-    .in('draft_id', draftIds)
-  const alreadyQueued = new Set((existing ?? []).map((e) => e.draft_id))
+    .in('draft_id', slice))
+  if (existingRead.error) return { ok: false, error: 'Could not check the send queue.' }
+  const alreadyQueued = new Set(existingRead.rows.map((e) => e.draft_id))
 
-  const prospectIds = [...new Set((drafts ?? []).map((d) => d.prospect_id))]
-  const { data: prospects } = await supabase
+  const prospectIds = [...new Set(drafts.map((d) => d.prospect_id))]
+  const prospectsRead = await readInChunks(prospectIds, (slice) => supabase
     .from('outreach_prospects')
     .select('id, email, disposition, campaign_id')
-    .in('id', prospectIds.length ? prospectIds : ['00000000-0000-0000-0000-000000000000'])
-  const pById = new Map((prospects ?? []).map((p) => [p.id, p]))
+    .eq('company_id', companyId)
+    .in('id', slice))
+  if (prospectsRead.error) return { ok: false, error: 'Could not load the prospects.' }
+  const pById = new Map(prospectsRead.rows.map((p) => [p.id, p]))
   const suppression = await fetchAllPagesResult((from, to) => supabase.from('outreach_prospects')
     .select('id, email').eq('company_id', companyId)
     .in('disposition', ['bounced', 'unsubscribed'])
@@ -322,7 +346,7 @@ export async function scheduleDraftSends(
   if (suppression.error) return { ok: false, error: 'Could not check the suppression list.' }
   const suppressedEmails = new Set(suppression.rows.map((p) => p.email.trim().toLowerCase()))
 
-  const unsorted = (drafts ?? []).filter((d) => {
+  const unsorted = drafts.filter((d) => {
     if (alreadyQueued.has(d.id)) return false
     const p = pById.get(d.prospect_id)
     return !!p && p.disposition === 'open' && !!p.email && !suppressedEmails.has(p.email.trim().toLowerCase())
@@ -402,18 +426,20 @@ export async function rescheduleSends(
   const supabase = await createClient()
   const settings = await loadSettings(supabase, companyId)
 
-  const { data: sends } = await supabase
+  const sendsRead = await readInChunks(sendIds, (slice) => supabase
     .from('outreach_sends')
     .select('id, prospect_id')
     .eq('company_id', companyId)
     .eq('status', 'queued')
-    .in('id', sendIds)
-  const ids = (sends ?? []).map((s) => s.id)
+    .in('id', slice))
+  if (sendsRead.error) return { ok: false, error: 'Could not load the sends to move.' }
+  const sends = sendsRead.rows
+  const ids = sends.map((s) => s.id)
   if (ids.length === 0) return { ok: true, data: { rescheduled: 0 } }
   const campaigns = new Map((await loadCampaigns(supabase, companyId)).map((campaign) => [campaign.id, campaign]))
-  const { data: prospects } = await supabase.from('outreach_prospects').select('id, campaign_id')
-    .eq('company_id', companyId).in('id', [...new Set((sends ?? []).map((send) => send.prospect_id))])
-  const campaignByProspect = new Map((prospects ?? []).map((prospect) => [prospect.id, prospect.campaign_id]))
+  const prospectsRead = await readInChunks([...new Set(sends.map((send) => send.prospect_id))], (slice) => supabase
+    .from('outreach_prospects').select('id, campaign_id').eq('company_id', companyId).in('id', slice))
+  const campaignByProspect = new Map(prospectsRead.rows.map((prospect) => [prospect.id, prospect.campaign_id]))
   const slots: string[] = Array(ids.length)
   const reserved: string[] = []
   const groups = new Map<string, number[]>()
@@ -446,16 +472,16 @@ export async function cancelSends(companyId: string, sendIds: string[]): Promise
   }
   if (sendIds.length === 0) return { ok: true, data: { canceled: 0 } }
   const supabase = await createClient()
-  const { data, error } = await supabase
+  const canceled = await readInChunks(sendIds, (slice) => supabase
     .from('outreach_sends')
     .update({ status: 'canceled' })
     .eq('company_id', companyId)
     .eq('status', 'queued')
-    .in('id', sendIds)
-    .select('id')
-  if (error) return { ok: false, error: 'Could not cancel the sends.' }
+    .in('id', slice)
+    .select('id'))
+  if (canceled.error) return { ok: false, error: 'Could not cancel the sends.' }
   revalidatePath('/outreach')
-  return { ok: true, data: { canceled: data?.length ?? 0 } }
+  return { ok: true, data: { canceled: canceled.rows.length } }
 }
 
 /** All queued sends for the scheduling calendar/list, soonest first. */
@@ -474,11 +500,12 @@ export async function getScheduledSends(companyId: string): Promise<ScheduledSen
     .eq('status', 'queued')
     .order('scheduled_at', { ascending: true })
   const prospectIds = [...new Set((data ?? []).map((s) => s.prospect_id))]
-  const { data: prospects } = await supabase
+  const prospectsRead = await readInChunks(prospectIds, (slice) => supabase
     .from('outreach_prospects')
     .select('id, recipient_name')
-    .in('id', prospectIds.length ? prospectIds : ['00000000-0000-0000-0000-000000000000'])
-  const nameById = new Map((prospects ?? []).map((p) => [p.id, p.recipient_name]))
+    .eq('company_id', companyId)
+    .in('id', slice))
+  const nameById = new Map(prospectsRead.rows.map((p) => [p.id, p.recipient_name]))
   return (data ?? []).map((s) => ({
     id: s.id,
     draft_id: s.draft_id,
