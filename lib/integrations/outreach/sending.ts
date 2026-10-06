@@ -493,20 +493,23 @@ export async function getScheduledSends(companyId: string): Promise<ScheduledSen
     throw err
   }
   const supabase = await createClient()
-  const { data } = await supabase
+  // Paged: a single read stops at PostgREST's 1,000-row cap, which hid the
+  // tail of a long drip calendar from the Schedule view and its day counts.
+  const { rows: data } = await fetchAllPagesResult((from, to) => supabase
     .from('outreach_sends')
     .select('id, draft_id, prospect_id, recipient_email, scheduled_at')
     .eq('company_id', companyId)
     .eq('status', 'queued')
-    .order('scheduled_at', { ascending: true })
-  const prospectIds = [...new Set((data ?? []).map((s) => s.prospect_id))]
+    .order('scheduled_at', { ascending: true }).order('id')
+    .range(from, to))
+  const prospectIds = [...new Set(data.map((s) => s.prospect_id))]
   const prospectsRead = await readInChunks(prospectIds, (slice) => supabase
     .from('outreach_prospects')
     .select('id, recipient_name')
     .eq('company_id', companyId)
     .in('id', slice))
   const nameById = new Map(prospectsRead.rows.map((p) => [p.id, p.recipient_name]))
-  return (data ?? []).map((s) => ({
+  return data.map((s) => ({
     id: s.id,
     draft_id: s.draft_id,
     recipient_email: s.recipient_email,
