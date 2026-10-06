@@ -37,6 +37,7 @@ import {
   type Filter,
   type ProspectSort,
   type StageBucket,
+  type ListSections,
 } from '@/lib/integrations/outreach/views'
 import type { OutreachCampaign } from '@/lib/integrations/outreach/campaigns'
 import type {
@@ -78,6 +79,8 @@ interface OutreachContextValue {
   rows: OutreachProspectView[]
   /** How many rows match the view in full, so labels can say "100 of 4,933". */
   total: number
+  /** Stage/type totals over the whole view, for section headers and bulk labels. */
+  sections: ListSections | null
   hasMore: boolean
   /** A page read is in flight (initial, view change, or Load more). */
   rowsLoading: boolean
@@ -124,6 +127,7 @@ export function OutreachProvider({ children }: { children: React.ReactNode }) {
   const [snapshot, setSnapshot] = useState<OutreachSnapshot | null>(null)
   const [rows, setRows] = useState<OutreachProspectView[]>([])
   const [total, setTotal] = useState(0)
+  const [sections, setSections] = useState<ListSections | null>(null)
   const [loading, setLoading] = useState(true)
 
 
@@ -229,6 +233,7 @@ export function OutreachProvider({ children }: { children: React.ReactNode }) {
         setSnapshot(data.snapshot)
         setRows(data.page.rows)
         setTotal(data.page.total)
+        setSections(data.page.sections ?? null)
       }
       setLoadedKey(queryKey)
       setLoading(false)
@@ -247,6 +252,7 @@ export function OutreachProvider({ children }: { children: React.ReactNode }) {
       setSnapshot(data.snapshot)
       setRows(data.page.rows)
       setTotal(data.page.total)
+      setSections(data.page.sections ?? null)
     }
     setLoadedKey(k)
     setLoading(false)
@@ -306,7 +312,7 @@ export function OutreachProvider({ children }: { children: React.ReactNode }) {
 
   const value: OutreachContextValue = {
     companyId, snapshot, loading, refresh,
-    view, setView, rows, total, hasMore: rows.length < total, rowsLoading, loadMore,
+    view, setView, rows, total, sections, hasMore: rows.length < total, rowsLoading, loadMore,
     sort, dir, toggleSort, stage, setStage,
     campaigns, campaignStats, campaignFilter, setCampaignFilter,
     scheduledSends, loadScheduled,

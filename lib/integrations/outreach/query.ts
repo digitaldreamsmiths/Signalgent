@@ -37,8 +37,10 @@ import {
   rowStage,
   stageBucket,
   type ProspectLike,
+  DRAFT_STAGES,
+  draftStage,
 } from './stage'
-import { FILTERS, PROSPECT_MAX_LOADED, STAGE_BUCKETS, type Filter, type ProspectSort, type StageBucket } from './views'
+import { FILTERS, PROSPECT_MAX_LOADED, STAGE_BUCKETS, type Filter, type ProspectSort, type StageBucket, type ListSections } from './views'
 import type {
   CampaignStats,
   OutreachDraftView,
@@ -300,7 +302,51 @@ function comparator(sort: ProspectSort, view: Filter, campaignNames: Map<string,
         : (a: ProspectIndex, b: ProspectIndex) => rowStage(a).localeCompare(rowStage(b)) || byName(a, b)
     case 'campaign': return (a: ProspectIndex, b: ProspectIndex) => campaignName(a).localeCompare(campaignName(b))
     case 'added': return (a: ProspectIndex, b: ProspectIndex) => a.created_at.localeCompare(b.created_at)
+    case 'stage': return (a: ProspectIndex, b: ProspectIndex) => DRAFT_STAGES.indexOf(draftStage(a)) - DRAFT_STAGES.indexOf(draftStage(b))
+    case 'touch': return (a: ProspectIndex, b: ProspectIndex) => (a.draft?.step ?? 0) - (b.draft?.step ?? 0)
+    case 'scheduled': return (a: ProspectIndex, b: ProspectIndex) => nullsLast(a.draft?.send?.scheduled_at, b.draft?.send?.scheduled_at)
   }
+}
+
+/** ISO-string compare that keeps rows without a value at the end either way. */
+function nullsLast(a: string | null | undefined, b: string | null | undefined): number {
+  if (a && b) return a.localeCompare(b)
+  if (a) return -1
+  if (b) return 1
+  return 0
+}
+
+/** When the most recent touch went out, for ordering follow-ups by how long
+ * the prospect has been waiting. */
+function lastTouchAt(p: ProspectIndex): string | null {
+  let last: string | null = null
+  for (const d of p.drafts) if (d.send?.sent_at && (!last || d.send.sent_at > last)) last = d.send.sent_at
+  return last
+}
+
+/** Within one stage, the order that answers "which of these first?": fresh
+ * first touches newest-first with personalized ahead of templates, queued by
+ * send time, follow-ups by how long since the last touch, sent most recent
+ * first. Applied only when both rows share a stage. */
+function withinStage(a: ProspectIndex, b: ProspectIndex): number {
+  const stage = draftStage(a)
+  if (stage !== draftStage(b)) return 0
+  switch (stage) {
+    case 'ready': return Number(!!a.draft?.is_template) - Number(!!b.draft?.is_template) || b.created_at.localeCompare(a.created_at)
+    case 'queued': return nullsLast(a.draft?.send?.scheduled_at, b.draft?.send?.scheduled_at)
+    case 'followup': return nullsLast(lastTouchAt(a), lastTouchAt(b))
+    case 'sent': return nullsLast(b.draft?.send?.sent_at, a.draft?.send?.sent_at)
+  }
+}
+
+/** Section totals over a matching set (see `ListSections`). */
+export function countSections(rows: ProspectIndex[]): ListSections {
+  const out: ListSections = { ready: 0, queued: 0, followup: 0, sent: 0, personalized: 0, templates: 0 }
+  for (const p of rows) {
+    out[draftStage(p)] += 1
+    if (p.draft) out[p.draft.is_template ? 'templates' : 'personalized'] += 1
+  }
+  return out
 }
 
 function sortRows(rows: ProspectIndex[], sort: ProspectSort, dir: 'asc' | 'desc', view: Filter, campaignNames: Map<string, string>): ProspectIndex[] {
@@ -312,6 +358,7 @@ function sortRows(rows: ProspectIndex[], sort: ProspectSort, dir: 'asc' | 'desc'
   return [...rows].sort((a, b) =>
     cmp(a, b) * d ||
     (sort === 'type' ? byName(a, b) : 0) ||
+    (sort === 'stage' ? withinStage(a, b) : 0) ||
     a.id.localeCompare(b.id))
 }
 
@@ -324,7 +371,7 @@ export function selectPage(
   index: ProspectIndex[],
   query: ProspectQuery,
   campaignNames: Map<string, string>,
-): { page: ProspectIndex[]; total: number } {
+): { page: ProspectIndex[]; total: number; sections: ListSections } {
   const stage = query.stage && query.stage !== 'all' ? query.stage : null
   const matching = index.filter(
     (p) =>
@@ -335,7 +382,7 @@ export function selectPage(
   const ordered = sortRows(matching, query.sort, query.dir, query.view, campaignNames)
   const offset = Math.max(0, query.offset)
   const limit = Math.min(Math.max(1, query.limit), PROSPECT_MAX_LOADED)
-  return { page: ordered.slice(offset, offset + limit), total: matching.length }
+  return { page: ordered.slice(offset, offset + limit), total: matching.length, sections: countSections(matching) }
 }
 
 /** Read the full draft rows for these prospects and build the view objects the

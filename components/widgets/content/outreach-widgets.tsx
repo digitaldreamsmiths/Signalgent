@@ -8,8 +8,8 @@ import {
   type Filter,
   type Section,
 } from '@/contexts/outreach-context'
-import { contactStage, isUnqueued } from '@/lib/integrations/outreach/stage'
-import { PROSPECT_MAX_LOADED, STAGE_BUCKETS, type ProspectSort, type StageBucket } from '@/lib/integrations/outreach/views'
+import { DRAFT_STAGES, contactStage, draftStage, isUnqueued, type DraftStage } from '@/lib/integrations/outreach/stage'
+import { DRAFT_STAGE_LABEL, PROSPECT_MAX_LOADED, STAGE_BUCKETS, type ListSections, type ProspectSort, type StageBucket } from '@/lib/integrations/outreach/views'
 import {
   approveDraft,
   approveDrafts,
@@ -34,16 +34,40 @@ import { ScheduledView } from './scheduled-view'
 import { ScheduleDialog } from './schedule-dialog'
 
 
-/** Sort keys the draft lists (Ready to email / Sent / All) offer. 'type' is the
- * default and keeps the grouped Personalized/Templates sections; the rest
- * flatten the list. Sorting runs server-side now — the browser only holds the
- * loaded page, so sorting it here would only reorder the first 100 rows. */
+/** Sort keys the draft lists (Ready to email / Sent / All) offer. 'stage' is
+ * the default and groups rows by what they need next (ready to schedule,
+ * queued, follow-ups, sent); 'type' keeps the older Personalized/Templates
+ * grouping; the rest flatten the list. Sorting runs server-side — the browser
+ * only holds the loaded page, so sorting it here would only reorder the first
+ * 100 rows. */
 const LIST_SORTS: { key: ProspectSort; label: string }[] = [
+  { key: 'stage', label: 'Stage' },
   { key: 'type', label: 'Type' },
   { key: 'name', label: 'Name' },
   { key: 'email', label: 'Email' },
   { key: 'status', label: 'Status' },
+  { key: 'touch', label: 'Touch' },
+  { key: 'added', label: 'Added' },
+  { key: 'scheduled', label: 'Scheduled' },
 ]
+
+const shortDate = (iso: string) => new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+
+/** One line under the email that answers the stage's question: when it goes
+ * out, when it went out, or how long the prospect has been waiting. */
+function stageHint(p: OutreachProspectView): string | null {
+  const send = p.draft?.send
+  switch (draftStage(p)) {
+    case 'queued': return send?.scheduled_at ? `Scheduled ${shortDate(send.scheduled_at)}` : 'Queued'
+    case 'sent': return send?.sent_at ? `Sent ${shortDate(send.sent_at)}` : 'Sent'
+    case 'followup': {
+      let last: string | null = null
+      for (const d of p.drafts) if (d.send?.sent_at && (!last || d.send.sent_at > last)) last = d.send.sent_at
+      return last ? `Touch ${p.draft?.step ?? p.drafts.length} · last sent ${shortDate(last)}` : `Touch ${p.draft?.step ?? p.drafts.length}`
+    }
+    case 'ready': return `Added ${shortDate(p.created_at)}`
+  }
+}
 
 const DISPO_META: Record<Disposition, { label: string; color: string }> = {
   open: { label: 'open', color: 'var(--app-muted)' },
@@ -163,15 +187,16 @@ function LoadMore({ loaded, total, busy, onMore }: { loaded: number; total: numb
 }
 
 /** Sticky section divider inside the scrolling list. */
-function SectionHeader({ label, count }: { label: string; count: number }) {
+function SectionHeader({ label, count, loaded, note }: { label: string; count: number; loaded?: number; note?: string }) {
   return (
     <div style={{ position: 'sticky', top: 0, zIndex: 1, background: 'var(--app-card-2)', borderBottom: `1px solid ${BORDER}`, padding: '6px 12px', fontSize: 9, fontWeight: 600, color: MUTED, textTransform: 'uppercase', letterSpacing: 0.6 }}>
-      {label} <span style={{ color: 'var(--app-muted)' }}>{count}</span>
+      {label} <span style={{ color: 'var(--app-muted)' }}>{count.toLocaleString('en-US')}{loaded !== undefined && loaded < count ? ` · ${loaded} loaded` : ''}</span>
+      {note && <div style={{ fontSize: 10, fontWeight: 400, textTransform: 'none', letterSpacing: 0, color: '#a1601f', marginTop: 3 }}>{note}</div>}
     </div>
   )
 }
 
-function ProspectRow({ p, selected, onSelect, checked, onToggle }: { p: OutreachProspectView; selected: boolean; onSelect: () => void; checked?: boolean; onToggle?: () => void }) {
+function ProspectRow({ p, selected, onSelect, checked, onToggle, hint }: { p: OutreachProspectView; selected: boolean; onSelect: () => void; checked?: boolean; onToggle?: () => void; hint?: string | null }) {
   return (
     <div
       onClick={onSelect}
@@ -183,6 +208,7 @@ function ProspectRow({ p, selected, onSelect, checked, onToggle }: { p: Outreach
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 13, fontWeight: selected ? 600 : 400, color: 'var(--app-text)' }}>{p.recipient_name ?? p.domain}</div>
         <div style={{ fontSize: 11, color: MUTED, marginTop: 2 }}>{p.email}</div>
+        {hint && <div style={{ fontSize: 10, color: MUTED, marginTop: 2 }}>{hint}</div>}
         <div style={{ display: 'flex', gap: 6, marginTop: 6, alignItems: 'center', flexWrap: 'wrap' }}>
           {p.needs_review ? <Pill label="review" color="#a1601f" /> : p.draft ? (p.draft.is_template ? <Pill label="template" color={MUTED} /> : <Pill label="personalized" color="#17805f" />) : null}
           {p.draft && !p.draft.clean && <Pill label="drift" color="#b04545" />}
@@ -820,7 +846,7 @@ export function OutreachWorkspace({ section }: { section: Section }) {
   const {
     companyId, snapshot, refresh, campaigns, scheduledSends, loadScheduled, pushToast,
     view: filter, setView: setFilter,
-    rows: current, total, rowsLoading, loadMore,
+    rows: current, total, sections, rowsLoading, loadMore,
     sort: listSortKey, dir: listSortDir, toggleSort: toggleListSort,
   } = useOutreach()
 
@@ -955,13 +981,16 @@ export function OutreachWorkspace({ section }: { section: Section }) {
                 // Direct path for drafts already reviewed and ready. The dialog
                 // still asks for a send time before anything enters the queue.
                 const unqueued = current.filter((p) => isUnqueued(p.draft))
+                // The button acts on loaded rows; the real total comes from the
+                // view-wide section counts so the label never understates it.
+                const unqueuedTotal = sections ? sections.ready + sections.followup : unqueued.length
                 return unqueued.length > 0 ? (
                   <button
                     onClick={() => { setConfirmBulkDelete(false); setSelectedDraftIds(new Set(unqueued.map((p) => p.draft!.id))); setScheduleDialogOpen(true) }}
                     style={btn(ACCENT)}
-                    title={`Schedule the ${unqueued.length} loaded drafts that aren't already queued or sent${scopeNote}`}
+                    title={`Schedule the ${unqueued.length} loaded drafts that aren't already queued or sent${unqueuedTotal > unqueued.length ? ` (${unqueuedTotal.toLocaleString('en-US')} in the whole list; load more to reach the rest)` : ''}${scopeNote}`}
                   >
-                    Schedule unqueued ({unqueued.length})
+                    Schedule unqueued ({unqueued.length}{unqueuedTotal > unqueued.length ? ` of ${unqueuedTotal.toLocaleString('en-US')}` : ''})
                   </button>
                 ) : null
               })()}
@@ -1033,6 +1062,7 @@ export function OutreachWorkspace({ section }: { section: Section }) {
                       onSelect={() => setSelectedId(p.id)}
                       checked={selectable && p.draft ? selectedDraftIds.has(p.draft.id) : undefined}
                       onToggle={selectable && p.draft ? () => toggleDraft(p.draft!.id) : undefined}
+                      hint={listSortKey === 'stage' || listSortKey === 'scheduled' || listSortKey === 'touch' ? stageHint(p) : null}
                     />
                   )
                   const sortBar = (
@@ -1049,21 +1079,44 @@ export function OutreachWorkspace({ section }: { section: Section }) {
                       ))}
                     </div>
                   )
-                  if (listSortKey === 'type') {
-                    // Counts are of the LOADED rows, matching what the dividers
-                    // actually separate; the view's real totals are in the tabs.
-                    const personalized = current.filter((p) => p.draft && !p.draft.is_template)
-                    const templates = current.filter((p) => p.draft && p.draft.is_template)
-                    const sections: [string, OutreachProspectView[]][] = listSortDir === 'asc'
-                      ? [['Personalized', personalized], ['Templates', templates]]
-                      : [['Templates', templates], ['Personalized', personalized]]
+                  if (listSortKey === 'stage') {
+                    // Grouped by what the row needs next. Header counts are the
+                    // view-wide totals from the server; "· n loaded" shows when
+                    // the loaded page holds only part of a section.
+                    const followupNote = snapshot?.sending.provider === 'outlook'
+                      ? 'Microsoft 365 has no reply detection yet, so follow-ups will not send until the mailbox is Gmail or reply detection is added.'
+                      : undefined
+                    const order: DraftStage[] = listSortDir === 'asc' ? DRAFT_STAGES : [...DRAFT_STAGES].reverse()
                     return (
                       <>
                         {sortBar}
-                        {sections.map(([label, rows]) => (
+                        {order.map((stage) => {
+                          const rows = current.filter((p) => draftStage(p) === stage)
+                          const count = sections?.[stage] ?? rows.length
+                          return (rows.length > 0 || count > 0) && (
+                            <div key={stage}>
+                              <SectionHeader label={DRAFT_STAGE_LABEL[stage]} count={count} loaded={rows.length} note={stage === 'followup' ? followupNote : undefined} />
+                              {rows.map(rowOf)}
+                              {rows.length === 0 && <div style={{ fontSize: 11, color: MUTED, padding: '8px 12px' }}>None in the loaded rows yet. Load more to reach this section.</div>}
+                            </div>
+                          )
+                        })}
+                      </>
+                    )
+                  }
+                  if (listSortKey === 'type') {
+                    const personalized = current.filter((p) => p.draft && !p.draft.is_template)
+                    const templates = current.filter((p) => p.draft && p.draft.is_template)
+                    const groups: [string, keyof ListSections, OutreachProspectView[]][] = listSortDir === 'asc'
+                      ? [['Personalized', 'personalized', personalized], ['Templates', 'templates', templates]]
+                      : [['Templates', 'templates', templates], ['Personalized', 'personalized', personalized]]
+                    return (
+                      <>
+                        {sortBar}
+                        {groups.map(([label, key, rows]) => (
                           rows.length > 0 && (
                             <div key={label}>
-                              <SectionHeader label={label} count={rows.length} />
+                              <SectionHeader label={label} count={sections?.[key] ?? rows.length} loaded={rows.length} />
                               {rows.map(rowOf)}
                             </div>
                           )

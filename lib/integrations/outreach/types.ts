@@ -321,6 +321,8 @@ export interface ProspectPage {
   /** Rows matching the query in full, so the UI can say "100 of 4,933". */
   total: number
   offset: number
+  /** Stage and type totals over every matching row, for the list's section headers. */
+  sections: import('./views').ListSections
 }
 
 /** One round trip for the whole workspace: the fixed-size snapshot plus one

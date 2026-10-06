@@ -47,7 +47,25 @@ export const FILTERS = Object.keys(FILTER_LABEL) as Filter[]
 /** Sort keys accepted by a paged prospect query. Not every view offers every
  * key (the Contacts table exposes domain/campaign/added; the draft lists expose
  * type/name/email/status) — the server just applies whichever it is given. */
-export type ProspectSort = 'type' | 'name' | 'email' | 'domain' | 'status' | 'campaign' | 'added'
+export type ProspectSort = 'stage' | 'type' | 'name' | 'email' | 'domain' | 'status' | 'campaign' | 'added' | 'touch' | 'scheduled'
+
+export const DRAFT_STAGE_LABEL: Record<import('./stage').DraftStage, string> = {
+  ready: 'Ready to schedule',
+  queued: 'Queued',
+  followup: 'Follow-ups',
+  sent: 'Sent',
+}
+
+/** Section totals for the rows matching a draft-list query, counted over the
+ * whole view rather than the loaded page, so headers can say the real number. */
+export interface ListSections {
+  ready: number
+  queued: number
+  followup: number
+  sent: number
+  personalized: number
+  templates: number
+}
 
 /** Coarse lifecycle bucket behind the Contacts table's status chips. */
 export type StageBucket = 'new' | 'review' | 'ready' | 'emailed' | 'replied' | 'other'
@@ -90,6 +108,6 @@ export function filtersOf(section: Section): Filter[] {
  */
 export function defaultSort(view: Filter): { sort: ProspectSort; dir: 'asc' | 'desc' } {
   return view === 'approved' || view === 'exported' || view === 'all'
-    ? { sort: 'type', dir: 'asc' }
+    ? { sort: 'stage', dir: 'asc' }
     : { sort: 'added', dir: 'desc' }
 }

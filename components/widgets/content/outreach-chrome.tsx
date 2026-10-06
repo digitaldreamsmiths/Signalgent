@@ -153,10 +153,13 @@ export function OutreachChrome({ children }: { children: React.ReactNode }) {
     const r = await redraftTemplateSends(companyId)
     setRedrafting(false)
     if (!r.ok) return pushToast(r.error, 'error')
+    const parts: string[] = []
+    if (r.data.redrafted) parts.push(`re-drafted ${r.data.redrafted} queued email${r.data.redrafted === 1 ? '' : 's'}`)
+    if (r.data.rewritten) parts.push(`rewrote ${r.data.rewritten} waiting draft${r.data.rewritten === 1 ? '' : 's'}`)
     pushToast(
-      r.data.redrafted === 0
-        ? 'Every queued email already uses a current template.'
-        : `Re-drafted ${r.data.redrafted} queued email${r.data.redrafted === 1 ? '' : 's'} from the active templates.${r.data.skipped ? ` ${r.data.skipped} left as is.` : ''}`,
+      parts.length === 0
+        ? 'Every queued email and waiting draft already uses a current template.'
+        : `From the active templates: ${parts.join(' and ')}.${r.data.skipped ? ` ${r.data.skipped} queued left as is.` : ''}`,
     )
     refresh()
   }
@@ -284,7 +287,7 @@ export function OutreachChrome({ children }: { children: React.ReactNode }) {
         </label>
         <button onClick={() => setSendingModalOpen(true)} style={btnGhost()}>Sending</button>
         <button onClick={() => setTemplatesModalOpen(true)} style={btnGhost()} title="Manage the fallback templates rotated for prospects that can't be personalized, and see their performance">Manage templates</button>
-        <button onClick={handleRedraft} disabled={redrafting || (c?.queued ?? 0) === 0} style={btnGhost()} title="Rebuild queued emails whose template was deactivated or edited since they were scheduled. They keep their send times.">{redrafting ? 'Re-drafting…' : 'Re-draft templates'}</button>
+        <button onClick={handleRedraft} disabled={redrafting} style={btnGhost()} title="Rebuild queued emails and waiting first-touch drafts whose template was deactivated or edited since they were written. Queued emails keep their send times.">{redrafting ? 'Re-drafting…' : 'Re-draft templates'}</button>
         <button onClick={handleScanReplies} disabled={scanning} style={btnGhost()} title="Check Gmail for replies and bounces, then update outcomes">
           {scanning ? 'Scanning…' : 'Scan replies'}
         </button>

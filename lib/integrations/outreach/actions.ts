@@ -258,7 +258,7 @@ export async function getOutreachWorkspace(
   const reply_rate = counts.sent > 0 ? counts.replied / counts.sent : 0
 
   const campaignNames = new Map(campaigns.map((c) => [c.id, c.name]))
-  const { page, total } = selectPage(index.rows, query, campaignNames)
+  const { page, total, sections } = selectPage(index.rows, query, campaignNames)
   const rows = await hydrateProspects(supabase, companyId, page)
 
   const settings = await loadSettings(supabase, companyId)
@@ -312,7 +312,7 @@ export async function getOutreachWorkspace(
       cost_usd_total,
       sending,
     },
-    page: { rows, total, offset: Math.max(0, query.offset) },
+    page: { rows, total, offset: Math.max(0, query.offset), sections },
   }
 }
 

@@ -128,6 +128,24 @@ export function isUnqueued(d: DraftLike | null): boolean {
   return !!d && (!d.send || d.send.status === 'failed' || d.send.status === 'canceled')
 }
 
+/** What the draft lists group by: what a row needs from the user next.
+ *  - ready:    a first touch that can be scheduled now
+ *  - queued:   on the drip calendar already
+ *  - followup: a later touch waiting to be scheduled (needs reply detection)
+ *  - sent:     the current touch has gone out */
+export type DraftStage = 'ready' | 'queued' | 'followup' | 'sent'
+
+export const DRAFT_STAGES: DraftStage[] = ['ready', 'queued', 'followup', 'sent']
+
+export function draftStage(p: ProspectLike): DraftStage {
+  const d = p.draft
+  if (!d) return 'ready'
+  const s = d.send?.status
+  if (s === 'queued' || s === 'sending') return 'queued'
+  if (s === 'sent' || d.status === 'exported') return 'sent'
+  return d.step >= 2 ? 'followup' : 'ready'
+}
+
 // ── Sorting ──────────────────────────────────────────────────────────────────
 
 export function displayName(p: ProspectLike): string {
