@@ -182,6 +182,8 @@ export function SendingSettingsModal({ companyId, onClose, onSaved }: { companyI
               <div><label style={labelStyle}>Sender email</label><input value={form.sender_email ?? ''} onChange={(e) => set('sender_email', e.target.value)} style={inputStyle} placeholder="outreach@send.sourcegent.io" /></div>
             </div>
             <div><label style={labelStyle}>Reply-to</label><input value={form.reply_to ?? ''} onChange={(e) => set('reply_to', e.target.value)} style={inputStyle} placeholder="eudon@sourcegent.io" /></div>
+            <div><label style={labelStyle}>Signature</label><textarea value={form.signature ?? ''} onChange={(e) => set('signature', e.target.value)} rows={3} style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit' }} placeholder={'Best,\nEudon\nsourcegent.io'} />
+              <div style={{ fontSize: 10, color: MUTED, marginTop: 4 }}>Added under template emails that have no sign-off. Leave blank to sign with the sender name.</div></div>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
               <div><label style={labelStyle}>Daily limit</label><input type="number" value={form.daily_send_limit} onChange={(e) => set('daily_send_limit', Math.max(1, parseInt(e.target.value) || 1))} style={inputStyle} /></div>

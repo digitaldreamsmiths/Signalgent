@@ -14,6 +14,9 @@ import { scanReplies } from './send/scan'
 import { loadCampaigns, timezoneForProspect } from './campaigns'
 import { recipientIsSuppressed } from './send/suppression'
 import { fetchAllPagesResult } from './fetch-all'
+import { applyGreeting, fetchStoredContactNames, resolveContactName } from './contact-name'
+import { pickTemplateDraft } from './enrich-run'
+import { usesUsaspending } from './usaspending-preference'
 
 const AUTH_ERROR = 'You don’t have access to this workspace.'
 
@@ -482,4 +485,134 @@ export async function getScheduledSends(companyId: string): Promise<ScheduledSen
     recipient_name: nameById.get(s.prospect_id) ?? null,
     scheduled_at: s.scheduled_at,
   }))
+}
+
+/**
+ * Rebuild queued template emails from the templates that are active now.
+ *
+ * A send row freezes its subject and body when it is queued, so editing or
+ * swapping templates never reaches emails already on the calendar. This finds
+ * every queued step-one send whose draft came from a template that has since
+ * been deactivated or edited, re-renders the draft from the current active
+ * rotation, cancels the old send, and queues the new copy in the same slot.
+ * Personalized drafts and sends from unchanged templates are left alone.
+ */
+export async function redraftTemplateSends(
+  companyId: string,
+): Promise<ActionResult<{ redrafted: number; skipped: number }>> {
+  try {
+    await requireCompanyAccess(companyId)
+  } catch (err) {
+    if (err instanceof IntegrationAuthError) return { ok: false, error: AUTH_ERROR }
+    throw err
+  }
+  const supabase = await createClient()
+  const settings = await loadSettings(supabase, companyId)
+
+  const { data: templates, error: templatesError } = await supabase
+    .from('outreach_templates')
+    .select('id, active, updated_at')
+    .eq('company_id', companyId)
+  if (templatesError) return { ok: false, error: 'Could not load the templates.' }
+  const templateById = new Map((templates ?? []).map((t) => [t.id, t]))
+  if (!(templates ?? []).some((t) => t.active)) return { ok: false, error: 'Activate at least one template first.' }
+
+  const queued = await fetchAllPagesResult((from, to) => supabase
+    .from('outreach_sends')
+    .select('id, draft_id, prospect_id, scheduled_at')
+    .eq('company_id', companyId)
+    .eq('status', 'queued')
+    .not('draft_id', 'is', null)
+    .order('id').range(from, to))
+  if (queued.error) return { ok: false, error: 'Could not load the queued sends.' }
+  if (queued.rows.length === 0) return { ok: true, data: { redrafted: 0, skipped: 0 } }
+
+  const draftIds = [...new Set(queued.rows.map((s) => s.draft_id as string))]
+  const drafts: { id: string; prospect_id: string; template_id: string | null; step: number; updated_at: string }[] = []
+  for (let i = 0; i < draftIds.length; i += 200) {
+    const { data, error } = await supabase
+      .from('outreach_drafts')
+      .select('id, prospect_id, template_id, step, updated_at')
+      .eq('company_id', companyId)
+      .in('id', draftIds.slice(i, i + 200))
+    if (error) return { ok: false, error: 'Could not load the drafts.' }
+    drafts.push(...(data ?? []))
+  }
+  const draftById = new Map(drafts.map((d) => [d.id, d]))
+
+  const stale = queued.rows.filter((s) => {
+    const d = draftById.get(s.draft_id as string)
+    if (!d || !d.template_id || d.step !== 1) return false
+    const t = templateById.get(d.template_id)
+    return !t || !t.active || t.updated_at > d.updated_at
+  })
+  if (stale.length === 0) return { ok: true, data: { redrafted: 0, skipped: queued.rows.length } }
+
+  const prospectIds = [...new Set(stale.map((s) => s.prospect_id))]
+  const prospects: { id: string; email: string; recipient_name: string | null; disposition: string }[] = []
+  for (let i = 0; i < prospectIds.length; i += 200) {
+    const { data, error } = await supabase
+      .from('outreach_prospects')
+      .select('id, email, recipient_name, disposition')
+      .eq('company_id', companyId)
+      .in('id', prospectIds.slice(i, i + 200))
+    if (error) return { ok: false, error: 'Could not load the prospects.' }
+    prospects.push(...(data ?? []))
+  }
+  const prospectById = new Map(prospects.map((p) => [p.id, p]))
+  const storedNames = await fetchStoredContactNames(supabase, companyId, prospectIds)
+  const profile = await loadOfferProfile(supabase, companyId)
+  const federal = await usesUsaspending(supabase, companyId)
+
+  let redrafted = 0
+  let skipped = queued.rows.length - stale.length
+  for (const send of stale) {
+    const draft = draftById.get(send.draft_id as string)!
+    const prospect = prospectById.get(send.prospect_id)
+    if (!prospect || prospect.disposition !== 'open' || !prospect.email) { skipped++; continue }
+
+    const picked = await pickTemplateDraft(supabase, companyId, prospect.recipient_name ?? null, prospect.id, profile, federal)
+    const subject = picked.draft.subject
+    const body = applyGreeting(picked.draft.body, resolveContactName(storedNames.get(prospect.id), prospect.email))
+    const now = new Date().toISOString()
+
+    // Draft first, then retire the old send, then queue the new copy. If the
+    // insert fails the draft stays approved in Ready to email, where it can be
+    // scheduled by hand; nothing is ever double-queued.
+    const { error: draftError } = await supabase
+      .from('outreach_drafts')
+      .update({ subject, body, template_id: picked.template_id, status: 'approved', clean: true, updated_at: now })
+      .eq('id', draft.id).eq('company_id', companyId)
+    if (draftError) { skipped++; continue }
+    const { data: canceled, error: cancelError } = await supabase
+      .from('outreach_sends')
+      .update({ status: 'canceled', error: 'Re-drafted from current templates', updated_at: now })
+      .eq('id', send.id).eq('company_id', companyId).eq('status', 'queued')
+      .select('id')
+    if (cancelError || !canceled?.length) { skipped++; continue }
+
+    const open_token = randomUUID()
+    const unsub_token = randomUUID()
+    const composed = composeEmail(subject, body, settings, unsub_token, profile)
+    const row = {
+      company_id: companyId,
+      prospect_id: prospect.id,
+      draft_id: draft.id,
+      provider: settings.provider,
+      recipient_email: prospect.email,
+      subject: composed.subject,
+      body: composed.body,
+      status: 'queued' as const,
+      scheduled_at: send.scheduled_at,
+      open_token,
+      unsub_token,
+    }
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { open_token: _o, unsub_token: _u, ...withoutTracking } = row
+    const insertError = await insertSendRows(supabase, [row], [withoutTracking])
+    if (insertError) { skipped++; continue }
+    redrafted++
+  }
+  revalidatePath('/outreach')
+  return { ok: true, data: { redrafted, skipped } }
 }

@@ -4,7 +4,7 @@ import { useCallback, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useOutreach } from '@/contexts/outreach-context'
 import { enrichWaveNow, ingestProspects } from '@/lib/integrations/outreach/actions'
-import { processSendQueue, scanRepliesNow } from '@/lib/integrations/outreach/sending'
+import { processSendQueue, redraftTemplateSends, scanRepliesNow } from '@/lib/integrations/outreach/sending'
 import { ACCENT, BORDER, CARD, MUTED, Banner, Metric, btn, btnGhost, fmtPct, fmtUsd } from './outreach-ui'
 import { SendingSettingsModal } from './sending-settings-modal'
 import { CampaignsModal } from './campaigns-modal'
@@ -38,6 +38,7 @@ export function OutreachChrome({ children }: { children: React.ReactNode }) {
   const [running, setRunning] = useState(false)
   const [processing, setProcessing] = useState(false)
   const [scanning, setScanning] = useState(false)
+  const [redrafting, setRedrafting] = useState(false)
   const [sendingModalOpen, setSendingModalOpen] = useState(false)
   const [templatesModalOpen, setTemplatesModalOpen] = useState(false)
   const [campaignsModalOpen, setCampaignsModalOpen] = useState(false)
@@ -141,6 +142,21 @@ export function OutreachChrome({ children }: { children: React.ReactNode }) {
       `Sent ${r.data.sent}${r.data.failed ? `, ${r.data.failed} failed` : ''}.` +
         (r.data.recovered ? ` Recovered ${r.data.recovered} send${r.data.recovered === 1 ? '' : 's'} stuck from an interrupted run — marked failed, verify in Gmail Sent before re-queuing.` : ''),
       r.data.failed || r.data.recovered ? 'error' : 'info',
+    )
+    refresh()
+  }
+
+  const handleRedraft = async () => {
+    if (!companyId) return
+    if (!window.confirm('Rebuild queued template emails from the active templates? Emails drafted from deactivated or edited templates are re-written and keep their scheduled times. Personalized drafts are not touched.')) return
+    setRedrafting(true)
+    const r = await redraftTemplateSends(companyId)
+    setRedrafting(false)
+    if (!r.ok) return pushToast(r.error, 'error')
+    pushToast(
+      r.data.redrafted === 0
+        ? 'Every queued email already uses a current template.'
+        : `Re-drafted ${r.data.redrafted} queued email${r.data.redrafted === 1 ? '' : 's'} from the active templates.${r.data.skipped ? ` ${r.data.skipped} left as is.` : ''}`,
     )
     refresh()
   }
@@ -268,6 +284,7 @@ export function OutreachChrome({ children }: { children: React.ReactNode }) {
         </label>
         <button onClick={() => setSendingModalOpen(true)} style={btnGhost()}>Sending</button>
         <button onClick={() => setTemplatesModalOpen(true)} style={btnGhost()} title="Manage the fallback templates rotated for prospects that can't be personalized, and see their performance">Manage templates</button>
+        <button onClick={handleRedraft} disabled={redrafting || (c?.queued ?? 0) === 0} style={btnGhost()} title="Rebuild queued emails whose template was deactivated or edited since they were scheduled. They keep their send times.">{redrafting ? 'Re-drafting…' : 'Re-draft templates'}</button>
         <button onClick={handleScanReplies} disabled={scanning} style={btnGhost()} title="Check Gmail for replies and bounces, then update outcomes">
           {scanning ? 'Scanning…' : 'Scan replies'}
         </button>

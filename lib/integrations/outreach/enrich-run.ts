@@ -63,7 +63,7 @@ export async function recordUsage(supabase: DB, companyId: string, userId: strin
  * random pick among the company's ACTIVE user templates, or the built-in default
  * when none are defined. Returns the rendered draft plus the template_id to stamp
  * (null for the built-in) so per-template performance can be tracked. */
-async function pickTemplateDraft(
+export async function pickTemplateDraft(
   supabase: DB,
   companyId: string,
   recipientName: string | null,
