@@ -1,9 +1,8 @@
 const GRAPH = 'https://graph.microsoft.com/v1.0'
 
 function tenantAuthority(): string {
-  const tenant = process.env.MICROSOFT_TENANT_ID
-  if (!tenant || !/^[0-9a-f-]{36}$/i.test(tenant)) throw new Error('MICROSOFT_TENANT_ID is not configured')
-  return `https://login.microsoftonline.com/${tenant}/oauth2/v2.0`
+  // The app registration accepts work accounts from multiple Entra tenants.
+  return 'https://login.microsoftonline.com/organizations/oauth2/v2.0'
 }
 
 function appCredentials(): { clientId: string; clientSecret: string } {
