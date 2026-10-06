@@ -131,11 +131,10 @@ export function getServicesForMode(mode: string): ServiceDef[] {
   return SERVICES.filter((s) => s.mode === mode)
 }
 
-/** Map each service to its required env var names (client ID + secret) */
-export const SERVICE_ENV_VARS: Record<ServiceId, { clientId: string; clientSecret: string }> = {
+/** Map each service to its required env var names (client ID + secret). Microsoft 365 is absent: each company stores its own Entra app registration. */
+export const SERVICE_ENV_VARS: Partial<Record<ServiceId, { clientId: string; clientSecret: string }>> = {
   gmail:            { clientId: 'GOOGLE_CLIENT_ID',      clientSecret: 'GOOGLE_CLIENT_SECRET' },
   google_analytics: { clientId: 'GOOGLE_CLIENT_ID',      clientSecret: 'GOOGLE_CLIENT_SECRET' },
-  outlook:          { clientId: 'MICROSOFT_CLIENT_ID',   clientSecret: 'MICROSOFT_CLIENT_SECRET' },
   linkedin_page:    { clientId: 'LINKEDIN_CLIENT_ID',    clientSecret: 'LINKEDIN_CLIENT_SECRET' },
   facebook_page:    { clientId: 'FACEBOOK_APP_ID',       clientSecret: 'FACEBOOK_APP_SECRET' },
   stripe_account:   { clientId: 'STRIPE_CLIENT_ID',      clientSecret: 'STRIPE_CLIENT_SECRET' },
@@ -148,7 +147,6 @@ export const SERVICE_ENV_VARS: Record<ServiceId, { clientId: string; clientSecre
 export const OAUTH_URLS: Partial<Record<ServiceId, string>> = {
   gmail:            'https://accounts.google.com/o/oauth2/v2/auth',
   google_analytics: 'https://accounts.google.com/o/oauth2/v2/auth',
-  outlook:          'https://login.microsoftonline.com/common/oauth2/v2.0/authorize',
   linkedin_page:    'https://www.linkedin.com/oauth/v2/authorization',
   facebook_page:    'https://www.facebook.com/v19.0/dialog/oauth',
   stripe_account:   'https://connect.stripe.com/oauth/authorize',
@@ -159,7 +157,6 @@ export const OAUTH_URLS: Partial<Record<ServiceId, string>> = {
 export const OAUTH_SCOPES: Partial<Record<ServiceId, string>> = {
   gmail:            'https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/userinfo.email',
   google_analytics: 'https://www.googleapis.com/auth/analytics.readonly https://www.googleapis.com/auth/userinfo.email',
-  outlook:          'offline_access User.Read Mail.Send',
   linkedin_page:    'r_organization_social w_organization_social r_basicprofile',
   facebook_page:    'pages_read_engagement pages_manage_posts pages_show_list',
   stripe_account:   'read_write',

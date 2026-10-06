@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { requireCompanyAccess } from '@/lib/integrations/auth'
 import { verifyState } from '@/lib/integrations/oauth-state'
 import { exchangeCode, mailboxProfile } from '@/lib/integrations/outlook/fetch'
+import { loadMicrosoftOAuthConfig } from '@/lib/integrations/outlook/config'
 import { saveOutlookCredentials } from '@/lib/integrations/outlook/tokens'
 
 function result(origin: string, status: string, reason?: string): NextResponse {
@@ -30,7 +31,9 @@ export async function GET(request: NextRequest) {
   }
   try {
     const redirectUri = new URL('/api/integrations/outlook/callback', origin).toString()
-    const tokens = await exchangeCode(code, redirectUri)
+    const config = await loadMicrosoftOAuthConfig(companyId)
+    if (!config) return result(origin, 'error', 'microsoft_setup')
+    const tokens = await exchangeCode(code, redirectUri, config)
     if (!tokens.refresh_token) return result(origin, 'error', 'offline_access_missing')
     const profile = await mailboxProfile(tokens.access_token)
     const email = (profile.mail || profile.userPrincipalName || '').toLowerCase()

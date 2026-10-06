@@ -139,6 +139,31 @@ export interface Database {
         }
         Relationships: []
       }
+      company_microsoft_oauth_configs: {
+        Row: {
+          company_id: string
+          tenant_id: string
+          client_id: string
+          client_secret_ciphertext: string
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          company_id: string
+          tenant_id: string
+          client_id: string
+          client_secret_ciphertext: string
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          tenant_id?: string
+          client_id?: string
+          client_secret_ciphertext?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       connected_accounts: {
         Row: {
           id: string

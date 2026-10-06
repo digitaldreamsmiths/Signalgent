@@ -1,24 +1,17 @@
+import type { MicrosoftOAuthConfig } from './config'
+
 const GRAPH = 'https://graph.microsoft.com/v1.0'
 
-function tenantAuthority(): string {
-  // The app registration accepts work accounts from multiple Entra tenants.
-  return 'https://login.microsoftonline.com/organizations/oauth2/v2.0'
-}
-
-function appCredentials(): { clientId: string; clientSecret: string } {
-  const clientId = process.env.MICROSOFT_CLIENT_ID
-  const clientSecret = process.env.MICROSOFT_CLIENT_SECRET
-  if (!clientId || !clientSecret) throw new Error('Microsoft mailbox credentials are not configured')
-  return { clientId, clientSecret }
+function tenantAuthority(config: MicrosoftOAuthConfig): string {
+  return `https://login.microsoftonline.com/${config.tenantId}/oauth2/v2.0`
 }
 
 export const OUTLOOK_SCOPES = 'offline_access User.Read Mail.Send'
 
-export function authorizeUrl(state: string, redirectUri: string): string {
-  const { clientId } = appCredentials()
-  const url = new URL(`${tenantAuthority()}/authorize`)
+export function authorizeUrl(state: string, redirectUri: string, config: MicrosoftOAuthConfig): string {
+  const url = new URL(`${tenantAuthority(config)}/authorize`)
   url.search = new URLSearchParams({
-    client_id: clientId, response_type: 'code', redirect_uri: redirectUri,
+    client_id: config.clientId, response_type: 'code', redirect_uri: redirectUri,
     response_mode: 'query', scope: OUTLOOK_SCOPES, state,
     prompt: 'select_account',
   }).toString()
@@ -32,8 +25,8 @@ export interface MicrosoftTokens {
   scope?: string
 }
 
-async function tokenRequest(form: URLSearchParams): Promise<MicrosoftTokens> {
-  const response = await fetch(`${tenantAuthority()}/token`, {
+async function tokenRequest(form: URLSearchParams, config: MicrosoftOAuthConfig): Promise<MicrosoftTokens> {
+  const response = await fetch(`${tenantAuthority(config)}/token`, {
     method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: form,
   })
@@ -43,20 +36,18 @@ async function tokenRequest(form: URLSearchParams): Promise<MicrosoftTokens> {
   return tokens
 }
 
-export async function exchangeCode(code: string, redirectUri: string): Promise<MicrosoftTokens> {
-  const { clientId, clientSecret } = appCredentials()
+export async function exchangeCode(code: string, redirectUri: string, config: MicrosoftOAuthConfig): Promise<MicrosoftTokens> {
   return tokenRequest(new URLSearchParams({
-    client_id: clientId, client_secret: clientSecret, code, redirect_uri: redirectUri,
+    client_id: config.clientId, client_secret: config.clientSecret, code, redirect_uri: redirectUri,
     grant_type: 'authorization_code', scope: OUTLOOK_SCOPES,
-  }))
+  }), config)
 }
 
-export async function refreshToken(refresh: string): Promise<MicrosoftTokens> {
-  const { clientId, clientSecret } = appCredentials()
+export async function refreshToken(refresh: string, config: MicrosoftOAuthConfig): Promise<MicrosoftTokens> {
   return tokenRequest(new URLSearchParams({
-    client_id: clientId, client_secret: clientSecret, refresh_token: refresh,
+    client_id: config.clientId, client_secret: config.clientSecret, refresh_token: refresh,
     grant_type: 'refresh_token', scope: OUTLOOK_SCOPES,
-  }))
+  }), config)
 }
 
 export async function mailboxProfile(accessToken: string): Promise<{ mail: string | null; userPrincipalName: string }> {

@@ -3,6 +3,7 @@ import type { Database } from '@/lib/types/database.types'
 import { decryptNullable, encrypt } from '@/lib/integrations/crypto'
 import { getAccount, markError, updateAccount, upsertAccount } from '@/lib/integrations/accounts'
 import { refreshToken, type MicrosoftTokens } from './fetch'
+import { loadMicrosoftOAuthConfig } from './config'
 
 export async function saveOutlookCredentials(companyId: string, email: string, tokens: MicrosoftTokens): Promise<void> {
   await upsertAccount({
@@ -45,7 +46,9 @@ export async function loadOutlookCredentials(companyId: string, client?: Supabas
     return null
   }
   try {
-    const tokens = await refreshToken(refresh)
+    const config = await loadMicrosoftOAuthConfig(companyId, client)
+    if (!config) throw new Error('Company Microsoft app registration is not configured')
+    const tokens = await refreshToken(refresh, config)
     await updateAccount(companyId, 'outlook', {
       access_token: encrypt(tokens.access_token),
       refresh_token: tokens.refresh_token ? encrypt(tokens.refresh_token) : row.refresh_token,

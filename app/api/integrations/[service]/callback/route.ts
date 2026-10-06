@@ -109,31 +109,6 @@ export async function GET(
     }
   }
 
-  // ── Microsoft token exchange (Outlook) ────────────────────────────────────
-  else if (serviceId === 'outlook') {
-    const res = await fetch('https://login.microsoftonline.com/common/oauth2/v2.0/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        code,
-        client_id: clientId,
-        client_secret: clientSecret,
-        redirect_uri: callbackUrl,
-        grant_type: 'authorization_code',
-      }),
-    })
-    if (!res.ok) return redirectWithError(baseUrl, service, 'microsoft_token_exchange_failed')
-    tokenData = await res.json()
-
-    const infoRes = await fetch('https://graph.microsoft.com/v1.0/me', {
-      headers: { Authorization: `Bearer ${tokenData.access_token}` },
-    })
-    if (infoRes.ok) {
-      const info = await infoRes.json()
-      accountIdentifier = info.mail ?? info.userPrincipalName ?? null
-    }
-  }
-
   // ── LinkedIn token exchange ───────────────────────────────────────────────
   else if (serviceId === 'linkedin_page') {
     const res = await fetch('https://www.linkedin.com/oauth/v2/accessToken', {

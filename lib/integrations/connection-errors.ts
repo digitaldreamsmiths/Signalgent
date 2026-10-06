@@ -9,6 +9,7 @@ export const CONNECTION_ERRORS = {
   invalid_state: 'This connection attempt expired or could not be verified. Start again from Connections.',
   unauthorized: 'Sign in to the same business account that started this connection, then try again.',
   configuration: 'This integration is not fully configured on the server. Check its credentials in Vercel.',
+  microsoft_setup: 'Save the Microsoft app registration for this company under Microsoft 365 on this page, then connect the mailbox.',
   exchange: 'The provider could not complete this connection. Start a fresh connection attempt.',
   profile: 'The provider did not return the account details Signalgent needs. Try connecting again.',
   no_shop: 'No shop was found on that account. Open a shop there first, then reconnect.',

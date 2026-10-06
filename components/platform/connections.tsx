@@ -2,13 +2,17 @@
 
 import { Plus, Plug, RefreshCw, Unplug } from 'lucide-react'
 import { PROVIDERS, accountProblem, type Provider } from '@/lib/platform/connections'
+import { MicrosoftSetup } from './microsoft-setup'
 import type { ChannelAccount } from '@/lib/platform/types'
 import { usePlatform } from './provider'
+import { useCallback, useState } from 'react'
 
 const PREVIEW_NOTICE = 'Connections are disabled in the sample workspace. Sign in to manage your accounts.'
 
 export function Connections() {
   const { data, preview, companyId, company, notify, removeAccount } = usePlatform()
+  const [microsoftReady, setMicrosoftReady] = useState(false)
+  const onMicrosoftChange = useCallback((configured: boolean) => setMicrosoftReady(configured), [])
   const connectHref = (provider: Provider) => companyId ? `${provider.path}?companyId=${encodeURIComponent(companyId)}` : undefined
   const legacy = PROVIDERS.filter(p => p.group === 'other' && data.accounts.some(a => a.service === p.id))
   const groups: { id: string; title: string; note?: string; providers: Provider[] }[] = [
@@ -38,11 +42,12 @@ export function Connections() {
       {group.note && <p className="sg-group-note">{group.note}</p>}
       <div className="sg-connections-grid">{group.providers.map(provider => {
         const accounts = data.accounts.filter(a => a.service === provider.id)
-        const canAdd = !!provider.path && (provider.multi || accounts.length === 0)
+        const canAdd = !!provider.path && (provider.multi || accounts.length === 0) && (provider.id !== 'outlook' || preview || microsoftReady)
         return <article className="sg-connection-card" key={provider.id}>
           <div className="sg-row sg-between"><span className="sg-provider-logo" style={{ background: provider.color }}>{provider.short}</span><span className="sg-capability">{provider.capability}</span></div>
           <h3>{provider.name}</h3>
           <p>{provider.description}</p>
+          {provider.id === 'outlook' && <MicrosoftSetup companyId={companyId} preview={preview} onChange={onMicrosoftChange} />}
           {accounts.length > 0 && <ul className="sg-account-list">{accounts.map(account => {
             const healthy = account.status === 'connected'
             const problem = accountProblem(account)
