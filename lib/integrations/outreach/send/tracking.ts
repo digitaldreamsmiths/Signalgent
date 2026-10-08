@@ -59,9 +59,21 @@ const LINKABLE = /\b((?:https?:\/\/|www\.)[^\s<>"]+|[a-z0-9-]+\.(?:io|com|net|or
 export function textToHtml(text: string, pixelUrl?: string | null): string {
   const linked = escapeHtml(text).replace(LINKABLE, (m) => {
     const href = /^https?:\/\//i.test(m) ? m : `https://${m}`
-    return `<a href="${href}">${m}</a>`
+    // Keep campaign parameters in the destination, but do not print them in
+    // the message. The unsubscribe action also needs a readable label.
+    try {
+      const url = new URL(href.replace(/&amp;/g, '&'))
+      const label = url.pathname.startsWith('/api/outreach/unsubscribe/')
+        ? 'Unsubscribe'
+        : `${url.hostname}${url.pathname === '/' ? '' : url.pathname}`
+      return `<a href="${href}">${escapeHtml(label)}</a>`
+    } catch {
+      return m
+    }
   })
-  const body = linked.replace(/\r?\n/g, '<br>\n')
+  const body = linked
+    .replace(/Unsubscribe: (<a href="[^"]+">Unsubscribe<\/a>)/g, '$1')
+    .replace(/\r?\n/g, '<br>\n')
   // width/height AND style, because some clients ignore the attributes; alt=""
   // with a zero border keeps it from rendering as a broken-image placeholder.
   const pixel = pixelUrl
