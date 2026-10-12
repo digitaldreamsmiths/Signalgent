@@ -92,17 +92,30 @@ export function cleanSiteTitle(raw: string): string | null {
   let t = decodeEntities(raw).replace(/\s+/g, ' ').trim()
   if (!t || JUNK_RE.test(t)) return null
   t = t.replace(/^welcome( home)? to\s+/i, '').replace(/^(the )?official (web)?site of\s+/i, '')
+  // Separators sites use between name and tagline/place. A lone " I " is a
+  // pipe that lost its glyph in the title ("First UMC I Manchester, NH").
   const segments = t
-    .split(/\s*(?:\||–|—|::|•|›|»|\/|\s-\s)\s*/)
+    .split(/\s*(?:\||–|—|::|:|•|›|»|\/|\s-\s|\sI\s)\s*/)
     .map((s) => s.trim().replace(/[.!]+$/, ''))
     .filter((s) => s && !FURNITURE_RE.test(s))
   if (segments.length === 0) return null
   const pick = segments.find((s) => ORG_TOKEN_RE.test(s)) ?? segments[0]
   let name = pick
-    // "First Baptist Church, Jesup, GA" / "Grace UMC in Covington GA" -> drop the place.
+    // Drop the place, in the forms sites write it:
+    //   "First Baptist Church, Jesup, GA"       (comma, city, state code)
+    //   "Saint Paul's Church Augusta, GA"       (city, state code, no comma)
+    //   "Hudson UMC in Hudson, Ohio"            ("in" + city, any state)
+    //   "First Congregational UCC, Fort Pierce" (comma + city, no state)
     .replace(/,\s*[A-Za-z .'-]+,\s*[A-Z]{2}\b.*$/, '')
-    .replace(/\s+(in|of)\s+[A-Z][A-Za-z .'-]+,\s*[A-Z]{2}\b.*$/, '')
+    .replace(/\s+in\s+[A-Z][A-Za-z .'-]+(?:,\s*[A-Za-z ]+)?$/, '')
     .replace(/\s*[-–—]\s*[A-Za-z .'-]+,\s*[A-Z]{2}\b.*$/, '')
+    .replace(/\s+([A-Z][A-Za-z.'-]+(?:\s[A-Z][A-Za-z.'-]+)?),\s*[A-Z]{2}\b.*$/, (_m, city: string) => {
+      // Never eat an organization word: "Church Jackson, TN" keeps "Church".
+      const words = city.split(' ')
+      const keep = words.filter((w) => ORG_TOKEN_RE.test(w))
+      return keep.length ? ` ${keep.join(' ')}` : ''
+    })
+    .replace(/,\s*[A-Z][A-Za-z .'-]+(?:,\s*[A-Za-z ]+)?$/, (m, off: number, str: string) => (ORG_TOKEN_RE.test(str.slice(0, off)) ? '' : m))
     .trim()
   name = lowerConnectives(unshout(name.replace(/^(home|welcome)\s+[-|:]?\s*/i, '').replace(/\s+[-|:]?\s*(home|welcome)$/i, '').replace(/[\s\-–—|:]+$/, '').trim()))
   if (name.length < 3 || name.length > MAX_LEN) return null
