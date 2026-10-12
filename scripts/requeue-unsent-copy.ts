@@ -46,6 +46,7 @@ import type { Database } from '../lib/types/database.types'
 import { draftEmail } from '../lib/integrations/outreach/draft'
 import { renderTemplate } from '../lib/integrations/outreach/template'
 import { composeEmail } from '../lib/integrations/outreach/send/compose'
+import { loadOfferProfile } from '../lib/integrations/outreach/offer-profile'
 import { replyRiskWarnings } from '../lib/integrations/outreach/hygiene'
 import type { SendSettings, SynthesisResult } from '../lib/integrations/outreach/types'
 import type { LLMUsage } from '../lib/llm/client'
@@ -139,6 +140,10 @@ async function main(): Promise<void> {
     .maybeSingle()
   if (!settingsRow) die('No outreach_settings row for this company — configure sending first.')
   const settings = settingsRow as unknown as SendSettings
+  // The company's offer profile supplies the signature fallback and the site
+  // used to detect an existing sign-off. Composing without it uses the
+  // DEFAULT profile, which stacks a second signature naming the wrong site.
+  const profile = await loadOfferProfile(supabase, COMPANY_ID)
 
   // Only gate the WRITE path: a dry run touches nothing, so there is no race to
   // protect against, and blocking it just hides the plan from you.
@@ -309,7 +314,7 @@ async function main(): Promise<void> {
     if (queued?.status === 'queued') {
       // Compose fresh, with tracking tokens the original row predates.
       const unsub_token = randomUUID()
-      const composed = composeEmail(subject, body, settings, unsub_token)
+      const composed = composeEmail(subject, body, settings, unsub_token, profile)
 
       // status='queued' guard: if the worker claimed this row mid-run, skip it
       // rather than overwrite an email that may already be going out.

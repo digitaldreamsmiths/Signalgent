@@ -7,8 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "requeue": "tsc scripts/requeue-unsent-copy.ts --outDir .scripts-build --module nodenext --moduleResolution nodenext --target es2022 --skipLibCheck --esModuleInterop --resolveJsonModule && node --env-file=.env.local .scripts-build/scripts/requeue-unsent-copy.js",
-    "scan-outlook": "tsc -p scripts/tsconfig.scan-outlook.json && node --env-file=.env.local -r ./scripts/alias.cjs .scripts-build/scripts/scan-outlook-backfill.js"
+    "requeue": "tsc -p scripts/tsconfig.json && node --env-file=.env.local -r ./scripts/alias.cjs .scripts-build/scripts/requeue-unsent-copy.js",
+    "scan-outlook": "tsc -p scripts/tsconfig.json && node --env-file=.env.local -r ./scripts/alias.cjs .scripts-build/scripts/scan-outlook-backfill.js",
+    "resolve-names": "tsc -p scripts/tsconfig.json && node --env-file=.env.local -r ./scripts/alias.cjs .scripts-build/scripts/resolve-org-names.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.90.0",
