@@ -95,6 +95,11 @@ export interface OutreachTemplate {
   /** Relative odds in the random rotation among active templates (>=1). */
   weight: number
   active: boolean
+  /** Optional nudge this template owns; the sweep sends it as touch two
+   * (subject defaults to "Re: <opener subject>"). Null falls back to the
+   * built-in library nudge. */
+  followup_subject: string | null
+  followup_body: string | null
   created_at: string
 }
 
@@ -156,6 +161,8 @@ export interface SendSettings {
   followup_enabled: boolean
   followup_wait_days: number
   followup_max_touches: number
+  /** Only nudge prospects whose last touch registered an open. */
+  followup_openers_only: boolean
 }
 
 /** Outcome of the whole conversation. A non-`open` disposition closes the

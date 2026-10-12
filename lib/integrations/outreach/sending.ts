@@ -132,7 +132,7 @@ export async function saveSendSettings(
     // the sending kill switch, which must never be blocked. Retry without them.
     if (/followup_/.test(error.message)) {
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const { followup_enabled, followup_wait_days, followup_max_touches, ...rest } = patch
+      const { followup_enabled, followup_wait_days, followup_max_touches, followup_openers_only, ...rest } = patch
       const retry = await supabase
         .from('outreach_settings')
         .upsert({ company_id: companyId, ...rest, ...derived, updated_at: new Date().toISOString() }, { onConflict: 'company_id' })

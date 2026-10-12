@@ -27,7 +27,9 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/lib/types/database.types'
 import { draftEmail } from './draft'
-import { buildTemplateFollowup } from './template'
+import { buildTemplateFollowup, renderTemplate } from './template'
+import { loadOutlookCredentials } from '../outlook/tokens'
+import { canThreadMail } from '../outlook/fetch'
 import { usesUsaspending } from './usaspending-preference'
 import { loadOfferProfile } from './offer-profile'
 import { applyGreeting, fetchStoredContactNames, resolveContactName } from './contact-name'
@@ -100,7 +102,7 @@ export async function generateFollowupTouch(
 
   const { data: existing } = await supabase
     .from('outreach_drafts')
-    .select('subject, angle, synthesis_confidence, facts_for_draft, step')
+    .select('subject, angle, synthesis_confidence, facts_for_draft, step, template_id')
     .eq('prospect_id', prospectId)
     .eq('company_id', companyId)
     .order('step', { ascending: true })
@@ -150,9 +152,11 @@ export async function generateFollowupTouch(
       clean: review.clean,
     }
   } else {
-    // Same seed as the opener, so the nudge continues that variant's question
-    // rather than opening an unrelated one.
-    const tmpl = buildTemplateFollowup(p.recipient_name ?? null, prospectId, profile, await usesUsaspending(supabase, companyId))
+    // The opener's own template may carry its nudge; otherwise the built-in
+    // library nudge for the same seed, so the follow-up continues that
+    // variant's question rather than opening an unrelated one.
+    const own = await ownTemplateFollowup(supabase, companyId, existing[0].template_id, p.recipient_name ?? null, priorSubject)
+    const tmpl = own ?? buildTemplateFollowup(p.recipient_name ?? null, prospectId, profile, await usesUsaspending(supabase, companyId))
     row = {
       subject: tmpl.subject,
       body: applyGreeting(tmpl.body, contactName),
@@ -185,6 +189,30 @@ export async function generateFollowupTouch(
 
   if (usage.length > 0) await recordUsage(supabase, companyId, opts.userId, usage)
   return { ok: true, outcome: autoApprove ? 'queued' : 'review' }
+}
+
+/** The nudge authored on the opener's template, rendered, or null when the
+ * template has none (or the opener was a built-in / personalized draft). */
+async function ownTemplateFollowup(
+  supabase: DB,
+  companyId: string,
+  templateId: string | null,
+  recipientName: string | null,
+  priorSubject: string,
+): Promise<{ subject: string; body: string } | null> {
+  if (!templateId) return null
+  const { data: t, error } = await supabase
+    .from('outreach_templates')
+    .select('followup_subject, followup_body')
+    .eq('id', templateId)
+    .eq('company_id', companyId)
+    .maybeSingle()
+  // Columns arrive via an out-of-band migration; a read before it simply
+  // falls back to the built-in nudge.
+  if (error || !t?.followup_body?.trim()) return null
+  const subject = t.followup_subject?.trim() || (/^re:/i.test(priorSubject) ? priorSubject : `Re: ${priorSubject}`)
+  const rendered = renderTemplate({ subject, body: t.followup_body }, recipientName)
+  return { subject: rendered.subject, body: rendered.body }
 }
 
 interface ProspectTouchState {
@@ -232,7 +260,22 @@ export interface SweepResult {
 export async function runFollowupSweep(supabase: DB, companyId: string): Promise<SweepResult> {
   const settings = await loadSettings(supabase, companyId)
   if (!settings.active) return { candidates: 0, queued: 0, review: 0, errors: 0, skipped: 'sending off' }
-  if (settings.provider === 'outlook') return { candidates: 0, queued: 0, review: 0, errors: 0, skipped: 'Microsoft 365 reply detection is not enabled' }
+  if (settings.provider === 'outlook') {
+    // A nudge must land in the opener's thread, and Graph only threads through
+    // its draft/reply endpoints (Mail.ReadWrite). Hold the sequence rather than
+    // send a nudge that arrives as an unrelated email.
+    const creds = await loadOutlookCredentials(companyId, supabase)
+    if (!creds || !canThreadMail(creds.scope)) {
+      return { candidates: 0, queued: 0, review: 0, errors: 0, skipped: 'Microsoft 365 mailbox needs read and write access for follow-ups to thread' }
+    }
+  }
+  // Never nudge blind: a sequence that cannot see replies would bump people
+  // who already answered. The scanner stamps last_reply_scan_at on success.
+  const { data: scanRow } = await supabase.from('outreach_settings').select('last_reply_scan_at').eq('company_id', companyId).maybeSingle()
+  const lastScan = scanRow?.last_reply_scan_at ? Date.parse(scanRow.last_reply_scan_at) : 0
+  if (Date.now() - lastScan > 3 * 3600_000) {
+    return { candidates: 0, queued: 0, review: 0, errors: 0, skipped: 'reply detection has not run recently' }
+  }
 
   const campaigns = await loadCampaigns(supabase, companyId)
   const campaignById = new Map(campaigns.map((c) => [c.id, c]))
@@ -263,7 +306,7 @@ export async function runFollowupSweep(supabase: DB, companyId: string): Promise
   const sends = await fetchAllPages((from, to) =>
     supabase
       .from('outreach_sends')
-      .select('prospect_id, sent_at')
+      .select('prospect_id, sent_at, opened_at')
       .eq('company_id', companyId)
       .eq('status', 'sent')
       .not('sent_at', 'is', null)
@@ -274,9 +317,13 @@ export async function runFollowupSweep(supabase: DB, companyId: string): Promise
       .range(from, to),
   )
   const lastSentAt = new Map<string, string>()
+  const lastOpened = new Map<string, boolean>()
   for (const s of sends) {
     const cur = lastSentAt.get(s.prospect_id)
-    if (!cur || (s.sent_at as string) > cur) lastSentAt.set(s.prospect_id, s.sent_at as string)
+    if (!cur || (s.sent_at as string) > cur) {
+      lastSentAt.set(s.prospect_id, s.sent_at as string)
+      lastOpened.set(s.prospect_id, !!s.opened_at)
+    }
   }
 
   // Per-prospect config: campaign override ?? company setting. Only prospects
@@ -292,7 +339,10 @@ export async function runFollowupSweep(supabase: DB, companyId: string): Promise
     return resolveFollowupConfig(campaign, settings)
   }
 
-  const due = selectFollowupCandidates(touchState, lastSentAt, { now: new Date(), configFor })
+  let due = selectFollowupCandidates(touchState, lastSentAt, { now: new Date(), configFor })
+  // Openers only: the reader who saw it and did not answer is who a short bump
+  // converts; a client that never loaded the pixel gets nothing a second time.
+  if (settings.followup_openers_only) due = due.filter((id) => lastOpened.get(id) === true)
   if (due.length === 0) return { candidates: 0, queued: 0, review: 0, errors: 0 }
 
   // Suppression re-check happens inside generateFollowupTouch (disposition must

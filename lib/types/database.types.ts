@@ -554,6 +554,8 @@ export interface Database {
           body: string
           weight: number
           active: boolean
+          followup_subject: string | null
+          followup_body: string | null
           created_at: string
           updated_at: string
         }
@@ -565,6 +567,8 @@ export interface Database {
           body: string
           weight?: number
           active?: boolean
+          followup_subject?: string | null
+          followup_body?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -574,6 +578,8 @@ export interface Database {
           body?: string
           weight?: number
           active?: boolean
+          followup_subject?: string | null
+          followup_body?: string | null
           updated_at?: string
         }
         Relationships: []
@@ -608,6 +614,7 @@ export interface Database {
           followup_enabled: boolean
           followup_wait_days: number
           followup_max_touches: number
+          followup_openers_only: boolean
           created_at: string
           updated_at: string
         }
@@ -640,6 +647,7 @@ export interface Database {
           followup_enabled?: boolean
           followup_wait_days?: number
           followup_max_touches?: number
+          followup_openers_only?: boolean
           created_at?: string
           updated_at?: string
         }
@@ -671,6 +679,7 @@ export interface Database {
           followup_enabled?: boolean
           followup_wait_days?: number
           followup_max_touches?: number
+          followup_openers_only?: boolean
           updated_at?: string
         }
         Relationships: []

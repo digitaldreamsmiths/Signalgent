@@ -30,7 +30,7 @@ export async function listTemplates(companyId: string): Promise<OutreachTemplate
   const supabase = await createClient()
   const { data } = await supabase
     .from('outreach_templates')
-    .select('id, name, subject, body, weight, active, created_at')
+    .select('id, name, subject, body, weight, active, followup_subject, followup_body, created_at')
     .eq('company_id', companyId)
     .order('created_at', { ascending: true })
   return (data ?? []) as OutreachTemplate[]
@@ -45,7 +45,7 @@ function validate(input: { name: string; subject: string; body: string }): strin
 
 export async function createTemplate(
   companyId: string,
-  input: { name: string; subject: string; body: string; weight?: number; active?: boolean },
+  input: { name: string; subject: string; body: string; weight?: number; active?: boolean; followup_subject?: string | null; followup_body?: string | null },
 ): Promise<ActionResult<{ id: string }>> {
   try {
     await requireCompanyAccess(companyId)
@@ -64,6 +64,8 @@ export async function createTemplate(
       name: input.name.trim(),
       subject: input.subject.trim(),
       body: input.body,
+      followup_subject: input.followup_subject?.trim() || null,
+      followup_body: input.followup_body?.trim() || null,
       weight: Math.max(1, Math.round(input.weight ?? 1)),
       active: input.active ?? true,
     })
@@ -77,7 +79,7 @@ export async function createTemplate(
 export async function updateTemplate(
   companyId: string,
   id: string,
-  patch: { name?: string; subject?: string; body?: string; weight?: number; active?: boolean },
+  patch: { name?: string; subject?: string; body?: string; weight?: number; active?: boolean; followup_subject?: string | null; followup_body?: string | null },
 ): Promise<ActionResult> {
   try {
     await requireCompanyAccess(companyId)
@@ -89,6 +91,8 @@ export async function updateTemplate(
   if (patch.name !== undefined) next.name = patch.name.trim()
   if (patch.subject !== undefined) next.subject = patch.subject.trim()
   if (patch.body !== undefined) next.body = patch.body
+  if (patch.followup_subject !== undefined) next.followup_subject = patch.followup_subject?.trim() || null
+  if (patch.followup_body !== undefined) next.followup_body = patch.followup_body?.trim() || null
   if (patch.weight !== undefined) next.weight = Math.max(1, Math.round(patch.weight))
   if (patch.active !== undefined) next.active = patch.active
   const nameBlank = patch.name !== undefined && !next.name

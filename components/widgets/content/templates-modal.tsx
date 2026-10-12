@@ -18,9 +18,9 @@ const MUTED = 'var(--app-muted)'
 const ACCENT = '#b4441e'
 
 
-type FormState = { id: string | null; name: string; subject: string; body: string; weight: number; active: boolean }
+type FormState = { id: string | null; name: string; subject: string; body: string; weight: number; active: boolean; followup_subject: string; followup_body: string }
 
-const EMPTY_FORM: FormState = { id: null, name: '', subject: '', body: '', weight: 1, active: true }
+const EMPTY_FORM: FormState = { id: null, name: '', subject: '', body: '', weight: 1, active: true, followup_subject: '', followup_body: '' }
 
 const labelStyle: React.CSSProperties = { fontSize: 10, fontWeight: 600, color: MUTED, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4, display: 'block' }
 const inputStyle: React.CSSProperties = { width: '100%', background: INPUT, border: `1px solid ${BORDER}`, borderRadius: 6, color: TEXT, fontSize: 12, padding: '7px 9px' }
@@ -95,8 +95,8 @@ export function TemplatesModal({
     setBusy(true)
     setError(null)
     const r = form.id
-      ? await updateTemplate(companyId, form.id, { name: form.name, subject: form.subject, body: form.body, weight: form.weight, active: form.active })
-      : await createTemplate(companyId, { name: form.name, subject: form.subject, body: form.body, weight: form.weight, active: form.active })
+      ? await updateTemplate(companyId, form.id, { name: form.name, subject: form.subject, body: form.body, weight: form.weight, active: form.active, followup_subject: form.followup_subject, followup_body: form.followup_body })
+      : await createTemplate(companyId, { name: form.name, subject: form.subject, body: form.body, weight: form.weight, active: form.active, followup_subject: form.followup_subject, followup_body: form.followup_body })
     setBusy(false)
     if (!r.ok) return setError(r.error)
     setForm(null)
@@ -181,7 +181,7 @@ export function TemplatesModal({
                     </label>
                     <span style={{ fontSize: 13, fontWeight: 600, color: TEXT, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.name}</span>
                     <span style={{ fontSize: 10, color: MUTED }}>weight {t.weight}</span>
-                    <button disabled={busy} onClick={() => { setError(null); setForm({ id: t.id, name: t.name, subject: t.subject, body: t.body, weight: t.weight, active: t.active }) }} style={btnGhost()}>Edit</button>
+                    <button disabled={busy} onClick={() => { setError(null); setForm({ id: t.id, name: t.name, subject: t.subject, body: t.body, weight: t.weight, active: t.active, followup_subject: t.followup_subject ?? '', followup_body: t.followup_body ?? '' }) }} style={btnGhost()}>Edit</button>
                     {confirmDelete === t.id ? (
                       <>
                         <button disabled={busy} onClick={() => handleDelete(t.id)} style={btn('#b04545')}>Confirm</button>
@@ -247,6 +247,16 @@ export function TemplatesModal({
             <div>
               <label style={labelStyle}>Body</label>
               <textarea value={form.body} onChange={(e) => set('body', e.target.value)} rows={8} placeholder={'Hi,\n\nDo you have a recompete coming up at {company}?\n\n…\n\nWorth a look before the next one drops, or is your process already tight?'} style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.5 }} />
+            </div>
+            {/* Optional nudge: automatic follow-ups continue THIS template with
+                this copy instead of the generic built-in one. */}
+            <div>
+              <label style={labelStyle}>Follow-up subject <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>(optional, defaults to “Re: subject”)</span></label>
+              <input value={form.followup_subject} onChange={(e) => set('followup_subject', e.target.value)} placeholder="Re: recompete question" style={inputStyle} />
+            </div>
+            <div>
+              <label style={labelStyle}>Follow-up body <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>(optional; blank uses the built-in nudge)</span></label>
+              <textarea value={form.followup_body} onChange={(e) => set('followup_body', e.target.value)} rows={5} placeholder={'Hi {company},\n\nCircling back on this. …'} style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.5 }} />
             </div>
 
             {risks.length > 0 && (

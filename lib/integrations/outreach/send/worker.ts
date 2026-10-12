@@ -51,6 +51,7 @@ export const SETTINGS_DEFAULTS: SendSettings = {
   followup_enabled: false,
   followup_wait_days: 4,
   followup_max_touches: 3,
+  followup_openers_only: false,
 }
 
 export async function loadSettings(supabase: DB, companyId: string): Promise<SendSettings> {
@@ -85,6 +86,7 @@ export async function loadSettings(supabase: DB, companyId: string): Promise<Sen
     followup_enabled: data.followup_enabled ?? SETTINGS_DEFAULTS.followup_enabled,
     followup_wait_days: data.followup_wait_days ?? SETTINGS_DEFAULTS.followup_wait_days,
     followup_max_touches: data.followup_max_touches ?? SETTINGS_DEFAULTS.followup_max_touches,
+    followup_openers_only: data.followup_openers_only ?? SETTINGS_DEFAULTS.followup_openers_only,
   }
 }
 
