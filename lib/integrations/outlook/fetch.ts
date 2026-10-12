@@ -6,7 +6,20 @@ function tenantAuthority(config: MicrosoftOAuthConfig): string {
   return `https://login.microsoftonline.com/${config.tenantId}/oauth2/v2.0`
 }
 
-export const OUTLOOK_SCOPES = 'offline_access User.Read Mail.Send'
+/** Scopes requested on connect. Mail.Read is what the reply/bounce scanner
+ * needs; a mailbox connected before it was added keeps working for sending
+ * (refresh uses the granted scope) but reports "needs reconnect" for scanning
+ * until the user re-authorizes. */
+export const OUTLOOK_SCOPES = 'offline_access User.Read Mail.Send Mail.Read'
+/** Delegated permission the scanner requires. Compared against the scope string
+ * Microsoft returned at connect time (which may omit the `offline_access` and
+ * carry full `https://graph.microsoft.com/...` names, so match loosely). */
+export const OUTLOOK_READ_SCOPE = 'Mail.Read'
+
+export function hasOutlookScope(granted: string | null | undefined, scope: string): boolean {
+  if (!granted) return false
+  return granted.split(/\s+/).some((s) => s.split('/').pop()?.toLowerCase() === scope.toLowerCase())
+}
 
 export function authorizeUrl(state: string, redirectUri: string, config: MicrosoftOAuthConfig): string {
   const url = new URL(`${tenantAuthority(config)}/authorize`)
@@ -43,10 +56,15 @@ export async function exchangeCode(code: string, redirectUri: string, config: Mi
   }), config)
 }
 
-export async function refreshToken(refresh: string, config: MicrosoftOAuthConfig): Promise<MicrosoftTokens> {
+/** Refresh with the scope the user actually granted (`grantedScope`), not the
+ * current OUTLOOK_SCOPES: Microsoft rejects a refresh that asks for a scope the
+ * user never consented to, which would break sending for a mailbox connected
+ * before a new scope was added. Falls back to OUTLOOK_SCOPES when unknown. */
+export async function refreshToken(refresh: string, config: MicrosoftOAuthConfig, grantedScope?: string | null): Promise<MicrosoftTokens> {
+  const scope = grantedScope?.trim() ? grantedScope.trim() : OUTLOOK_SCOPES
   return tokenRequest(new URLSearchParams({
     client_id: config.clientId, client_secret: config.clientSecret, refresh_token: refresh,
-    grant_type: 'refresh_token', scope: OUTLOOK_SCOPES,
+    grant_type: 'refresh_token', scope,
   }), config)
 }
 
@@ -75,4 +93,77 @@ export async function sendMail(accessToken: string, message: {
     }),
   })
   if (!response.ok) throw new Error(`Microsoft send failed (${response.status})`)
+}
+
+// ── Mailbox reads (Mail.Read) ────────────────────────────────────────────────
+
+export interface GraphEmailAddress { name?: string; address?: string }
+
+/** The subset of a Graph message the scanner needs; fetched via $select so the
+ * list stays small. `bodyPreview` is ~255 chars of plain text. */
+export interface GraphMessage {
+  id: string
+  conversationId?: string
+  subject?: string | null
+  bodyPreview?: string | null
+  receivedDateTime?: string
+  isDraft?: boolean
+  from?: { emailAddress?: GraphEmailAddress } | null
+  sender?: { emailAddress?: GraphEmailAddress } | null
+  toRecipients?: { emailAddress?: GraphEmailAddress }[]
+}
+
+interface GraphListResponse { value: GraphMessage[]; '@odata.nextLink'?: string }
+
+const MESSAGE_SELECT = 'id,conversationId,subject,bodyPreview,receivedDateTime,isDraft,from,sender,toRecipients'
+
+async function graphGet<T>(accessToken: string, url: string, extraHeaders: Record<string, string> = {}): Promise<T> {
+  const response = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}`, ...extraHeaders } })
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '')
+    throw new Error(`Microsoft Graph ${response.status}${detail ? `: ${detail.slice(0, 200)}` : ''}`)
+  }
+  return response.json() as Promise<T>
+}
+
+/** True for the 401/403 Graph returns when the token lacks Mail.Read. */
+export function isGraphForbidden(err: unknown): boolean {
+  return err instanceof Error && /Microsoft Graph 40[13]\b/.test(err.message)
+}
+
+/**
+ * List messages received since `since`, newest first, across ALL folders (so a
+ * bounce the user already deleted, or a reply Outlook filed under Junk or
+ * Archive, is still seen). Pages via @odata.nextLink up to `maxPages`.
+ */
+export async function listMessagesSince(accessToken: string, args: { since: string; pageSize?: number; maxPages?: number }): Promise<GraphMessage[]> {
+  const pageSize = Math.min(Math.max(args.pageSize ?? 100, 1), 1000)
+  const maxPages = args.maxPages ?? 10
+  const url = new URL(`${GRAPH}/me/messages`)
+  url.search = new URLSearchParams({
+    $filter: `receivedDateTime ge ${args.since}`,
+    $orderby: 'receivedDateTime desc',
+    $select: MESSAGE_SELECT,
+    $top: String(pageSize),
+  }).toString()
+  const out: GraphMessage[] = []
+  let next: string | undefined = url.toString()
+  for (let page = 0; next && page < maxPages; page++) {
+    const res: GraphListResponse = await graphGet<GraphListResponse>(accessToken, next)
+    out.push(...(res.value ?? []))
+    next = res['@odata.nextLink']
+  }
+  return out
+}
+
+/** Plain-text body of one message. Used only for delivery notices, where the
+ * failed recipient's address lives in the body rather than the headers. */
+export async function getMessageText(accessToken: string, id: string): Promise<string> {
+  const url = `${GRAPH}/me/messages/${encodeURIComponent(id)}?$select=body`
+  const res = await graphGet<{ body?: { contentType?: string; content?: string } }>(accessToken, url, {
+    Prefer: 'outlook.body-content-type="text"',
+  })
+  const content = res.body?.content ?? ''
+  // Graph honours the Prefer header, but strip tags anyway in case it didn't.
+  return res.body?.contentType?.toLowerCase() === 'html' ? content.replace(/<[^>]+>/g, ' ') : content
 }

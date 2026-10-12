@@ -23,6 +23,8 @@ export async function saveOutlookCredentials(companyId: string, email: string, t
 
 export async function loadOutlookCredentials(companyId: string, client?: SupabaseClient<Database>): Promise<{
   accessToken: string; emailAddress: string
+  /** Space-separated scope string Microsoft granted at connect/refresh time. */
+  scope: string | null
 } | null> {
   const row = await getAccount(companyId, 'outlook', client)
   if (!row || row.status !== 'connected') return null
@@ -39,7 +41,7 @@ export async function loadOutlookCredentials(companyId: string, client?: Supabas
   const emailAddress = row.account_identifier ?? ''
   if (!emailAddress.includes('@')) return null
   if (row.token_expires_at && new Date(row.token_expires_at).getTime() > Date.now() + 60_000) {
-    return { accessToken, emailAddress }
+    return { accessToken, emailAddress, scope: row.scope }
   }
   if (!refresh) {
     await markError(companyId, 'outlook', 'Access token expired; reconnect the mailbox', client, row.id)
@@ -48,7 +50,7 @@ export async function loadOutlookCredentials(companyId: string, client?: Supabas
   try {
     const config = await loadMicrosoftOAuthConfig(companyId, client)
     if (!config) throw new Error('Company Microsoft app registration is not configured')
-    const tokens = await refreshToken(refresh, config)
+    const tokens = await refreshToken(refresh, config, row.scope)
     await updateAccount(companyId, 'outlook', {
       access_token: encrypt(tokens.access_token),
       refresh_token: tokens.refresh_token ? encrypt(tokens.refresh_token) : row.refresh_token,
@@ -56,7 +58,7 @@ export async function loadOutlookCredentials(companyId: string, client?: Supabas
       scope: tokens.scope ?? row.scope,
       status: 'connected', last_error: null,
     }, client, row.id)
-    return { accessToken: tokens.access_token, emailAddress }
+    return { accessToken: tokens.access_token, emailAddress, scope: tokens.scope ?? row.scope }
   } catch {
     await markError(companyId, 'outlook', 'Token refresh failed; reconnect the mailbox', client, row.id)
     return null

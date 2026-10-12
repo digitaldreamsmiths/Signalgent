@@ -1,0 +1,19 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "target": "es2022",
+    "outDir": "../.scripts-build",
+    "rootDir": "..",
+    "noEmit": false,
+    "incremental": false,
+    "jsx": "preserve",
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "plugins": []
+  },
+  "include": ["./scan-outlook-backfill.ts", "../lib/types/**/*.ts", "../lib/platform/database.ts"],
+  "exclude": []
+}
