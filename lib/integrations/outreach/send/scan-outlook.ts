@@ -30,11 +30,10 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/lib/types/database.types'
 import { loadOutlookCredentials } from '@/lib/integrations/outlook/tokens'
 import {
+  canReadMail,
   getMessageText,
-  hasOutlookScope,
   isGraphForbidden,
   listMessagesSince,
-  OUTLOOK_READ_SCOPE,
   type GraphMessage,
 } from '@/lib/integrations/outlook/fetch'
 import { classifyInbound, isDSN, type InboundMessage } from './classify'
@@ -108,7 +107,7 @@ export async function scanOutlookReplies(supabase: DB, companyId: string, opts: 
   if (normalize(creds.emailAddress) !== normalize(opts.senderEmail)) {
     return none('connected mailbox does not match the sender email')
   }
-  if (!hasOutlookScope(creds.scope, OUTLOOK_READ_SCOPE)) {
+  if (!canReadMail(creds.scope)) {
     return none('reconnect the Microsoft 365 mailbox to allow reading replies (Mail.Read)')
   }
 

@@ -71,6 +71,64 @@ export async function recordOpen(token: string): Promise<void> {
     .eq('id', send.id)
 }
 
+export interface ClickRecord {
+  /** Hosts the redirect may go to: the company's own site (and subdomains).
+   * Anything else is an open redirect waiting to be abused by a phisher who
+   * found a click URL, so the route falls back to the site root. */
+  allowedHosts: string[]
+}
+
+/**
+ * Stamp a click and return where it may redirect. Null for an unknown token.
+ * Same 15-second scanner window and same non-atomic counter as recordOpen, and
+ * for the same reasons: clicked_at (first click) is the field decisions rest on.
+ */
+export async function recordClick(token: string): Promise<ClickRecord | null> {
+  const supabase = trackingClient()
+  if (!supabase) return null
+
+  // Two reads on purpose: the redirect must keep working even if the click
+  // columns are missing (migration not yet applied), because a 404 here is a
+  // dead link in an email that has already been delivered.
+  const { data: send } = await supabase
+    .from('outreach_sends')
+    .select('id, company_id, sent_at')
+    .eq('open_token', token)
+    .maybeSingle()
+  if (!send) return null
+
+  const { data: profile } = await supabase
+    .from('outreach_offer_profiles')
+    .select('site')
+    .eq('company_id', send.company_id)
+    .maybeSingle()
+  const site = profile?.site?.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '')
+  const record: ClickRecord = { allowedHosts: site ? [site] : [] }
+
+  const now = new Date()
+  if (!send.sent_at) return record
+  if ((now.getTime() - new Date(send.sent_at).getTime()) / 1000 < OPEN_IGNORE_SECONDS) return record
+
+  const { data: counters, error } = await supabase
+    .from('outreach_sends')
+    .select('clicked_at, click_count')
+    .eq('id', send.id)
+    .maybeSingle()
+  if (error || !counters) {
+    console.warn('[outreach:click] not recorded (migration pending?):', error?.message)
+    return record
+  }
+  await supabase
+    .from('outreach_sends')
+    .update({
+      clicked_at: counters.clicked_at ?? now.toISOString(),
+      last_clicked_at: now.toISOString(),
+      click_count: (counters.click_count ?? 0) + 1,
+    })
+    .eq('id', send.id)
+  return record
+}
+
 export type UnsubscribeResult = 'done' | 'unknown'
 
 /**

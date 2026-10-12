@@ -25,7 +25,7 @@ import { processingBlockReason } from './processing-readiness'
 import { fetchStoredContactNames, resolveContactName } from './contact-name'
 import { loadCampaigns } from './campaigns'
 import { effectiveLimits, loadBilling, planDailySendCap } from '@/lib/billing/billing'
-import { openStats, recentBounceStats } from './send/scan'
+import { clickStats, openStats, recentBounceStats } from './send/scan'
 import { getAccountByIdentifier } from '../accounts'
 import { undeliverableDomains } from './deliverability'
 import { fetchAllPages } from './fetch-all'
@@ -264,6 +264,7 @@ export async function getOutreachWorkspace(
   const settings = await loadSettings(supabase, companyId)
   const { rate: bounce_rate_7d } = await recentBounceStats(supabase, companyId, 7)
   const opens = await openStats(supabase, companyId)
+  const clicks = await clickStats(supabase, companyId)
   // Token refresh failures mark the account 'error'; surface the selected mailbox.
   let mailbox: OutreachSnapshot['sending']['mailbox'] = null
   if (settings.provider === 'gmail' || settings.provider === 'outlook') {
@@ -309,6 +310,7 @@ export async function getOutreachWorkspace(
       counts,
       reply_rate,
       opens,
+      clicks,
       cost_usd_total,
       sending,
     },

@@ -21,13 +21,20 @@
  * RUN
  *     npm run scan-outlook -- --company <uuid>            # dry run
  *     npm run scan-outlook -- --company <uuid> --apply
+ *
+ * THREAD IDS
+ *   --threads instead matches id-less sent rows to their Sent Items copies and
+ *   stores thread_id / message_id_header, so follow-ups to sends made before
+ *   the Outlook path captured ids can still thread. Same dry-run/--apply rule.
  */
 
 import { createClient } from '@supabase/supabase-js'
 import type { Database } from '../lib/types/database.types'
 import { scanReplies } from '../lib/integrations/outreach/send/scan'
+import { backfillOutlookThreads } from '../lib/integrations/outreach/send/outlook-threads'
 
 const APPLY = process.argv.includes('--apply')
+const THREADS = process.argv.includes('--threads')
 
 function companyId(): string {
   const flagAt = process.argv.indexOf('--company')
@@ -43,6 +50,13 @@ async function main() {
   const svc = createClient<Database>(url, key, { auth: { persistSession: false, autoRefreshToken: false } })
 
   const id = companyId()
+  if (THREADS) {
+    const { details, ...summary } = await backfillOutlookThreads(svc, id, { dryRun: !APPLY })
+    console.log(APPLY ? 'APPLIED' : 'DRY RUN', JSON.stringify(summary))
+    for (const d of details.filter((x) => !x.matched)) console.log(`unmatched    ${d.sentAt.slice(0, 16)}  ${d.email.padEnd(40)}  ${d.subject.slice(0, 60)}`)
+    if (!APPLY && summary.matched) console.log('\nRe-run with --threads --apply to store these.')
+    return
+  }
   const result = await scanReplies(svc, id, { force: true, dryRun: !APPLY })
   const { details = [], ...summary } = result
   console.log(APPLY ? 'APPLIED' : 'DRY RUN', JSON.stringify(summary))

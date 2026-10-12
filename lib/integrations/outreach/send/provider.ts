@@ -14,7 +14,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/lib/types/database.types'
 import { sendOutreachEmail } from '../../gmail/send'
 import { loadOutlookCredentials } from '../../outlook/tokens'
-import { sendMail } from '../../outlook/fetch'
+import { canReadMail, canThreadMail, findMessageByInternetId, findSentCopy, sendMail, sendMailWithRefs, sendReply, type SentMessageRefs } from '../../outlook/fetch'
 
 export type ProviderName = 'dry_run' | 'gmail' | 'outlook' | 'resend'
 
@@ -92,10 +92,18 @@ function gmailProvider(ctx: SendContext): EmailProvider {
   }
 }
 
-export function getProvider(name: ProviderName, ctx: SendContext): EmailProvider {
-  if (name === 'dry_run') return dryRunProvider
-  if (name === 'gmail') return gmailProvider(ctx)
-  if (name === 'outlook') return {
+/**
+ * Sends from the company's connected Microsoft 365 mailbox. What it can do
+ * depends on the scope the mailbox granted:
+ *  - Mail.ReadWrite: draft-then-send, which returns the ids a later touch needs,
+ *    and follow-ups go out as true replies (createReply) so they thread.
+ *  - Mail.Read only: plain sendMail, then the Sent Items copy is looked up to
+ *    recover the ids. Follow-ups cannot thread (Graph's sendMail cannot set
+ *    In-Reply-To) and go out as fresh messages.
+ *  - Mail.Send only: plain sendMail, no ids.
+ */
+function outlookProvider(ctx: SendContext): EmailProvider {
+  return {
     name: 'outlook',
     async send(msg) {
       try {
@@ -104,13 +112,54 @@ export function getProvider(name: ProviderName, ctx: SendContext): EmailProvider
         if (msg.from.toLowerCase() !== creds.emailAddress.toLowerCase()) {
           return { ok: false, error: 'Sender email must match the connected Microsoft 365 mailbox.' }
         }
-        await sendMail(creds.accessToken, msg)
-        return { ok: true }
+        const mail = { to: msg.to, subject: msg.subject, body: msg.body, htmlBody: msg.htmlBody, replyTo: msg.replyTo }
+        let refs: SentMessageRefs | null = null
+        if (canThreadMail(creds.scope)) {
+          // Thread under the prior touch when we still hold its Message-ID and
+          // the mailbox still has it; otherwise a fresh (but id-bearing) send.
+          const original = msg.inReplyTo ? await findMessageByInternetId(creds.accessToken, msg.inReplyTo).catch(() => null) : null
+          refs = original
+            ? await sendReply(creds.accessToken, original.id, mail)
+            : await sendMailWithRefs(creds.accessToken, mail)
+        } else {
+          const sentAt = new Date()
+          await sendMail(creds.accessToken, mail)
+          if (canReadMail(creds.scope)) refs = await recoverSentRefs(creds.accessToken, mail, sentAt)
+        }
+        return {
+          ok: true,
+          providerMessageId: refs?.id ?? undefined,
+          threadId: refs?.conversationId ?? null,
+          messageIdHeader: refs?.internetMessageId ?? null,
+        }
       } catch (error) {
         return { ok: false, error: error instanceof Error ? error.message : 'Microsoft send failed' }
       }
     },
   }
+}
+
+/** Exchange files the Sent Items copy a moment after sendMail returns; give it
+ * a few short tries. Best-effort: a miss just leaves the ids null, and the
+ * thread backfill can fill them later. */
+async function recoverSentRefs(accessToken: string, mail: { to: string; subject: string }, sentAt: Date): Promise<SentMessageRefs | null> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, 1500 * attempt))
+    try {
+      const refs = await findSentCopy(accessToken, { to: mail.to, subject: mail.subject, sentAt })
+      if (refs) return refs
+    } catch (err) {
+      console.warn('[outlook] sent-copy lookup failed:', err instanceof Error ? err.message : err)
+      return null
+    }
+  }
+  return null
+}
+
+export function getProvider(name: ProviderName, ctx: SendContext): EmailProvider {
+  if (name === 'dry_run') return dryRunProvider
+  if (name === 'gmail') return gmailProvider(ctx)
+  if (name === 'outlook') return outlookProvider(ctx)
   // TODO(send): Resend — only after the AUP check + dedicated sending domain
   // decision. Until then this is the explicit pluggable seam.
   throw new Error(`Email provider "${name}" is not configured yet.`)

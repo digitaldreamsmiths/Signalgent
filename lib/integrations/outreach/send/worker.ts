@@ -9,7 +9,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/lib/types/database.types'
 import type { SendSettings } from '../types'
 import { getProvider, type ProviderName } from './provider'
-import { listUnsubscribeHeaders, openPixelUrl, textToHtml, unsubscribeUrl } from './tracking'
+import { clickRewriter, listUnsubscribeHeaders, openPixelUrl, textToHtml, unsubscribeUrl } from './tracking'
 import { fetchAllPages } from '../fetch-all'
 import { planDailySendCap } from '@/lib/billing/billing'
 import { loadCampaigns } from '../campaigns'
@@ -604,7 +604,7 @@ export async function runQueue(supabase: DB, companyId: string): Promise<{ sent:
         replyTo: settings.reply_to,
         subject: s.subject,
         body: s.body,
-        htmlBody: pixel ? textToHtml(s.body, pixel) : null,
+        htmlBody: pixel && s.open_token ? textToHtml(s.body, pixel, clickRewriter(s.open_token)) : null,
         listUnsubscribe: listUnsub?.listUnsubscribe ?? null,
         listUnsubscribePost: listUnsub?.listUnsubscribePost ?? null,
         threadId: prior?.thread_id ?? null,

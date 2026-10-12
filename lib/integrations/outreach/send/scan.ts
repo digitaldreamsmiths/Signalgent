@@ -278,6 +278,42 @@ export async function openStats(supabase: DB, companyId: string): Promise<OpenSt
   return { tracked: t, opened: o, rate: t > 0 ? o / t : 0 }
 }
 
+export interface ClickStats {
+  /** Sent emails whose HTML part carried click-tracked links (same gate as
+   * opens: an open token). Rows sent before click tracking existed are in the
+   * denominator too, since they carry the token but not the redirect; the
+   * `since` cutoff lets the caller exclude them. */
+  tracked: number
+  clicked: number
+  rate: number
+}
+
+/** Click rate over tracked sends, optionally only those sent at/after `since`. */
+export async function clickStats(supabase: DB, companyId: string, since?: string | null): Promise<ClickStats> {
+  let tracked = supabase
+    .from('outreach_sends')
+    .select('id', { count: 'exact', head: true })
+    .eq('company_id', companyId)
+    .eq('status', 'sent')
+    .not('open_token', 'is', null)
+  let clicked = supabase
+    .from('outreach_sends')
+    .select('id', { count: 'exact', head: true })
+    .eq('company_id', companyId)
+    .eq('status', 'sent')
+    .not('open_token', 'is', null)
+    .not('clicked_at', 'is', null)
+  if (since) {
+    tracked = tracked.gte('sent_at', since)
+    clicked = clicked.gte('sent_at', since)
+  }
+  const [{ count: t }, { count: c, error }] = await Promise.all([tracked, clicked])
+  // Before the click migration runs the clicked_at column is missing; report
+  // zero rather than failing the whole snapshot.
+  if (error) return { tracked: t ?? 0, clicked: 0, rate: 0 }
+  return { tracked: t ?? 0, clicked: c ?? 0, rate: t ? (c ?? 0) / t : 0 }
+}
+
 /** Auto-pause: when the recent bounce rate exceeds the configured threshold (with
  * a minimum sample), flip sending off and record why. Called on the cron before
  * runQueue. Returns whether it paused this tick. */

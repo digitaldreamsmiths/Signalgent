@@ -37,6 +37,23 @@ export function unsubscribeUrl(token: string): string | null {
   return base ? `${base}/api/outreach/unsubscribe/${token}` : null
 }
 
+/** Redirecting click-tracking URL for `destination`. The open token identifies
+ * the send (see the click-tracking migration for why it is reused). */
+export function clickUrl(token: string, destination: string): string | null {
+  const base = appBaseUrl()
+  return base ? `${base}/api/outreach/click/${token}?u=${encodeURIComponent(destination)}` : null
+}
+
+/** Build the href rewriter textToHtml takes: every outbound link goes through
+ * the click endpoint, except our own tracking/unsubscribe URLs. */
+export function clickRewriter(token: string): (href: string) => string {
+  const base = appBaseUrl()
+  return (href) => {
+    if (base && href.startsWith(base)) return href
+    return clickUrl(token, href) ?? href
+  }
+}
+
 export function escapeHtml(s: string): string {
   return s
     .replace(/&/g, '&amp;')
@@ -56,16 +73,19 @@ const LINKABLE = /\b((?:https?:\/\/|www\.)[^\s<>"]+|[a-z0-9-]+\.(?:io|com|net|or
  * newsletter reads as bulk mail; this should look like what the plaintext part
  * looks like, which is a person typing in their mail client.
  */
-export function textToHtml(text: string, pixelUrl?: string | null): string {
+export function textToHtml(text: string, pixelUrl?: string | null, rewriteHref?: (href: string) => string): string {
   const linked = escapeHtml(text).replace(LINKABLE, (m) => {
-    const href = /^https?:\/\//i.test(m) ? m : `https://${m}`
+    const raw = /^https?:\/\//i.test(m) ? m : `https://${m}`
     // Keep campaign parameters in the destination, but do not print them in
     // the message. The unsubscribe action also needs a readable label.
     try {
-      const url = new URL(href.replace(/&amp;/g, '&'))
+      const url = new URL(raw.replace(/&amp;/g, '&'))
       const label = url.pathname.startsWith('/api/outreach/unsubscribe/')
         ? 'Unsubscribe'
         : `${url.hostname}${url.pathname === '/' ? '' : url.pathname}`
+      // The label stays the real destination so the reader sees where they are
+      // going; only the href is routed through click tracking.
+      const href = rewriteHref ? escapeHtml(rewriteHref(url.toString())) : raw
       return `<a href="${href}">${escapeHtml(label)}</a>`
     } catch {
       return m

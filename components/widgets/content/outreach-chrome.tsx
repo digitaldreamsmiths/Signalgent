@@ -334,6 +334,11 @@ export function OutreachChrome({ children }: { children: React.ReactNode }) {
             value={fmtPct(snapshot?.opens.rate ?? 0, snapshot?.opens.tracked ?? 0)}
             hint={snapshot?.opens.tracked ? `${snapshot.opens.opened} of ${snapshot.opens.tracked} tracked` : 'no tracked sends yet'}
           />
+          <Metric
+            label="Click rate"
+            value={fmtPct(snapshot?.clicks?.rate ?? 0, snapshot?.clicks?.tracked ?? 0)}
+            hint={snapshot?.clicks?.tracked ? `${snapshot.clicks.clicked} of ${snapshot.clicks.tracked} tracked` : 'no tracked sends yet'}
+          />
           <Metric label="API cost" value={fmtUsd(snapshot?.cost_usd_total ?? 0)} />
         </div>
       )}

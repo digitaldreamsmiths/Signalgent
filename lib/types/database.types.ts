@@ -700,6 +700,9 @@ export interface Database {
           last_opened_at: string | null
           open_count: number
           unsubscribed_at: string | null
+          clicked_at: string | null
+          last_clicked_at: string | null
+          click_count: number
           created_at: string
           updated_at: string
         }
@@ -727,6 +730,9 @@ export interface Database {
           last_opened_at?: string | null
           open_count?: number
           unsubscribed_at?: string | null
+          clicked_at?: string | null
+          last_clicked_at?: string | null
+          click_count?: number
           created_at?: string
           updated_at?: string
         }
@@ -750,6 +756,9 @@ export interface Database {
           last_opened_at?: string | null
           open_count?: number
           unsubscribed_at?: string | null
+          clicked_at?: string | null
+          last_clicked_at?: string | null
+          click_count?: number
           updated_at?: string
         }
         Relationships: []
