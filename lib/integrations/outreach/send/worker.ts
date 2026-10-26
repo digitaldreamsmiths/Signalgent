@@ -14,6 +14,8 @@ import { fetchAllPages } from '../fetch-all'
 import { planDailySendCap } from '@/lib/billing/billing'
 import { loadCampaigns } from '../campaigns'
 import { recipientIsSuppressed } from './suppression'
+import { loadOutlookCredentials } from '../../outlook/tokens'
+import { canThreadMail } from '../../outlook/fetch'
 
 type DB = SupabaseClient<Database>
 
@@ -426,6 +428,17 @@ export async function recoverStaleSending(supabase: DB, companyId: string): Prom
   return data?.length ?? 0
 }
 
+/** Whether a Microsoft 365 mailbox may send follow-ups this tick: the token
+ * carries Mail.ReadWrite (needed to reply into the thread) and the reply scanner
+ * has run within the last three hours. Mirrors the gate in runFollowupSweep. */
+export async function outlookFollowupsAllowed(supabase: DB, companyId: string): Promise<boolean> {
+  const creds = await loadOutlookCredentials(companyId, supabase).catch(() => null)
+  if (!creds || !canThreadMail(creds.scope)) return false
+  const { data } = await supabase.from('outreach_settings').select('last_reply_scan_at').eq('company_id', companyId).maybeSingle()
+  const lastScan = data?.last_reply_scan_at ? Date.parse(data.last_reply_scan_at) : 0
+  return Date.now() - lastScan <= 3 * 3600_000
+}
+
 /**
  * Send the due, queued emails for a company (one tick). `scheduled_at` is the
  * source of truth for timing (set by auto-slotting or explicit user scheduling),
@@ -500,6 +513,25 @@ export async function runQueue(supabase: DB, companyId: string): Promise<{ sent:
     })
   }
 
+  // Microsoft 365 follow-ups go out as true replies (createReply), which needs
+  // the mailbox's Mail.ReadWrite grant, and a nudge is only safe while the reply
+  // scanner is closing prospects who already answered. Same gate as
+  // runFollowupSweep. When it is closed the follow-ups stay QUEUED and are
+  // filtered out of this tick: canceling them was permanent, because the sweep
+  // never regenerates a touch whose draft already exists, so one stale scan
+  // used to end every sequence for good. Openers are unaffected either way.
+  if (settings.provider === 'outlook' && due?.length) {
+    const followupsAllowed = await outlookFollowupsAllowed(supabase, companyId)
+    if (!followupsAllowed) {
+      const { data: steps } = await supabase.from('outreach_drafts')
+        .select('id, step').eq('company_id', companyId).in('id', due.map((s) => s.draft_id))
+      const stepOf = new Map((steps ?? []).map((d) => [d.id, d.step]))
+      const held = due.filter((s) => (stepOf.get(s.draft_id) ?? 2) > 1).length
+      if (held > 0) console.warn(`[send-worker] holding ${held} Microsoft 365 follow-up(s) for ${companyId}: mailbox lacks Mail.ReadWrite or reply detection has not run in 3h`)
+      due = due.filter((s) => (stepOf.get(s.draft_id) ?? 2) <= 1)
+    }
+  }
+
   // Personalized emails outrank templates. Sends carry no template marker
   // column, so classify by the draft's facts_for_draft (empty = template) and
   // stable-sort personalized to the front before capping at BATCH. On a lookup
@@ -521,13 +553,6 @@ export async function runQueue(supabase: DB, companyId: string): Promise<{ sent:
   let sent = 0
   let failed = 0
   for (const s of due ?? []) {
-    if (settings.provider === 'outlook') {
-      const { data: draft } = await supabase.from('outreach_drafts').select('step').eq('id', s.draft_id).eq('company_id', companyId).maybeSingle()
-      if (!draft || draft.step > 1) {
-        await supabase.from('outreach_sends').update({ status: 'canceled', error: 'Microsoft 365 follow-ups require reply detection' }).eq('id', s.id).eq('company_id', companyId)
-        continue
-      }
-    }
     // Suppression re-check at send time.
     const { data: p, error: prospectError } = await supabase.from('outreach_prospects')
       .select('email, disposition').eq('id', s.prospect_id).eq('company_id', companyId).maybeSingle()

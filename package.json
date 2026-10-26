@@ -9,7 +9,8 @@
     "lint": "eslint",
     "requeue": "tsc -p scripts/tsconfig.json && node --env-file=.env.local -r ./scripts/alias.cjs .scripts-build/scripts/requeue-unsent-copy.js",
     "scan-outlook": "tsc -p scripts/tsconfig.json && node --env-file=.env.local -r ./scripts/alias.cjs .scripts-build/scripts/scan-outlook-backfill.js",
-    "resolve-names": "tsc -p scripts/tsconfig.json && node --env-file=.env.local -r ./scripts/alias.cjs .scripts-build/scripts/resolve-org-names.js"
+    "resolve-names": "tsc -p scripts/tsconfig.json && node --env-file=.env.local -r ./scripts/alias.cjs .scripts-build/scripts/resolve-org-names.js",
+    "requeue-followups": "tsc -p scripts/tsconfig.json && node --env-file=.env.local -r ./scripts/alias.cjs .scripts-build/scripts/requeue-canceled-followups.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.90.0",
