@@ -243,6 +243,12 @@
 .sg-form-grid { display:grid; grid-template-columns:1fr 1fr; gap:15px; }
 .sg-editor-meta { display:flex; align-items:center; justify-content:space-between; margin-top:-12px; color:#5d7290; font-size:9px; }
 .sg-editor-meta span { display:flex; align-items:center; gap:4px; }
+.sg-editor-meta .sg-over-limit { color:#ae5a61; font-weight:600; }
+.sg-variant-tabs { display:flex; gap:4px; flex-wrap:wrap; margin-bottom:-8px; }
+.sg-variant-tabs button { display:inline-flex; align-items:center; gap:6px; border:1px solid #e0e7f1; background:#f7f9fd; color:#56698a; border-radius:6px; padding:5px 10px; font-size:10px!important; }
+.sg-variant-tabs button.active { background:#fff; color:#3461db; border-color:#b9c9e8; }
+.sg-variant-tabs button i { width:6px; height:6px; border-radius:50%; background:#3461db; }
+.sg-field-hint .sg-text-link { font-size:9px; border:0; background:transparent; padding:0; }
 .sg-content-preview { padding:25px 23px; background:#f7f9fd; border-left:1px solid #e7edf6; }
 .sg-preview-label { display:flex; align-items:center; gap:7px; color:#58739a; font-size:10px; margin-bottom:20px; }
 .sg-post-preview { padding:20px; background:#fff; border:1px solid #e2eaf5; border-radius:9px; }

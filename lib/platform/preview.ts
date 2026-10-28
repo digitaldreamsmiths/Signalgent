@@ -4,7 +4,7 @@ import type { WorkspaceData, ContentItem, Contact } from './types'
 export function previewWorkspace(): WorkspaceData {
   const now = new Date(); now.setHours(10, 0, 0, 0)
   const at = (day: number) => new Date(now.getTime() + day * 86400000).toISOString()
-  const base = { company_id: 'preview', created_at: at(-3), updated_at: at(0) }
+  const base = { company_id: 'preview', created_at: at(-3), updated_at: at(0), variants: {} }
   const content: ContentItem[] = [
     { ...base, id: 'post-1', title: 'A little more signal. A lot less noise.', body: 'The best marketing starts with a real conversation. This month, we’re sharing the ideas, small experiments, and thoughtful details behind our work.\n\nWhat would you like to see next?', channels: ['linkedin', 'instagram'], status: 'planned', planned_at: at(0), campaign_id: 'campaign-1', image_url: null },
     { ...base, id: 'post-2', title: 'The September edit', body: 'A fresh perspective for your inbox.\n\nHere’s what we’ve been working on, what we’ve learned, and what’s coming next. Thanks for being part of the conversation.', channels: ['email'], status: 'review', planned_at: at(1), campaign_id: 'campaign-1', image_url: null },

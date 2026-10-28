@@ -1,4 +1,4 @@
-import { CHANNELS, type ContentItem, type Contact, type Campaign } from './types'
+import { CHANNELS, type Channel, type ContentItem, type Contact, type Campaign } from './types'
 
 function text(value: unknown, max: number, required = false): string {
   if (typeof value !== 'string') throw new Error('Enter a valid text value.')
@@ -14,13 +14,26 @@ export function validateContent(input: ContentItem) {
   if (input.status !== 'draft' && input.status !== 'archived' && !body) throw new Error('Add content before submitting for review or planning.')
   const planned_at = input.planned_at ? new Date(input.planned_at).toISOString() : null
   if (input.status === 'planned' && !planned_at) throw new Error('Choose a date and time for this plan.')
+  const channels = [...new Set(input.channels)]
+  const variants: Partial<Record<Channel, string>> = {}
+  const source = input.variants && typeof input.variants === 'object' ? input.variants : {}
+  for (const [channel, value] of Object.entries(source)) {
+    if (!(channel in CHANNELS) || !channels.includes(channel as Channel)) continue
+    const clean = text(value, 50000)
+    if (clean && clean !== body) variants[channel as Channel] = clean
+  }
+  // Drafts may run long while being edited; anything submitted onward must fit its channel.
+  if (input.status !== 'draft' && input.status !== 'archived') for (const channel of channels) {
+    const effective = variants[channel] ?? body
+    if (effective.length > CHANNELS[channel].limit) throw new Error(`${CHANNELS[channel].label} allows ${CHANNELS[channel].limit.toLocaleString()} characters. Shorten that version first.`)
+  }
   let image_url = input.image_url ? text(input.image_url, 2048) : null
   if (image_url) {
     const url = new URL(image_url)
     if (url.protocol !== 'https:') throw new Error('Use an HTTPS image address.')
     image_url = url.href
   }
-  return { title, body, channels: [...new Set(input.channels)], status: input.status, planned_at, campaign_id: input.campaign_id || null, image_url }
+  return { title, body, channels, status: input.status, planned_at, campaign_id: input.campaign_id || null, image_url, variants }
 }
 export function validateContact(input: Contact) {
   const email = text(input.email, 254, true).toLowerCase()

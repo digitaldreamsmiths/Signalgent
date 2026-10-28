@@ -19,6 +19,7 @@ export type LLMTask =
   | 'resolve'
   | 'synthesis'
   | 'draft'
+  | 'social_draft'
 
 const TASK_MODELS: Record<LLMTask, string> = {
   triage: 'claude-haiku-4-5',
@@ -31,6 +32,8 @@ const TASK_MODELS: Record<LLMTask, string> = {
   // call per qualified prospect), and draft quality is the whole product — Sonnet.
   synthesis: 'claude-sonnet-4-6',
   draft: 'claude-sonnet-4-6',
+  // Social studio post drafting. One call per click, quality is the feature.
+  social_draft: 'claude-sonnet-4-6',
 }
 
 export function pickModel(task: LLMTask, override?: string): string {
