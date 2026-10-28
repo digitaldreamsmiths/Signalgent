@@ -2973,7 +2973,8 @@ Two commits. The first (1324cb8) gave Social studio a "Draft with AI" button and
 - Sample workspace at `/preview`: Connections shows "Identity and publishing" and "Can publish posts from Social studio."; a published sample post shows the badge on its card and "Published to LinkedIn · View post" in the editor; a planned LinkedIn post shows the opt-in checkbox and an enabled Publish button, which in the sample reports that publishing runs only in a real workspace.
 - `GET /api/social/cron` returns 401 without the bearer secret.
 - Escaper and error translation exercised directly on the compiled module.
-- Not verified: a real post to LinkedIn. That needs the Share on LinkedIn product enabled and a reconnected account, then one manual publish from the editor.
+- Live, 2026-10-28: Share on LinkedIn added to the app, `LINKEDIN_CLIENT_ID`/`LINKEDIN_CLIENT_SECRET` added to Vercel Production (they had only ever been in `.env.local`), account reconnected (card reads "Can publish posts from Social studio."). Live Draft with AI returned a SourceGent hump-day post in ~25s; marked approved and published from the editor. LinkedIn returned `urn:li:share:7521246188885499905`; the post rendered on the feed with paragraphs and hashtags intact. Default API version `202601` accepted.
+- Scheduled publishing (the cron tick) has not yet fired for a real item; the first opted-in planned post will exercise it.
 
 ### Residuals
 
