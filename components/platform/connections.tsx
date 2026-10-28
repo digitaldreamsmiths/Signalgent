@@ -65,6 +65,6 @@ export function Connections() {
         </article>
       })}</div>
     </section>)}
-    <p className="sg-footer-note"><Plug size={14} />A connected identity does not grant publishing or messaging access. Disconnecting keeps a record of the connection but stops every use of it.</p>
+    <p className="sg-footer-note"><Plug size={14} />Each connection says what it allows. Publishing posts needs the posting permission shown on the account. Disconnecting keeps a record of the connection but stops every use of it.</p>
   </>
 }
