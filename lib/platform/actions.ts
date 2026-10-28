@@ -7,7 +7,7 @@ import { EMPTY_WORKSPACE, type WorkspaceData, type ContentItem, type Contact, ty
 
 function failure(error: unknown): { ok: false; error: string } {
   const message = error instanceof Error ? error.message : ''
-  if (/variants/.test(message) && /column|schema cache/.test(message)) return { ok: false, error: 'Per-channel versions need the 20261028 migration applied to the database.' }
+  if (/variants|auto_publish/.test(message) && /column|schema cache/.test(message)) return { ok: false, error: 'This feature needs the 20261028 migrations applied to the database.' }
   if (/schema cache|does not exist|relation|PGRST|42P01/.test(message)) return { ok: false, error: 'The new workspace storage is not installed yet. Your existing outreach is still available.' }
   return { ok: false, error: message || 'The workspace could not be saved. Try again.' }
 }
@@ -35,7 +35,7 @@ export async function readWorkspaceAccounts(companyId: string): Promise<Result<C
 export async function readWorkspace(companyId: string): Promise<Result<WorkspaceData>> {
   try {
     const db = await authorize(companyId)
-    const [content, contacts, campaigns, accounts, sent, queued, failed, prospects] = await Promise.all([
+    const [content, contacts, campaigns, accounts, sent, queued, failed, prospects, publications] = await Promise.all([
       db.from('platform_content').select('*').eq('company_id', companyId).order('updated_at', { ascending: false }).limit(1000),
       db.from('platform_contacts').select('*').eq('company_id', companyId).order('name').limit(1000),
       db.from('platform_campaigns').select('*').eq('company_id', companyId).order('created_at', { ascending: false }).limit(1000),
@@ -44,9 +44,12 @@ export async function readWorkspace(companyId: string): Promise<Result<Workspace
       db.from('outreach_sends').select('id', { count: 'exact', head: true }).eq('company_id', companyId).eq('status', 'queued'),
       db.from('outreach_sends').select('id', { count: 'exact', head: true }).eq('company_id', companyId).eq('status', 'failed'),
       db.from('outreach_prospects').select('id', { count: 'exact', head: true }).eq('company_id', companyId),
+      db.from('platform_publications').select('*').eq('company_id', companyId).order('created_at', { ascending: false }).limit(2000),
     ])
     for (const response of [content, contacts, campaigns, accounts, sent, queued, failed, prospects]) if (response.error) throw new Error(response.error.message)
-    return { ok: true, data: { ...EMPTY_WORKSPACE, content: (content.data ?? []).map(c => ({ ...c, variants: c.variants ?? {} })), contacts: contacts.data ?? [], campaigns: campaigns.data ?? [], accounts: (accounts.data ?? []).map(toChannelAccount), outreach: { sent: sent.count ?? 0, queued: queued.count ?? 0, failed: failed.count ?? 0, prospects: prospects.count ?? 0 } } }
+    // Publications arrive with a later migration; a missing table means "none yet", not a broken workspace.
+    if (publications.error && !/does not exist|schema cache|42P01/.test(publications.error.message)) throw new Error(publications.error.message)
+    return { ok: true, data: { ...EMPTY_WORKSPACE, publications: publications.data ?? [], content: (content.data ?? []).map(c => ({ ...c, variants: c.variants ?? {}, auto_publish: c.auto_publish ?? false })), contacts: contacts.data ?? [], campaigns: campaigns.data ?? [], accounts: (accounts.data ?? []).map(toChannelAccount), outreach: { sent: sent.count ?? 0, queued: queued.count ?? 0, failed: failed.count ?? 0, prospects: prospects.count ?? 0 } } }
   } catch (error) { return failure(error) }
 }
 export async function saveContent(companyId: string, input: ContentItem): Promise<Result<ContentItem>> {

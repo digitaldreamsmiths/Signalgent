@@ -6,6 +6,14 @@ export interface ContentItem {
   image_url: string | null; created_at: string; updated_at: string;
   /** Per-channel text. A channel without an entry publishes `body`. */
   variants: Partial<Record<Channel, string>>;
+  /** Publish automatically at `planned_at` on channels that support it. Opt-in per item. */
+  auto_publish: boolean;
+}
+export type PublicationStatus = 'publishing' | 'published' | 'failed'
+export interface Publication {
+  id: string; company_id: string; content_id: string; channel: Channel; account_id: string | null;
+  status: PublicationStatus; provider_post_id: string | null; post_url: string | null; error: string | null;
+  created_at: string; updated_at: string;
 }
 export interface Contact {
   id: string; company_id: string; name: string; email: string; organization: string;
@@ -22,7 +30,7 @@ export interface ChannelAccount {
   error: string | null;
 }
 export interface WorkspaceData {
-  content: ContentItem[]; contacts: Contact[]; campaigns: Campaign[]; accounts: ChannelAccount[];
+  content: ContentItem[]; contacts: Contact[]; campaigns: Campaign[]; accounts: ChannelAccount[]; publications: Publication[];
   outreach: { sent: number; queued: number; failed: number; prospects: number };
 }
 export type Result<T> = { ok: true; data: T } | { ok: false; error: string }
@@ -36,7 +44,7 @@ export const CHANNELS: Record<Channel, { label: string; color: string; short: st
   pinterest: { label: 'Pinterest', color: '#b82939', short: 'p', limit: 500, ideal: '20 to 60 words', style: 'A pin description. Descriptive and searchable, names what the pin shows and why it is useful. Two or three hashtags at the end. Under 500 characters.' },
 }
 export const EMPTY_WORKSPACE: WorkspaceData = {
-  content: [], contacts: [], campaigns: [], accounts: [],
+  content: [], contacts: [], campaigns: [], accounts: [], publications: [],
   outreach: { sent: 0, queued: 0, failed: 0, prospects: 0 },
 }
 export const NAV: { id: Section; label: string }[] = [

@@ -20,7 +20,7 @@ export interface Provider {
 export const PROVIDERS: Provider[] = [
   { id: 'gmail', name: 'Gmail', short: '@', color: '#3461db', group: 'email', multi: true, path: '/api/integrations/gmail/connect', description: 'Read, search, compose, and reply. Connect more than one mailbox.', capability: 'Mailbox operations' },
   { id: 'outlook', name: 'Microsoft 365', short: 'O', color: '#1267b2', group: 'email', path: '/api/integrations/outlook/connect', description: 'Connect a Microsoft 365 mailbox for outreach sending. Automatic reply checks are not available yet.', capability: 'Mailbox sending' },
-  { id: 'linkedin', name: 'LinkedIn', short: 'in', color: '#0a66c2', group: 'social', path: '/api/integrations/linkedin/connect', description: 'Connect your identity. Publishing needs additional approved access.', capability: 'Identity connection' },
+  { id: 'linkedin', name: 'LinkedIn', short: 'in', color: '#0a66c2', group: 'social', path: '/api/integrations/linkedin/connect', description: 'Connect your profile to publish Social studio posts to your feed, by hand or at their planned time.', capability: 'Identity and publishing' },
   { id: 'instagram', name: 'Instagram', short: 'ig', color: '#b3437e', group: 'social', path: '', description: 'Plan your Instagram content now. Publishing and inbox access are not enabled.', capability: 'Publishing integration pending' },
   { id: 'facebook', name: 'Facebook', short: 'f', color: '#1877f2', group: 'social', path: '', description: 'Draft Facebook content alongside the rest of your channels.', capability: 'Publishing integration pending' },
   { id: 'pinterest', name: 'Pinterest', short: 'p', color: '#b82939', group: 'social', path: '/api/integrations/pinterest/connect', description: 'Connect Pinterest for its existing account and analytics integration.', capability: 'Account and analytics connection' },
@@ -30,6 +30,17 @@ export const PROVIDERS: Provider[] = [
 ]
 
 export function providerFor(id: string): Provider | undefined { return PROVIDERS.find(p => p.id === id) }
+
+/** The LinkedIn scope that allows creating posts as the member. */
+export const LINKEDIN_POST_SCOPE = 'w_member_social'
+/** True when this account was connected with permission to publish posts. */
+export function canPublish(account: ChannelAccount): boolean {
+  return account.service === 'linkedin' && account.status === 'connected' && account.scopes.includes(LINKEDIN_POST_SCOPE)
+}
+/** The first LinkedIn account that can publish, or null. */
+export function publishingAccount(accounts: ChannelAccount[]): ChannelAccount | null {
+  return accounts.find(canPublish) ?? null
+}
 
 /** One plain sentence for an account that is not healthy, or null when it is. */
 export function accountProblem(account: ChannelAccount): string | null {

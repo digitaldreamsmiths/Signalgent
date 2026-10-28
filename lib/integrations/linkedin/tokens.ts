@@ -25,6 +25,8 @@ import {
   type ConnectedService,
 } from '../accounts'
 import type { ConnectedAccount } from '@/lib/types'
+import type { SupabaseClient } from '@supabase/supabase-js'
+import type { Database } from '@/lib/types/database.types'
 
 const SERVICE: ConnectedService = 'linkedin'
 
@@ -47,6 +49,8 @@ export interface LoadedLinkedInCreds {
   accessToken: string
   memberSub: string
   displayName: string | null
+  accountId: string
+  scopes: string[]
 }
 
 // ---------------------------------------------------------------------------
@@ -81,9 +85,11 @@ export async function saveLinkedInCredentials(
 // ---------------------------------------------------------------------------
 
 export async function loadLinkedInCredentials(
-  companyId: string
+  companyId: string,
+  client?: SupabaseClient<Database>,
+  accountId?: string
 ): Promise<LoadedLinkedInCreds | null> {
-  const row = await getAccount(companyId, SERVICE)
+  const row = await getAccount(companyId, SERVICE, client, accountId)
   if (!row) return null
   if (row.status !== 'connected') return null
   if (!row.access_token) return null
@@ -93,14 +99,14 @@ export async function loadLinkedInCredentials(
   try {
     accessToken = decryptNullable(row.access_token)
   } catch {
-    await markError(companyId, SERVICE, 'Token decryption failed')
+    await markError(companyId, SERVICE, 'Token decryption failed', client, row.id)
     return null
   }
   if (!accessToken) return null
 
   const expiresAt = row.token_expires_at ? new Date(row.token_expires_at).getTime() : 0
   if (expiresAt > 0 && expiresAt < Date.now()) {
-    await markError(companyId, SERVICE, 'Access token expired — reconnect required')
+    await markError(companyId, SERVICE, 'Access token expired — reconnect required', client, row.id)
     return null
   }
 
@@ -108,6 +114,8 @@ export async function loadLinkedInCredentials(
     accessToken,
     memberSub: row.account_identifier,
     displayName: row.account_label,
+    accountId: row.id,
+    scopes: row.scopes ?? (row.scope ? row.scope.split(/[\s,]+/).filter(Boolean) : []),
   }
 }
 

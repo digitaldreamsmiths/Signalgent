@@ -18,6 +18,7 @@ import { verifyState, InvalidStateError } from '@/lib/integrations/oauth-state'
 import {
   exchangeCode,
   getUserinfo,
+  LINKEDIN_SCOPES,
 } from '@/lib/integrations/linkedin/fetch'
 import {
   saveLinkedInCredentials,
@@ -141,7 +142,9 @@ export async function GET(request: NextRequest) {
     displayName,
     pictureUrl,
     email,
-    scope: tokens.scope ?? null,
+    // LinkedIn echoes the granted scope on the token response; when it is
+    // missing, the grant was for exactly what was requested.
+    scope: tokens.scope ?? LINKEDIN_SCOPES,
   })
 
   return redirectToMarketing(origin, {

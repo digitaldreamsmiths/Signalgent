@@ -197,6 +197,15 @@
 .sg-account-label { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .sg-account-row .sg-status { margin-left:auto; flex-shrink:0; }
 .sg-status-connected { color:#3d7361; background:#edf7f1; }
+.sg-account-note { font-size:10px; color:#3d7361; margin:4px 0 6px; }
+.sg-status-published { color:#3d7361; background:#edf7f1; }
+.sg-status-failed,.sg-status-publishing { color:#8b6c3f; background:#fbf4e9; }
+.sg-checkbox-row { flex-direction:row!important; align-items:flex-start; gap:9px!important; }
+.sg-checkbox-row input { width:auto!important; margin-top:3px; }
+.sg-checkbox-row>span { display:flex; flex-direction:column; gap:3px; }
+.sg-publish-state { display:flex; flex-direction:column; gap:3px; margin-right:auto; font-size:10px; color:#5c728f; }
+.sg-publish-state a { color:#3461db; }
+.sg-publish-state .sg-form-error { margin-right:0!important; font-size:10px; }
 .sg-status-error { color:#a45c60; background:#fcf0f0; }
 .sg-account-error { font-size:10px; line-height:1.6; color:#a45c60; margin:5px 0 0; }
 .sg-account-actions { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }

@@ -33,7 +33,9 @@ export function validateContent(input: ContentItem) {
     if (url.protocol !== 'https:') throw new Error('Use an HTTPS image address.')
     image_url = url.href
   }
-  return { title, body, channels, status: input.status, planned_at, campaign_id: input.campaign_id || null, image_url, variants }
+  // Automatic publishing only means something for a planned item on a channel that can publish.
+  const auto_publish = input.auto_publish === true && input.status === 'planned' && channels.includes('linkedin')
+  return { title, body, channels, status: input.status, planned_at, campaign_id: input.campaign_id || null, image_url, variants, auto_publish }
 }
 export function validateContact(input: Contact) {
   const email = text(input.email, 254, true).toLowerCase()

@@ -32,13 +32,15 @@ const LINKEDIN_TOKEN_URL = 'https://www.linkedin.com/oauth/v2/accessToken'
 const LINKEDIN_API_BASE = 'https://api.linkedin.com'
 
 /**
- * Scopes requested at authorization time. These three are LinkedIn's
- * universally-available OIDC scopes — no Marketing Developer Platform
- * review required. They give us identity (name, picture, email) but not
- * post/share data. Widening scope to post/share endpoints requires
- * LinkedIn approval and is deferred to a follow-up session.
+ * Scopes requested at authorization time. The three OIDC scopes give
+ * identity (name, picture, email). `w_member_social` lets the app create
+ * posts as the member; it comes with the "Share on LinkedIn" product,
+ * which is self-serve on the LinkedIn app (no Marketing Developer
+ * Platform review). An account connected before posting was requested
+ * carries only the OIDC scopes and must reconnect to publish.
  */
-export const LINKEDIN_SCOPES = 'openid profile email'
+export const LINKEDIN_SCOPES = 'openid profile email w_member_social'
+export const LINKEDIN_POST_SCOPE = 'w_member_social'
 
 function clientId(): string {
   const v = process.env.LINKEDIN_CLIENT_ID

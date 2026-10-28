@@ -1,4 +1,4 @@
-import type { ContentItem, Contact, Campaign } from './types'
+import type { ContentItem, Contact, Campaign, Publication } from './types'
 export type TableShape<T extends { id: string; company_id: string; created_at: string; updated_at: string }> = {
   Row: { [K in keyof T]: T[K] }; Insert: Omit<T, 'created_at' | 'updated_at'> & { created_at?: string; updated_at?: string };
   Update: Partial<Omit<T, 'id' | 'company_id' | 'created_at'>>; Relationships: [];
@@ -11,6 +11,7 @@ export type PlatformTables = {
     Relationships: []
   }
   platform_content: TableShape<ContentItem>
+  platform_publications: TableShape<Publication>
   platform_contacts: TableShape<Contact>
   platform_campaigns: TableShape<Campaign>
 }

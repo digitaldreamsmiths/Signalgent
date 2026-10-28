@@ -2928,3 +2928,55 @@ Re-scanned after the change: `/settings/offer` (50 text nodes), `/inbox` (131), 
 - **Six `*-connection-chip.tsx` components** and most of `lib/integrations/services.ts` (`SERVICES`, `SERVICES_BY_MODE`) have no remaining consumer in the visible app.
 - **Live OAuth round-trip** through `connectionRedirect()` for LinkedIn / Pinterest / Etsy / GA / Stripe has not been run since the change.
 - Carried: three client-side 400s on first `/today` load; `templates-modal.tsx:57` lint error; `APP_URL` repoint.
+
+## Session 53 — Social studio: AI drafting, per-channel versions, LinkedIn publishing
+
+Two commits. The first (1324cb8) gave Social studio a "Draft with AI" button and per-channel text. The second adds publishing to LinkedIn, by hand from the editor and on schedule from a cron tick.
+
+### Drafting and variants (1324cb8)
+
+- `platform_content.variants` jsonb (channel id → text). A channel without an entry publishes `body`. `CHANNELS` in `lib/platform/types.ts` now carries each channel's hard cap, target length and house style; the prompt and the editor's counter read the same table.
+- `lib/platform/draft.ts` builds the register (facts only, no placeholders, no dashes, no filler) and normalizes the model's JSON; `draftContent` in `draft-actions.ts` gathers company, offer profile and campaign objective and calls `callClaudeJSON` under the new `social_draft` task (Sonnet). One real call for a fictional studio took ~25s and returned three posts, each under its cap.
+- Editor: Shared / per-channel tabs when more than one channel is selected; counter shows the tightest applicable cap. Validation refuses review, approved or planned items whose effective text exceeds a channel cap; drafts may run long.
+
+### LinkedIn publishing
+
+| File | Purpose |
+| --- | --- |
+| `lib/integrations/linkedin/fetch.ts` | `LINKEDIN_SCOPES` adds `w_member_social`. Accounts connected before this carry only the OIDC scopes and show "Identity only. Reconnect to allow publishing posts." on Connections. |
+| `lib/integrations/linkedin/publish.ts` | `createTextPost` against the versioned Posts API (`POST /rest/posts`, `LinkedIn-Version` from `LINKEDIN_API_VERSION`, default `202601`). Escapes LinkedIn's little-text markup characters except `#`, so hashtags stay hashtags. Translates 401/403/422/426/429 into one-sentence messages. |
+| `lib/integrations/linkedin/tokens.ts` | `loadLinkedInCredentials` takes an injectable client (service role for the cron) and returns `accountId` + `scopes`. |
+| `supabase/migrations/20261028000001_platform_publications.sql` | `platform_publications` (one row per attempt; partial unique index on `(content_id, channel) where status <> 'failed'` is the claim) and `platform_content.auto_publish boolean default false`. |
+| `lib/platform/publish.ts` | `publishToLinkedIn` claims a row, posts, records the URN and `post_url`; a status write failure after a successful post still returns ok (never a second post). `runScheduledPublishing` picks `planned` + `auto_publish` + `linkedin` items past their time with no publication row, caps at 20 per tick, skips sample companies, and marks items more than two days overdue as failed instead of posting them. |
+| `lib/platform/publish-rules.ts` | Client-safe `linkedinBlocker` shared by the editor and the server. |
+| `lib/platform/publish-actions.ts` | `publishContent(companyId, contentId, 'linkedin')`, guarded by `requireCompanyAccess`, publishes the SAVED record. |
+| `app/api/social/cron/route.ts` + `vercel.json` | Five-minute tick with the same `CRON_SECRET` bearer guard as the outreach cron. Separate route because the outreach cron iterates companies with sending enabled only. |
+| `components/platform/editor.tsx` | "Publish to LinkedIn" in the footer for saved approved/planned items with LinkedIn as a channel; disabled with a reason when unsaved, unconnected or blocked; confirm dialog names the posting account. Published state shows the date and a "View post" link; a failed attempt shows its error and allows a retry. Opt-in checkbox "Publish to LinkedIn automatically at the planned time" (planned status only). |
+| `components/platform/pages.tsx` | Published / failed badge on content cards. |
+
+### Design notes
+
+- **Opt-in per item, not per company.** Existing planned LinkedIn items must not start posting themselves the day this deploys. `auto_publish` defaults false and the validator coerces it false unless status is `planned` and LinkedIn is a channel.
+- **Failed scheduled attempts are retried by hand.** The worker skips any item that already has a publication row for the channel, including a failed one, so a persistent rejection never fires every five minutes. The editor shows the failure and offers the button.
+- **Published state lives in `platform_publications`, not `platform_content.status`.** The status check constraint stays as it was; the UI reads the latest non-failed row per content and channel.
+
+### LinkedIn app setup (one-time, by Eudon)
+
+1. On the LinkedIn Developer app, under Products, add **Share on LinkedIn**. It is self-serve and grants `w_member_social`; the Marketing Developer Platform is not needed.
+2. Reconnect the LinkedIn account from Connections so the new scope is granted. The account card then reads "Can publish posts from Social studio."
+3. If LinkedIn ever retires API version `202601`, set `LINKEDIN_API_VERSION` to a current `yyyymm` release in Vercel; no code change needed.
+4. Apply `20261028000000_platform_content_variants.sql` (done) and `20261028000001_platform_publications.sql`.
+
+### Verification
+
+- `tsc --noEmit` clean; eslint clean on touched files (remaining warnings are pre-existing unused imports in `pages.tsx`, `shell.tsx`, `inbox.tsx`).
+- Sample workspace at `/preview`: Connections shows "Identity and publishing" and "Can publish posts from Social studio."; a published sample post shows the badge on its card and "Published to LinkedIn · View post" in the editor; a planned LinkedIn post shows the opt-in checkbox and an enabled Publish button, which in the sample reports that publishing runs only in a real workspace.
+- `GET /api/social/cron` returns 401 without the bearer secret.
+- Escaper and error translation exercised directly on the compiled module.
+- Not verified: a real post to LinkedIn. That needs the Share on LinkedIn product enabled and a reconnected account, then one manual publish from the editor.
+
+### Residuals
+
+- Text posts only. Image posts need the Images API upload flow (`/rest/images?action=initializeUpload`) before `content.media` can be set.
+- Member posts only. Posting as a Company Page needs `w_organization_social` and the Community Management API, which is review-gated.
+- Instagram and Facebook still have no connect path.

@@ -1,7 +1,7 @@
 'use client'
 
 import { Plus, Plug, RefreshCw, Unplug } from 'lucide-react'
-import { PROVIDERS, accountProblem, type Provider } from '@/lib/platform/connections'
+import { PROVIDERS, accountProblem, canPublish, type Provider } from '@/lib/platform/connections'
 import { MicrosoftSetup } from './microsoft-setup'
 import type { ChannelAccount } from '@/lib/platform/types'
 import { usePlatform } from './provider'
@@ -54,8 +54,9 @@ export function Connections() {
             return <li key={account.id}>
               <div className="sg-account-row"><span className={`sg-connection-dot ${healthy ? 'connected' : 'error'}`} /><span className="sg-account-label" title={account.label}>{account.label}</span><span className={`sg-status ${healthy ? 'sg-status-connected' : 'sg-status-error'}`}><span />{healthy ? 'Connected' : 'Needs attention'}</span></div>
               {problem && <p className="sg-account-error">{problem}</p>}
+              {provider.id === 'linkedin' && healthy && <p className={canPublish(account) ? 'sg-account-note' : 'sg-account-error'}>{canPublish(account) ? 'Can publish posts from Social studio.' : 'Identity only. Reconnect to allow publishing posts.'}</p>}
               <div className="sg-account-actions">
-                {!healthy && provider.path && (preview ? <button className="sg-button sg-compact" onClick={() => notify(PREVIEW_NOTICE)}><RefreshCw size={13} />Reconnect</button> : <a className="sg-button sg-compact" href={connectHref(provider)}><RefreshCw size={13} />Reconnect</a>)}
+                {(!healthy || (provider.id === 'linkedin' && !canPublish(account))) && provider.path && (preview ? <button className="sg-button sg-compact" onClick={() => notify(PREVIEW_NOTICE)}><RefreshCw size={13} />Reconnect</button> : <a className="sg-button sg-compact" href={connectHref(provider)}><RefreshCw size={13} />Reconnect</a>)}
                 <button className="sg-button sg-compact sg-quiet" onClick={() => disconnect(account, provider)}><Unplug size={13} />Disconnect</button>
               </div>
             </li>
