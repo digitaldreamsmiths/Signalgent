@@ -16,7 +16,7 @@ import { createClient } from '@/lib/supabase/server'
 import { IntegrationAuthError, requireCompanyAccess } from '@/lib/integrations/auth'
 import { extractDomain } from '../usaspending/resolve'
 import { runPipelineFromName } from './pipeline'
-import { persistOutcome, recordUsage, runEnrichmentBatch, runEnrichmentBatchForIds, enrichToBuffer, RUN_BATCH } from './enrich-run'
+import { persistOutcome, recordUsage, runEnrichmentBatch, runEnrichmentBatchForIds, enrichToBuffer, RUN_BATCH, type CampaignScope } from './enrich-run'
 import { loadSettings, getEffectiveDailyCap, todayBounds, warmupDayIndex } from './send/worker'
 import { generateFollowupTouch } from './followups'
 import { loadOfferProfile } from './offer-profile'
@@ -236,6 +236,8 @@ export async function processProspects(
  * intentionally incremental so federal-award facts stay fresh. */
 export async function enrichWaveNow(
   companyId: string,
+  /** The workspace campaign picker value: 'all' (default), 'none', or a campaign id. */
+  campaignFilter: string = 'all',
 ): Promise<ActionResult<{ enriched: number; drafted: number; skipped: number; remaining: number; cost_usd: number; note?: string }>> {
   let access: Awaited<ReturnType<typeof requireCompanyAccess>>
   try {
@@ -247,7 +249,12 @@ export async function enrichWaveNow(
   const supabase = await createClient()
   const blocked = await processingBlockReason(supabase, companyId)
   if (blocked) return { ok: false, error: blocked }
-  const data = await enrichToBuffer(supabase, companyId, access.userId)
+  const scope: CampaignScope = campaignFilter === 'all' ? undefined : campaignFilter === 'none' ? null : campaignFilter
+  if (scope) {
+    const { data: campaign } = await supabase.from('outreach_campaigns').select('id').eq('id', scope).eq('company_id', companyId).maybeSingle()
+    if (!campaign) return { ok: false, error: 'That campaign doesn’t belong to this workspace.' }
+  }
+  const data = await enrichToBuffer(supabase, companyId, access.userId, scope)
   revalidatePath('/outreach')
   return { ok: true, data }
 }

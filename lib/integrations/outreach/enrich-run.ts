@@ -253,6 +253,26 @@ export async function backfillTemplateDrafts(supabase: DB, companyId: string): P
   return rows.length
 }
 
+/** Which prospects a wave or batch may draw from, mirroring the workspace's
+ * campaign picker: undefined = the whole company, null = prospects in no
+ * campaign, a string = that campaign's prospects. */
+export type CampaignScope = string | null | undefined
+
+/** Apply a campaign scope to a prospects query. Generic over the builder so it
+ * works for both row selects and head counts. */
+export function scopeProspects<Q extends { eq(column: string, value: string): Q; is(column: string, value: null): Q }>(q: Q, scope: CampaignScope): Q {
+  if (scope === undefined) return q
+  return scope === null ? q.is('campaign_id', null) : q.eq('campaign_id', scope)
+}
+
+async function countNew(supabase: DB, companyId: string, scope: CampaignScope): Promise<number> {
+  const { count } = await scopeProspects(
+    supabase.from('outreach_prospects').select('id', { count: 'exact', head: true }).eq('company_id', companyId).eq('status', 'new'),
+    scope,
+  )
+  return count ?? 0
+}
+
 export interface EnrichBatchResult {
   processed: number
   drafted: number
@@ -264,28 +284,27 @@ export interface EnrichBatchResult {
   quota_exhausted?: boolean
 }
 
-/** Run the pipeline over up to `limit` oldest `new` prospects (FIFO). Idempotent:
- * processed prospects leave 'new', so partial runs resume cleanly next call. */
-export async function runEnrichmentBatch(supabase: DB, companyId: string, limit: number, userId: string | null): Promise<EnrichBatchResult> {
+/** Run the pipeline over up to `limit` oldest `new` prospects (FIFO) within
+ * `scope`. Idempotent: processed prospects leave 'new', so partial runs resume
+ * cleanly next call. */
+export async function runEnrichmentBatch(supabase: DB, companyId: string, limit: number, userId: string | null, scope: CampaignScope = undefined): Promise<EnrichBatchResult> {
   // Plan quota first: enrichment is the LLM spend, so an exhausted month has to
   // stop before any calls are made. Infinity for unmanaged/uncapped tenants.
   const useUsaspending = await usesUsaspending(supabase, companyId)
   const headroom = useUsaspending ? await enrichmentHeadroom(supabase, companyId) : Infinity
   if (headroom <= 0) {
     await backfillTemplateDrafts(supabase, companyId)
-    const { count } = await supabase
-      .from('outreach_prospects')
-      .select('id', { count: 'exact', head: true })
-      .eq('company_id', companyId)
-      .eq('status', 'new')
-    return { processed: 0, drafted: 0, skipped: 0, remaining: count ?? 0, cost_usd: 0, quota_exhausted: true }
+    return { processed: 0, drafted: 0, skipped: 0, remaining: await countNew(supabase, companyId, scope), cost_usd: 0, quota_exhausted: true }
   }
 
-  const { data: pending, error } = await supabase
-    .from('outreach_prospects')
-    .select('id, email')
-    .eq('company_id', companyId)
-    .eq('status', 'new')
+  const { data: pending, error } = await scopeProspects(
+    supabase
+      .from('outreach_prospects')
+      .select('id, email')
+      .eq('company_id', companyId)
+      .eq('status', 'new'),
+    scope,
+  )
     .order('created_at', { ascending: true })
     .limit(Math.max(1, Math.min(limit, RUN_BATCH, headroom)))
 
@@ -310,14 +329,8 @@ export async function runEnrichmentBatch(supabase: DB, companyId: string, limit:
   await recordUsage(supabase, companyId, userId, usage)
   await backfillTemplateDrafts(supabase, companyId)
 
-  const { count } = await supabase
-    .from('outreach_prospects')
-    .select('id', { count: 'exact', head: true })
-    .eq('company_id', companyId)
-    .eq('status', 'new')
-
   const cost_usd = usage.reduce((s, u) => s + usageCostUsd(u), 0)
-  return { processed: pending.length, drafted, skipped, remaining: count ?? 0, cost_usd }
+  return { processed: pending.length, drafted, skipped, remaining: await countNew(supabase, companyId, scope), cost_usd }
 }
 
 /** Like runEnrichmentBatch, but restricted to a caller-supplied set of prospect
@@ -399,18 +412,17 @@ export interface EnrichWaveResult {
 
 /** Top up the enriched-and-ready buffer to ~WAVE_DAYS of send capacity. Enriches
  * only the gap (capped at one buffer's worth per call), so the cron keeps facts
- * fresh without draining the whole list. */
-export async function enrichToBuffer(supabase: DB, companyId: string, userId: string | null): Promise<EnrichWaveResult> {
+ * fresh without draining the whole list.
+ *
+ * With a campaign `scope`, both the buffer and the draw are measured inside
+ * that campaign: a church list with three days of drafts ready must not stop
+ * the school list from getting its first wave, and the school wave must not
+ * pull church prospects because they are older. */
+export async function enrichToBuffer(supabase: DB, companyId: string, userId: string | null, scope: CampaignScope = undefined): Promise<EnrichWaveResult> {
   const settings = await loadSettings(supabase, companyId)
   const target = WAVE_DAYS * getEffectiveDailyCap(settings)
 
-  // Buffer = enriched prospects whose draft hasn't been sent yet.
-  const { count: bufferCount } = await supabase
-    .from('outreach_drafts')
-    .select('id', { count: 'exact', head: true })
-    .eq('company_id', companyId)
-    .in('status', ['pending', 'approved', 'edited'])
-  let buffer = bufferCount ?? 0
+  let buffer = await countBuffer(supabase, companyId, scope)
 
   let enriched = 0
   let drafted = 0
@@ -421,7 +433,7 @@ export async function enrichToBuffer(supabase: DB, companyId: string, userId: st
   let quotaExhausted = false
   for (let guard = 0; buffer < target && guard < 50; guard++) {
     const need = Math.min(target - buffer, RUN_BATCH)
-    const r = await runEnrichmentBatch(supabase, companyId, need, userId)
+    const r = await runEnrichmentBatch(supabase, companyId, need, userId, scope)
     ranAny = true
     remaining = r.remaining
     if (r.quota_exhausted) quotaExhausted = true
@@ -434,14 +446,7 @@ export async function enrichToBuffer(supabase: DB, companyId: string, userId: st
     if (r.remaining === 0) break
   }
 
-  if (!ranAny) {
-    const { count } = await supabase
-      .from('outreach_prospects')
-      .select('id', { count: 'exact', head: true })
-      .eq('company_id', companyId)
-      .eq('status', 'new')
-    remaining = count ?? 0
-  }
+  if (!ranAny) remaining = await countNew(supabase, companyId, scope)
 
   return {
     enriched,
@@ -452,7 +457,29 @@ export async function enrichToBuffer(supabase: DB, companyId: string, userId: st
     note: quotaExhausted
       ? 'monthly enrichment limit reached for this plan'
       : enriched === 0
-        ? (remaining === 0 ? 'no new prospects' : `buffer full (${buffer}/${target} ready)`)
+        ? (remaining === 0 ? (scope === undefined ? 'no new prospects' : 'no new prospects in this campaign') : `buffer full (${buffer}/${target} ready${scope === undefined ? '' : ' in this campaign'})`)
         : undefined,
   }
+}
+
+/** Enriched prospects whose draft hasn't been sent yet (pending / approved /
+ * edited drafts). Drafts carry no campaign column, so a scoped count filters
+ * through the prospect join; if that read fails the company-wide count stands
+ * in, which can only make the wave smaller, never cross-campaign. */
+async function countBuffer(supabase: DB, companyId: string, scope: CampaignScope): Promise<number> {
+  const unscoped = () => supabase
+    .from('outreach_drafts')
+    .select('id', { count: 'exact', head: true })
+    .eq('company_id', companyId)
+    .in('status', ['pending', 'approved', 'edited'])
+  if (scope === undefined) return (await unscoped()).count ?? 0
+  let q = supabase
+    .from('outreach_drafts')
+    .select('id, outreach_prospects!inner(campaign_id)', { count: 'exact', head: true })
+    .eq('company_id', companyId)
+    .in('status', ['pending', 'approved', 'edited'])
+  q = scope === null ? q.is('outreach_prospects.campaign_id', null) : q.eq('outreach_prospects.campaign_id', scope)
+  const { count, error } = await q
+  if (!error) return count ?? 0
+  return (await unscoped()).count ?? 0
 }

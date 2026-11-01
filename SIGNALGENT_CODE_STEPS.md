@@ -3023,3 +3023,19 @@ PlateTell is adding a school (PTA/PTO) list, 329 verified addresses, next to its
 - The 48 state PTA offices in the file are coordinators, not event organizers. Drop those rows before upload, or give them a fourth template.
 - Both campaigns share the mailbox's daily cap, send days and window.
 - Out-of-office auto-replies are still counted as replies (Session 53 memory note), so early school reply counts stay noisy.
+
+## Session 54.1 — Enrich wave follows the campaign picker
+
+After the school import the button read "Enrich wave (779)": every `new` prospect in PlateTell (499 on the church Oct 26 list + 280 schools), drawn oldest first, so a click would have enriched church prospects while the user was looking at the school campaign. The wave was the one action in the toolbar that ignored the campaign filter.
+
+| File | Purpose |
+| --- | --- |
+| `lib/integrations/outreach/enrich-run.ts` | `CampaignScope` (undefined = company, null = no campaign, id) and `scopeProspects()`. `runEnrichmentBatch` and `enrichToBuffer` take a scope: the draw, the `remaining` count, and the ready buffer are all measured inside it. The buffer count goes through `outreach_prospects!inner(campaign_id)` since drafts carry no campaign column; if that read fails the company-wide count stands in (a smaller wave, never a cross-campaign one). Notes say "in this campaign". |
+| `lib/integrations/outreach/actions.ts` | `enrichWaveNow(companyId, campaignFilter = 'all')` maps the picker value to a scope and checks a campaign id belongs to the company. |
+| `components/widgets/content/outreach-chrome.tsx` | Button count is `counts.new` for All campaigns, else the scope's `contact_buckets.new`; the click and the post-import wave both pass the picker; tooltip says which. |
+
+### Verification
+
+- `tsc --noEmit` clean; eslint clean on the three files.
+- Scoped buffer query exercised read-only against prod: company-wide 1 waiting draft, school 0, "500 list" 0, no-campaign 0, no errors; 280 `new` in the school campaign.
+- Not clicked in the browser (sign-in required). First real use is the school wave itself.

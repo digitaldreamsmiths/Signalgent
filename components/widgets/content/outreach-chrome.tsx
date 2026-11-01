@@ -71,7 +71,7 @@ export function OutreachChrome({ children }: { children: React.ReactNode }) {
         let prepared = ''
         let prepareError = false
         if (prepareAfterImport && r.data.added > 0) {
-          const wave = await enrichWaveNow(companyId)
+          const wave = await enrichWaveNow(companyId, campaignFilter)
           prepareError = !wave.ok
           prepared = wave.ok
             ? ` Next wave: ${wave.data.drafted} draft(s) to review, ${wave.data.skipped} template prospect(s). Check Pipeline before scheduling.`
@@ -113,20 +113,28 @@ export function OutreachChrome({ children }: { children: React.ReactNode }) {
 
   // Wave-based: enrich one buffer's worth (~3 days of send capacity) only
   // after an explicit click. Importing contacts never starts this work.
+  // The wave follows the campaign picker: with a campaign selected it draws
+  // only from that campaign and measures its ready buffer there, so an older
+  // list with drafts waiting can't starve a new one.
   const handleRun = useCallback(async () => {
     if (!companyId) return
     setRunning(true)
-    const r = await enrichWaveNow(companyId)
+    const r = await enrichWaveNow(companyId, campaignFilter)
     setRunning(false)
     if (!r.ok) return pushToast(r.error, 'error')
     const { enriched, drafted, skipped, remaining, cost_usd, note } = r.data
+    const where = campaignFilter === 'all' ? '' : ' in this campaign'
     pushToast(
       enriched === 0
         ? `Nothing enriched${note ? ` — ${note}` : ''}.`
-        : `Enriched ${enriched} (${drafted} personalized, ${skipped} template). ${remaining} left for later waves. ${fmtUsd(cost_usd)} this run.`,
+        : `Enriched ${enriched} (${drafted} personalized, ${skipped} template). ${remaining} left${where} for later waves. ${fmtUsd(cost_usd)} this run.`,
     )
     refresh()
-  }, [companyId, refresh, pushToast])
+  }, [companyId, campaignFilter, refresh, pushToast])
+
+  // Count on the button: company-wide for "All campaigns", else the scope's
+  // own `new` bucket (contact_buckets is measured within the campaign filter).
+  const newInScope = campaignFilter === 'all' ? (c?.new ?? 0) : (snapshot?.contact_buckets.new ?? 0)
 
   const handleProcessQueue = async () => {
     if (!companyId) return
@@ -295,8 +303,8 @@ export function OutreachChrome({ children }: { children: React.ReactNode }) {
         <button onClick={handleProcessQueue} disabled={processing || (c?.queued ?? 0) === 0} style={btnGhost(ACCENT)} title="Send queued emails whose scheduled time has arrived and whose weekday is allowed. Future sends wait for their scheduled time.">
           {processing ? 'Sending…' : `Send due now${c?.queued ? ` (${c.queued} queued)` : ''}`}
         </button>
-        <button onClick={handleRun} disabled={running || (c?.new ?? 0) === 0} style={btnGhost(ACCENT)} title="Enrich one wave (~3 days of send capacity). Keeps federal-award facts fresh instead of draining the whole list at once.">
-          {running ? 'Enriching…' : `Enrich wave${c?.new ? ` (${c.new})` : ''}`}
+        <button onClick={handleRun} disabled={running || newInScope === 0} style={btnGhost(ACCENT)} title={campaignFilter === 'all' ? 'Enrich one wave (~3 days of send capacity) across every campaign, oldest prospects first. Pick a campaign to enrich only its prospects.' : 'Enrich one wave (~3 days of send capacity) from the selected campaign only.'}>
+          {running ? 'Enriching…' : `Enrich wave${newInScope ? ` (${newInScope})` : ''}`}
         </button>
       </div>
 
