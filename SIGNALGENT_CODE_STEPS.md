@@ -3039,3 +3039,20 @@ After the school import the button read "Enrich wave (779)": every `new` prospec
 - `tsc --noEmit` clean; eslint clean on the three files.
 - Scoped buffer query exercised read-only against prod: company-wide 1 waiting draft, school 0, "500 list" 0, no-campaign 0, no errors; 280 `new` in the school campaign.
 - Not clicked in the browser (sign-in required). First real use is the school wave itself.
+
+## Session 54.2 — Template drafts use the stored organization name
+
+The first school wave produced 135 drafts (3 days × the 45/day cap, as designed), every one reading "When your team puts on a teacher appreciation lunch" although `recipient_name` held "Valley Cottage Elementary PTA" for each. `persistOutcome` rendered the template with `enriched?.recipient_name`, which is always null for a company with USASpending off, and never looked at the name already on the prospect. The church lists only ever got names because `resolve-names` ran afterwards and "Re-draft templates" (which does read the stored name) rewrote them.
+
+| File | Purpose |
+| --- | --- |
+| `lib/integrations/outreach/enrich-run.ts` | The skipped branch reads the prospect's stored `recipient_name` and `campaign_id` once; resolver name wins, stored name otherwise. The campaign goes to the picker directly instead of a second lookup. |
+
+### Fixing the 135 already drafted (Eudon)
+
+"Re-draft templates" rewrites approved, unqueued first-touch drafts whose template changed after the draft was written, and it renders with the stored name. Touch the three school templates' `updated_at` (SQL in the session scratchpad) and click Re-draft templates: expect "135 rewritten", church drafts untouched because their templates were not.
+
+### Verification
+
+- `tsc --noEmit` clean; eslint clean.
+- Live counts after the wave, read-only: school prospects 135 skipped / 145 new; 135 approved drafts split 35 / 51 / 49 across the three school subjects (right templates, so the campaign scoping works); 135 of 135 with no name rendered (this bug).

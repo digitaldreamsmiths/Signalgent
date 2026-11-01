@@ -171,7 +171,20 @@ export async function persistOutcome(
     // random active user template, stamping template_id for performance tracking.
     // Templates are pre-approved copy, so they skip text review. A person
     // must still schedule the send explicitly.
-    const { draft: tmpl, template_id } = await pickTemplateDraft(supabase, companyId, enriched?.recipient_name ?? null, prospectId, profile, federal)
+    //
+    // The name for `{company}`: the resolver's when it found one, else the name
+    // already stored on the prospect (a CSV import's organization column, or a
+    // manual edit). Non-federal companies never resolve, so without the stored
+    // name every template rendered "your team" over a name that was sitting
+    // right there.
+    const { data: stored } = await supabase
+      .from('outreach_prospects')
+      .select('recipient_name, campaign_id')
+      .eq('id', prospectId)
+      .eq('company_id', companyId)
+      .maybeSingle()
+    const recipientName = enriched?.recipient_name ?? stored?.recipient_name ?? null
+    const { draft: tmpl, template_id } = await pickTemplateDraft(supabase, companyId, recipientName, prospectId, profile, federal, stored ? stored.campaign_id ?? null : undefined)
     await supabase
       .from('outreach_drafts')
       .upsert(
