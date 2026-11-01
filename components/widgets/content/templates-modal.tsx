@@ -5,6 +5,7 @@ import { listTemplates, createTemplate, updateTemplate, deleteTemplate } from '@
 import { templateLibraryFor, generalTemplateLibraryFor } from '@/lib/integrations/outreach/template-library'
 import { getOfferProfile } from '@/lib/integrations/outreach/offer-actions'
 import { useCompany } from '@/contexts/company-context'
+import { useOutreach } from '@/contexts/outreach-context'
 import { replyRiskWarnings } from '@/lib/integrations/outreach/hygiene'
 import type { OutreachTemplate, TemplateStat } from '@/lib/integrations/outreach/types'
 
@@ -18,9 +19,10 @@ const MUTED = 'var(--app-muted)'
 const ACCENT = '#b4441e'
 
 
-type FormState = { id: string | null; name: string; subject: string; body: string; weight: number; active: boolean; followup_subject: string; followup_body: string }
+/** `campaign_id` '' = shared with every campaign. */
+type FormState = { id: string | null; name: string; subject: string; body: string; weight: number; active: boolean; followup_subject: string; followup_body: string; campaign_id: string }
 
-const EMPTY_FORM: FormState = { id: null, name: '', subject: '', body: '', weight: 1, active: true, followup_subject: '', followup_body: '' }
+const EMPTY_FORM: FormState = { id: null, name: '', subject: '', body: '', weight: 1, active: true, followup_subject: '', followup_body: '', campaign_id: '' }
 
 const labelStyle: React.CSSProperties = { fontSize: 10, fontWeight: 600, color: MUTED, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4, display: 'block' }
 const inputStyle: React.CSSProperties = { width: '100%', background: INPUT, border: `1px solid ${BORDER}`, borderRadius: 6, color: TEXT, fontSize: 12, padding: '7px 9px' }
@@ -49,6 +51,12 @@ export function TemplatesModal({
   onChanged: () => void
 }) {
   const { activeCompany } = useCompany()
+  // Campaigns scope templates: a prospect rotates its own campaign's templates
+  // when it has any, else the shared ones. A new template defaults to the
+  // campaign the workspace is currently filtered to.
+  const { campaigns, campaignFilter } = useOutreach()
+  const campaignName = (id: string | null) => (id ? campaigns.find((c) => c.id === id)?.name ?? 'Deleted campaign' : null)
+  const defaultCampaign = campaigns.some((c) => c.id === campaignFilter && c.status === 'active') ? campaignFilter : ''
   const [starters, setStarters] = useState<ReturnType<typeof templateLibraryFor>>([])
   const [templates, setTemplates] = useState<OutreachTemplate[] | null>(null)
   const [form, setForm] = useState<FormState | null>(null)
@@ -94,9 +102,10 @@ export function TemplatesModal({
     if (!form) return
     setBusy(true)
     setError(null)
+    const fields = { name: form.name, subject: form.subject, body: form.body, weight: form.weight, active: form.active, followup_subject: form.followup_subject, followup_body: form.followup_body, campaign_id: form.campaign_id || null }
     const r = form.id
-      ? await updateTemplate(companyId, form.id, { name: form.name, subject: form.subject, body: form.body, weight: form.weight, active: form.active, followup_subject: form.followup_subject, followup_body: form.followup_body })
-      : await createTemplate(companyId, { name: form.name, subject: form.subject, body: form.body, weight: form.weight, active: form.active, followup_subject: form.followup_subject, followup_body: form.followup_body })
+      ? await updateTemplate(companyId, form.id, fields)
+      : await createTemplate(companyId, fields)
     setBusy(false)
     if (!r.ok) return setError(r.error)
     setForm(null)
@@ -157,6 +166,11 @@ export function TemplatesModal({
         </div>
         <div style={{ fontSize: 11, color: MUTED, lineHeight: 1.5, marginBottom: 14 }}>
           Used for prospects that can’t be personalized from federal data. Each fallback email picks a random <b style={{ color: TEXT2 }}>active</b> template (weighted). Use <code style={{ color: ACCENT }}>{'{company}'}</code> to insert the recipient’s name. Personalized emails are unaffected.
+          {campaigns.length > 0 && (
+            <div style={{ marginTop: 6 }}>
+              A template can belong to one <b style={{ color: TEXT2 }}>campaign</b>: its prospects rotate only that campaign’s templates. Prospects in a campaign with no templates of its own, and prospects in no campaign, use the <b style={{ color: TEXT2 }}>shared</b> ones.
+            </div>
+          )}
           <div style={{ marginTop: 6 }}>
             What gets replies: under 90 words, one concrete thing they can picture, and a closing <b style={{ color: TEXT2 }}>question</b> with nothing after it. The editor flags the rest.
           </div>
@@ -180,8 +194,13 @@ export function TemplatesModal({
                       <input type="checkbox" checked={t.active} disabled={busy} onChange={() => toggleActive(t)} />
                     </label>
                     <span style={{ fontSize: 13, fontWeight: 600, color: TEXT, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.name}</span>
+                    {campaigns.length > 0 && (
+                      <span title={t.campaign_id ? 'Rotates only for this campaign’s prospects' : 'Rotates for prospects in no campaign, and for campaigns with no templates of their own'} style={{ fontSize: 10, color: t.campaign_id ? ACCENT : MUTED, border: `1px solid ${t.campaign_id ? ACCENT : BORDER}`, borderRadius: 999, padding: '1px 7px', maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {campaignName(t.campaign_id) ?? 'Shared'}
+                      </span>
+                    )}
                     <span style={{ fontSize: 10, color: MUTED }}>weight {t.weight}</span>
-                    <button disabled={busy} onClick={() => { setError(null); setForm({ id: t.id, name: t.name, subject: t.subject, body: t.body, weight: t.weight, active: t.active, followup_subject: t.followup_subject ?? '', followup_body: t.followup_body ?? '' }) }} style={btnGhost()}>Edit</button>
+                    <button disabled={busy} onClick={() => { setError(null); setForm({ id: t.id, name: t.name, subject: t.subject, body: t.body, weight: t.weight, active: t.active, followup_subject: t.followup_subject ?? '', followup_body: t.followup_body ?? '', campaign_id: t.campaign_id ?? '' }) }} style={btnGhost()}>Edit</button>
                     {confirmDelete === t.id ? (
                       <>
                         <button disabled={busy} onClick={() => handleDelete(t.id)} style={btn('#b04545')}>Confirm</button>
@@ -240,6 +259,17 @@ export function TemplatesModal({
                 <input type="number" min={1} value={form.weight} onChange={(e) => set('weight', Math.max(1, Number(e.target.value) || 1))} style={inputStyle} />
               </div>
             </div>
+            {campaigns.length > 0 && (
+              <div>
+                <label style={labelStyle}>Campaign</label>
+                <select value={form.campaign_id} onChange={(e) => set('campaign_id', e.target.value)} style={inputStyle} title="Which prospects this template rotates for">
+                  <option value="">Shared (every campaign without its own templates)</option>
+                  {campaigns.filter((c) => c.status === 'active' || c.id === form.campaign_id).map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}{c.status === 'archived' ? ' (archived)' : ''}</option>
+                  ))}
+                </select>
+              </div>
+            )}
             <div>
               <label style={labelStyle}>Subject</label>
               <input value={form.subject} onChange={(e) => set('subject', e.target.value)} placeholder="recompete question" style={inputStyle} />
@@ -278,7 +308,7 @@ export function TemplatesModal({
             </div>
           </div>
         ) : (
-          <button onClick={() => { setError(null); setForm({ ...EMPTY_FORM }) }} style={btn(ACCENT)}>New template</button>
+          <button onClick={() => { setError(null); setForm({ ...EMPTY_FORM, campaign_id: defaultCampaign }) }} style={btn(ACCENT)}>New template</button>
         )}
       </div>
     </div>

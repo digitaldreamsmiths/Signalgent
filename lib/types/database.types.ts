@@ -316,6 +316,7 @@ export interface Database {
           reply_from: string | null
           reply_subject: string | null
           reply_snippet: string | null
+          notes: string | null
           enriched_at: string | null
           created_at: string
           updated_at: string
@@ -343,6 +344,7 @@ export interface Database {
           reply_from?: string | null
           reply_subject?: string | null
           reply_snippet?: string | null
+          notes?: string | null
           enriched_at?: string | null
           created_at?: string
           updated_at?: string
@@ -368,6 +370,7 @@ export interface Database {
           reply_from?: string | null
           reply_subject?: string | null
           reply_snippet?: string | null
+          notes?: string | null
           enriched_at?: string | null
           updated_at?: string
         }
@@ -556,6 +559,7 @@ export interface Database {
           active: boolean
           followup_subject: string | null
           followup_body: string | null
+          campaign_id: string | null
           created_at: string
           updated_at: string
         }
@@ -569,6 +573,7 @@ export interface Database {
           active?: boolean
           followup_subject?: string | null
           followup_body?: string | null
+          campaign_id?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -580,6 +585,7 @@ export interface Database {
           active?: boolean
           followup_subject?: string | null
           followup_body?: string | null
+          campaign_id?: string | null
           updated_at?: string
         }
         Relationships: []

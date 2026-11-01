@@ -84,6 +84,7 @@ export function OutreachChrome({ children }: { children: React.ReactNode }) {
         pushToast(
           `Added ${r.data.added}; ${r.data.duplicates} duplicate(s), ${r.data.invalid} invalid` +
             (r.data.undeliverable > 0 ? `, ${r.data.undeliverable} undeliverable (no mail server)` : '') +
+            (r.data.named > 0 ? `, ${r.data.named} with an organization name from the file` : '') +
             `.${prepared || ' Contacts are saved; prepare drafts when ready.'}`,
           prepareError ? 'error' : 'info',
         )
@@ -281,7 +282,7 @@ export function OutreachChrome({ children }: { children: React.ReactNode }) {
           onChange={handleFileUpload}
           style={{ display: 'none' }}
         />
-        <button onClick={() => fileInputRef.current?.click()} disabled={importing} style={btnGhost()} title="Upload a CSV, TXT, or TSV file of email addresses">Upload file</button>
+        <button onClick={() => fileInputRef.current?.click()} disabled={importing} style={btnGhost()} title="Upload a CSV, TXT, or TSV file. A CSV with an Email column also keeps Organization (used as the recipient name), Contact, City/State, and role or fit notes.">Upload file</button>
         <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: MUTED }} title="After importing, prepare the next wave of drafts. Federal research uses billable AI credits; importing alone never sends email.">
           <input type="checkbox" checked={prepareAfterImport} onChange={(e) => setPrepareAfterImport(e.target.checked)} disabled={importing} /> Prepare next draft wave after import
         </label>

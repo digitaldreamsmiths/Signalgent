@@ -2981,3 +2981,45 @@ Two commits. The first (1324cb8) gave Social studio a "Draft with AI" button and
 - Text posts only. Image posts need the Images API upload flow (`/rest/images?action=initializeUpload`) before `content.media` can be set.
 - Member posts only. Posting as a Company Page needs `w_organization_social` and the Community Management API, which is review-gated.
 - Instagram and Facebook still have no connect path.
+
+## Session 54 — Campaign-scoped templates + column-aware CSV import
+
+PlateTell is adding a school (PTA/PTO) list, 329 verified addresses, next to its church lists, from the same mailbox. Campaigns already kept the *contacts* apart (Session 35), but every fallback template was one flat rotation per company: with school and church templates both active, enrichment would hand school copy to churches and "Re-draft templates" would rewrite church drafts with whichever set the dice picked. And the import kept only the address, so the organization name the list builder had already verified (the only name a free-mail address like `mundelein75pto@gmail.com` can ever get) was thrown away.
+
+| File | Purpose |
+| --- | --- |
+| `supabase/migrations/20261031000000_outreach_template_campaign.sql` (NEW) | `outreach_templates.campaign_id` (FK, ON DELETE SET NULL → back to shared) + index; `outreach_prospects.notes text` for CSV role/fit text. Remote-only as usual. |
+| `lib/integrations/outreach/template-pool.ts` (NEW) | Pure `templatesForCampaign` (a prospect's own campaign templates if any, else the shared ones, else empty → built-in rotation) and `pickWeighted`. Shared by enrichment and re-draft. |
+| `lib/integrations/outreach/enrich-run.ts` | `pickTemplateDraft` gains `campaignId` (undefined = look the prospect up) and reads via `loadActiveTemplates`, which retries without `campaign_id` pre-migration so every template counts as shared (old behavior). `backfillTemplateDrafts` passes the campaign through. |
+| `lib/integrations/outreach/sending.ts` | `redraftTemplateSends` picks per prospect campaign in both halves; a draft with no applicable user template is left alone instead of rewritten with another campaign's copy. |
+| `lib/integrations/outreach/template-actions.ts` | `listTemplates` returns `campaign_id` (fallback select pre-migration); create/update accept it, verify the campaign belongs to the company, and report the specific pending-migration error. |
+| `components/widgets/content/templates-modal.tsx` | Campaign select in the editor (Shared / active campaigns; an archived one stays listed while a template still points at it), a Shared/campaign pill on each row, and a new template defaults to the campaign the workspace is filtered to. Uses `useOutreach()` for the campaign list. |
+| `lib/integrations/outreach/ingest-csv.ts` (NEW) | RFC 4180-ish parser + header mapping: email (required, else null → regex path), organization → `recipient_name`, contact/name → `contact_name`, city+state or location → `location`, role/type/fit/notes/source → `notes` as `Header: value · …` (600 chars). |
+| `lib/integrations/outreach/actions.ts` | `ingestProspects` tries the CSV path first; result gains `named`. The pending-migration retry is generalised to strip any of `campaign_id`, `notes` once. `ignoreDuplicates` still means a re-upload never overwrites edits. |
+| `lib/integrations/outreach/query.ts`, `types.ts`, `outreach-widgets.tsx`, `outreach-chrome.tsx` | `notes` on the prospect view and under the email on the detail header (never sent); toast counts organization names; upload tooltip names the columns. |
+| `docs/platetell-school-templates.sql` (NEW) | Three school openers + nudges (process / owner / allergy questions), campaign-scoped, equal weight. Same not-a-migration contract as `outreach-template-refresh.sql`. |
+
+### Design notes
+
+- **Null `campaign_id` means shared, not "nobody".** Every existing template keeps rotating for everyone until it is assigned, so applying the migration changes nothing on its own. A campaign with templates of its own never sees shared ones; a campaign with none falls back to them. The church templates can stay shared (the Anglican list has no campaign and still needs them) or be pinned to the church campaign; the SQL leaves that as an optional step.
+- **Follow-ups needed no change.** The sweep already continues the opener's own template by `drafts.template_id`, so touch two is campaign-correct by construction.
+- **Column detection is by header, not position.** `Region` is deliberately not a notes column; `Source URL` is kept last so the operator can check who they are emailing from the detail view.
+
+### Verification
+
+- `tsc --noEmit` clean; eslint clean on every touched file.
+- Compiled the two pure modules and ran assertions: the real `platetell_pta_pto_public_email_prospects_verified_2026-10-26.csv` parses to 329 rows, 329 unique emails, every row with an organization name, quoted fields with commas intact, city/state joined, Region excluded from notes; plain and comma-separated address lists return null (regex path); TSV, BOM and `\r\n` handled. Pool rules: own-wins / fallback-to-shared / no-campaign-shared / nothing-applicable-empty; weighted draw lands ~75% on weight 3 of 4 over 4,000 draws. ALL PASS.
+- Not verified in the browser: the outreach pages need a signed-in session and the `/preview` sample workspace has no cold-outreach section. The modal's new select and pill, and the live import, are to be checked after the migration is applied.
+
+### To run (Eudon)
+
+1. Apply `supabase/migrations/20261031000000_outreach_template_campaign.sql`. Until then templates still list and rotate as shared, template saves with a campaign report the pending-migration message, and CSV imports still store names and location but drop notes.
+2. In the app under PlateTell: Manage campaigns… → create "PTA/PTO schools". Select it, Upload file → the CSV. Expect "Added 329 … 329 with an organization name from the file".
+3. Fill the ids into `docs/platetell-school-templates.sql`, read the copy against the live church templates, run it.
+4. Enrich wave with the school campaign selected; check Ready to email shows only school copy with the organization name rendered; schedule ~20 first.
+
+### Residuals
+
+- The 48 state PTA offices in the file are coordinators, not event organizers. Drop those rows before upload, or give them a fourth template.
+- Both campaigns share the mailbox's daily cap, send days and window.
+- Out-of-office auto-replies are still counted as replies (Session 53 memory note), so early school reply counts stay noisy.

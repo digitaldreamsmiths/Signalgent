@@ -100,6 +100,9 @@ export interface OutreachTemplate {
    * built-in library nudge. */
   followup_subject: string | null
   followup_body: string | null
+  /** Campaign this template rotates for. Null = shared: used by prospects in
+   * no campaign and by any campaign with no templates of its own. */
+  campaign_id: string | null
   created_at: string
 }
 
@@ -191,6 +194,8 @@ export interface OutreachProspectView {
   resolution_confidence: number | null
   business_types: string[]
   location: string | null
+  /** Free text carried in from a CSV import (role, fit). Shown, never sent. */
+  notes: string | null
   footprint: { award_count: number; sampled_total: number } | null
   /** All touches for this prospect, ordered by step (1 = initial). */
   drafts: OutreachDraftView[]

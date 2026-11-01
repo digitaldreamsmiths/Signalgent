@@ -17,6 +17,7 @@ import { fetchAllPagesResult } from './fetch-all'
 import { applyGreeting, fetchStoredContactNames, resolveContactName } from './contact-name'
 import { pickTemplateDraft } from './enrich-run'
 import { renderTemplate } from './template'
+import { pickWeighted, templatesForCampaign } from './template-pool'
 import { usesUsaspending } from './usaspending-preference'
 
 const AUTH_ERROR = 'You don’t have access to this workspace.'
@@ -540,27 +541,39 @@ export async function redraftTemplateSends(
   const supabase = await createClient()
   const settings = await loadSettings(supabase, companyId)
 
-  const { data: templates, error: templatesError } = await supabase
-    .from('outreach_templates')
-    .select('id, subject, body, weight, active, updated_at')
-    .eq('company_id', companyId)
-  if (templatesError) return { ok: false, error: 'Could not load the templates.' }
-  const templateById = new Map((templates ?? []).map((t) => [t.id, t]))
-  const activeTemplates = (templates ?? []).filter((t) => t.active)
+  // campaign_id arrives via an out-of-band migration; before it, read without
+  // the column and treat every template as shared (the old rotation).
+  type RedraftTemplate = { id: string; subject: string; body: string; weight: number; active: boolean; updated_at: string; campaign_id?: string | null }
+  let templates: RedraftTemplate[] | null = null
+  {
+    const scoped = await supabase
+      .from('outreach_templates')
+      .select('id, subject, body, weight, active, updated_at, campaign_id')
+      .eq('company_id', companyId)
+    if (!scoped.error) templates = (scoped.data ?? []) as RedraftTemplate[]
+    else {
+      const plain = await supabase
+        .from('outreach_templates')
+        .select('id, subject, body, weight, active, updated_at')
+        .eq('company_id', companyId)
+      if (plain.error) return { ok: false, error: 'Could not load the templates.' }
+      templates = (plain.data ?? []) as RedraftTemplate[]
+    }
+  }
+  const templateById = new Map(templates.map((t) => [t.id, t]))
+  const activeTemplates = templates.filter((t) => t.active)
   if (activeTemplates.length === 0) return { ok: false, error: 'Activate at least one template first.' }
   const isStale = (templateId: string | null, draftUpdatedAt: string) => {
     if (!templateId) return false
     const t = templateById.get(templateId)
     return !t || !t.active || t.updated_at > draftUpdatedAt
   }
-  // Weighted random across the active set — the same rotation pickTemplateDraft
-  // uses, without a templates read per draft.
-  const pickActive = () => {
-    const total = activeTemplates.reduce((s, t) => s + Math.max(1, t.weight), 0)
-    let r = Math.random() * total
-    for (const t of activeTemplates) { r -= Math.max(1, t.weight); if (r < 0) return t }
-    return activeTemplates[activeTemplates.length - 1]
-  }
+  // Weighted random across the active templates that apply to the prospect's
+  // campaign — the same rotation pickTemplateDraft uses, without a templates
+  // read per draft. Undefined when no user template applies (a campaign with
+  // none of its own and no shared ones): that draft is left alone rather than
+  // rewritten with another campaign's copy.
+  const pickActive = (campaignId: string | null | undefined) => pickWeighted(templatesForCampaign(activeTemplates, campaignId))
 
   // Part one: approved first-touch drafts that are NOT on the calendar yet.
   // These are what "Schedule unqueued" would send, so stale copy here is the
@@ -594,11 +607,11 @@ export async function redraftTemplateSends(
     }
     const targets = staleWaiting.filter((d) => !live.has(d.id))
     const targetProspectIds = [...new Set(targets.map((d) => d.prospect_id))]
-    const prospectRows: { id: string; email: string; recipient_name: string | null }[] = []
+    const prospectRows: { id: string; email: string; recipient_name: string | null; campaign_id: string | null }[] = []
     for (let i = 0; i < targetProspectIds.length; i += 200) {
       const { data, error } = await supabase
         .from('outreach_prospects')
-        .select('id, email, recipient_name')
+        .select('id, email, recipient_name, campaign_id')
         .eq('company_id', companyId)
         .in('id', targetProspectIds.slice(i, i + 200))
       if (error) return { ok: false, error: 'Could not load the prospects.' }
@@ -611,7 +624,8 @@ export async function redraftTemplateSends(
       const results = await Promise.all(targets.slice(i, i + 20).map(async (d) => {
         const prospect = prospectOf.get(d.prospect_id)
         if (!prospect) return false
-        const tmpl = pickActive()
+        const tmpl = pickActive(prospect.campaign_id)
+        if (!tmpl) return false
         const rendered = renderTemplate(tmpl, prospect.recipient_name ?? null)
         const { error } = await supabase
           .from('outreach_drafts')
@@ -660,11 +674,11 @@ export async function redraftTemplateSends(
   if (stale.length === 0) { revalidatePath('/outreach'); return { ok: true, data: { redrafted: 0, skipped: queued.rows.length, rewritten } } }
 
   const prospectIds = [...new Set(stale.map((s) => s.prospect_id))]
-  const prospects: { id: string; email: string; recipient_name: string | null; disposition: string }[] = []
+  const prospects: { id: string; email: string; recipient_name: string | null; disposition: string; campaign_id: string | null }[] = []
   for (let i = 0; i < prospectIds.length; i += 200) {
     const { data, error } = await supabase
       .from('outreach_prospects')
-      .select('id, email, recipient_name, disposition')
+      .select('id, email, recipient_name, disposition, campaign_id')
       .eq('company_id', companyId)
       .in('id', prospectIds.slice(i, i + 200))
     if (error) return { ok: false, error: 'Could not load the prospects.' }
@@ -682,7 +696,7 @@ export async function redraftTemplateSends(
     const prospect = prospectById.get(send.prospect_id)
     if (!prospect || prospect.disposition !== 'open' || !prospect.email) { skipped++; continue }
 
-    const picked = await pickTemplateDraft(supabase, companyId, prospect.recipient_name ?? null, prospect.id, profile, federal)
+    const picked = await pickTemplateDraft(supabase, companyId, prospect.recipient_name ?? null, prospect.id, profile, federal, prospect.campaign_id ?? null)
     const subject = picked.draft.subject
     const body = applyGreeting(picked.draft.body, resolveContactName(storedNames.get(prospect.id), prospect.email))
     const now = new Date().toISOString()

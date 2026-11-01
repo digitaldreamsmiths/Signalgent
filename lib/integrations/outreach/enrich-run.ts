@@ -19,6 +19,7 @@ import { loadOfferProfile, DEFAULT_OFFER_PROFILE, type OfferProfile } from './of
 import { enrichmentHeadroom } from '@/lib/billing/billing'
 import { applyGreeting, fetchStoredContactNames, resolveContactName } from './contact-name'
 import { buildTemplateDraft, renderTemplate } from './template'
+import { pickWeighted, templatesForCampaign } from './template-pool'
 import type { DraftResult } from './types'
 import type { LLMUsage } from '../../llm/client'
 import { loadSettings, getEffectiveDailyCap } from './send/worker'
@@ -60,9 +61,14 @@ export async function recordUsage(supabase: DB, companyId: string, userId: strin
 }
 
 /** Choose a fallback draft for a prospect we couldn't personalize: a weighted-
- * random pick among the company's ACTIVE user templates, or the built-in default
- * when none are defined. Returns the rendered draft plus the template_id to stamp
- * (null for the built-in) so per-template performance can be tracked. */
+ * random pick among the company's ACTIVE user templates that apply to the
+ * prospect's campaign (its own templates if it has any, else the shared ones),
+ * or the built-in default when none apply. Returns the rendered draft plus the
+ * template_id to stamp (null for the built-in) so per-template performance can
+ * be tracked.
+ *
+ * `campaignId` undefined = look the prospect up (callers that only hold an id);
+ * null = the campaign-less pool. */
 export async function pickTemplateDraft(
   supabase: DB,
   companyId: string,
@@ -70,27 +76,41 @@ export async function pickTemplateDraft(
   prospectId: string,
   profile: OfferProfile = DEFAULT_OFFER_PROFILE,
   federal = true,
+  campaignId?: string | null,
 ): Promise<{ draft: DraftResult; template_id: string | null }> {
-  const { data: templates } = await supabase
+  const active = await loadActiveTemplates(supabase, companyId)
+  let scope = campaignId
+  if (scope === undefined) {
+    const { data: p } = await supabase.from('outreach_prospects').select('campaign_id').eq('id', prospectId).eq('company_id', companyId).maybeSingle()
+    scope = p?.campaign_id ?? null
+  }
+  const chosen = pickWeighted(templatesForCampaign(active, scope))
+  // No applicable user templates: rotate the five built-in variants instead of
+  // sending one email to everybody. Keyed off the prospect id rather than
+  // randomly, so a later follow-up derives the same variant without a column
+  // to remember it.
+  if (!chosen) return { draft: buildTemplateDraft(recipientName, prospectId, profile, federal), template_id: null }
+  return { draft: renderTemplate(chosen, recipientName), template_id: chosen.id }
+}
+
+export interface ActiveTemplate { id: string; subject: string; body: string; weight: number; campaign_id?: string | null }
+
+/** The company's active templates with their campaign scope. `campaign_id`
+ * arrives via an out-of-band migration; before it, the read retries without
+ * the column and every template counts as shared, which is the old behavior. */
+export async function loadActiveTemplates(supabase: DB, companyId: string): Promise<ActiveTemplate[]> {
+  const { data, error } = await supabase
+    .from('outreach_templates')
+    .select('id, subject, body, weight, campaign_id')
+    .eq('company_id', companyId)
+    .eq('active', true)
+  if (!error) return (data ?? []) as ActiveTemplate[]
+  const { data: plain } = await supabase
     .from('outreach_templates')
     .select('id, subject, body, weight')
     .eq('company_id', companyId)
     .eq('active', true)
-  const active = templates ?? []
-  // No user templates: rotate the five built-in variants instead of sending one
-  // email to everybody. Keyed off the prospect id rather than randomly, so a
-  // later follow-up derives the same variant without a column to remember it.
-  if (active.length === 0) return { draft: buildTemplateDraft(recipientName, prospectId, profile, federal), template_id: null }
-
-  // Weighted random across the active set.
-  const total = active.reduce((s, t) => s + Math.max(1, t.weight), 0)
-  let r = Math.random() * total
-  let chosen = active[active.length - 1]
-  for (const t of active) {
-    r -= Math.max(1, t.weight)
-    if (r < 0) { chosen = t; break }
-  }
-  return { draft: renderTemplate(chosen, recipientName), template_id: chosen.id }
+  return (plain ?? []) as ActiveTemplate[]
 }
 
 /** Persist a pipeline outcome for a prospect (shared by run + manual resolve).
@@ -187,7 +207,7 @@ export async function backfillTemplateDrafts(supabase: DB, companyId: string): P
   const skipped = await fetchAllPages((from, to) =>
     supabase
       .from('outreach_prospects')
-      .select('id, recipient_name, email')
+      .select('id, recipient_name, email, campaign_id')
       .eq('company_id', companyId)
       .eq('status', 'skipped')
       .order('id')
@@ -209,7 +229,7 @@ export async function backfillTemplateDrafts(supabase: DB, companyId: string): P
   const storedNames = await fetchStoredContactNames(supabase, companyId, missing.map((p) => p.id))
   const rows = []
   for (const p of missing) {
-    const { draft: tmpl, template_id } = await pickTemplateDraft(supabase, companyId, p.recipient_name ?? null, p.id, profile, federal)
+    const { draft: tmpl, template_id } = await pickTemplateDraft(supabase, companyId, p.recipient_name ?? null, p.id, profile, federal, p.campaign_id ?? null)
     rows.push({
       prospect_id: p.id,
       company_id: companyId,

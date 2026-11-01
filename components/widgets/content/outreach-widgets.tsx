@@ -692,6 +692,9 @@ function DraftDetail({ prospect, companyId, senderEmail, onChanged }: { prospect
             {prospect.location && ` · ${prospect.location}`}
             {prospect.footprint && ` · ${prospect.footprint.award_count} awards / $${Math.round(prospect.footprint.sampled_total).toLocaleString('en-US')}`}
           </div>
+          {prospect.notes && (
+            <div style={{ fontSize: 11, color: MUTED, marginTop: 4, lineHeight: 1.5 }} title="From the imported file. Never sent.">{prospect.notes}</div>
+          )}
           <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 6, flexWrap: 'wrap' }}>
             <span style={{ fontSize: 11, color: MUTED }}>Contact:</span>
             <input

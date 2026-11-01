@@ -28,6 +28,8 @@ import { effectiveLimits, loadBilling, planDailySendCap } from '@/lib/billing/bi
 import { clickStats, openStats, recentBounceStats } from './send/scan'
 import { getAccountByIdentifier } from '../accounts'
 import { undeliverableDomains } from './deliverability'
+import { parseProspectCsv } from './ingest-csv'
+import type { Database } from '@/lib/types/database.types'
 import { fetchAllPages } from './fetch-all'
 import { suppressRecipient } from './send/suppression'
 import {
@@ -56,13 +58,21 @@ const AUTH_ERROR = 'You don’t have access to this workspace.'
 // ── Ingest ──────────────────────────────────────────────────────────────────
 
 const EMAIL_RE = /[^\s,;<>"']+@[^\s,;<>"']+\.[^\s,;<>"']+/g
+const ONE_EMAIL_RE = /^[^\s,;<>"']+@[^\s,;<>"']+\.[^\s,;<>"']+$/
+
+type ProspectInsert = Database['public']['Tables']['outreach_prospects']['Insert']
+
+/** Columns that arrive via out-of-band migrations. When the insert fails
+ * because one is missing, it is stripped and the insert retried, so adds are
+ * never blocked by a pending migration. */
+const OPTIONAL_COLUMNS = ['campaign_id', 'notes'] as const
 
 export async function ingestProspects(
   companyId: string,
   raw: string,
   /** Campaign the new prospects join. Omit/null = the campaign-less pool. */
   campaignId?: string | null,
-): Promise<ActionResult<{ added: number; duplicates: number; invalid: number; undeliverable: number }>> {
+): Promise<ActionResult<{ added: number; duplicates: number; invalid: number; undeliverable: number; named: number }>> {
   try {
     await requireCompanyAccess(companyId)
   } catch (err) {
@@ -70,24 +80,46 @@ export async function ingestProspects(
     throw err
   }
 
-  const matches = raw.match(EMAIL_RE) ?? []
+  // A CSV/TSV with an email header carries columns (organization, contact,
+  // city/state, role notes) that the regex path throws away. Anything else is
+  // scanned for addresses regardless of separators.
+  const parsed = parseProspectCsv(raw)
   const seen = new Set<string>()
-  const rows: { company_id: string; email: string; domain: string | null; status: 'new'; campaign_id?: string }[] = []
+  const rows: ProspectInsert[] = []
   let invalid = 0
-  for (const m of matches) {
-    const email = m.trim().toLowerCase()
-    if (seen.has(email)) continue
-    seen.add(email)
-    const domain = extractDomain(email)
-    if (!domain) {
-      invalid += 1
-      continue
+  let named = 0
+  const base = (email: string, domain: string): ProspectInsert =>
+    ({ company_id: companyId, email, domain, status: 'new', ...(campaignId ? { campaign_id: campaignId } : {}) })
+  if (parsed) {
+    for (const p of parsed) {
+      if (seen.has(p.email)) continue
+      seen.add(p.email)
+      const domain = ONE_EMAIL_RE.test(p.email) ? extractDomain(p.email) : null
+      if (!domain) { invalid += 1; continue }
+      const row = base(p.email, domain)
+      if (p.recipient_name) { row.recipient_name = p.recipient_name; named += 1 }
+      if (p.contact_name) row.contact_name = p.contact_name
+      if (p.location) row.location = p.location
+      if (p.notes) row.notes = p.notes
+      rows.push(row)
     }
-    rows.push({ company_id: companyId, email, domain, status: 'new', ...(campaignId ? { campaign_id: campaignId } : {}) })
+  } else {
+    const matches = raw.match(EMAIL_RE) ?? []
+    for (const m of matches) {
+      const email = m.trim().toLowerCase()
+      if (seen.has(email)) continue
+      seen.add(email)
+      const domain = extractDomain(email)
+      if (!domain) {
+        invalid += 1
+        continue
+      }
+      rows.push(base(email, domain))
+    }
   }
 
   if (rows.length === 0) {
-    return { ok: true, data: { added: 0, duplicates: 0, invalid, undeliverable: 0 } }
+    return { ok: true, data: { added: 0, duplicates: 0, invalid, undeliverable: 0, named: 0 } }
   }
 
   // Deliverability: drop domains that definitively can't receive mail (no MX and
@@ -97,7 +129,7 @@ export async function ingestProspects(
   const undeliverable = rows.length - sendable.length
 
   if (sendable.length === 0) {
-    return { ok: true, data: { added: 0, duplicates: 0, invalid, undeliverable } }
+    return { ok: true, data: { added: 0, duplicates: 0, invalid, undeliverable, named: 0 } }
   }
 
   const supabase = await createClient()
@@ -122,20 +154,23 @@ export async function ingestProspects(
     }
   }
 
-  // Insert, ignoring rows that already exist (unique company_id+email).
+  // Insert, ignoring rows that already exist (unique company_id+email), so a
+  // re-upload never overwrites names or notes that were edited in the app.
+  let batch: ProspectInsert[] = sendable
   let { data, error } = await supabase
     .from('outreach_prospects')
-    .upsert(sendable, { onConflict: 'company_id,email', ignoreDuplicates: true })
+    .upsert(batch, { onConflict: 'company_id,email', ignoreDuplicates: true })
     .select('id')
 
-  // campaign_id arrives via an out-of-band migration; until it's applied,
-  // retry the ingest without it rather than blocking adds entirely.
-  if (error && campaignId && /campaign_id/.test(error.message)) {
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const stripped = sendable.map(({ campaign_id, ...rest }) => rest)
+  // A column from a pending migration: strip it and retry rather than
+  // blocking adds entirely. Each column is stripped at most once.
+  for (const column of OPTIONAL_COLUMNS) {
+    if (!error || !new RegExp(column).test(error.message)) continue
+    if (!batch.some((r) => column in r)) continue
+    batch = batch.map((r) => { const { [column]: _dropped, ...rest } = r; void _dropped; return rest })
     ;({ data, error } = await supabase
       .from('outreach_prospects')
-      .upsert(stripped, { onConflict: 'company_id,email', ignoreDuplicates: true })
+      .upsert(batch, { onConflict: 'company_id,email', ignoreDuplicates: true })
       .select('id'))
   }
 
@@ -143,7 +178,7 @@ export async function ingestProspects(
 
   const added = data?.length ?? 0
   revalidatePath('/outreach')
-  return { ok: true, data: { added, duplicates: sendable.length - added, invalid, undeliverable } }
+  return { ok: true, data: { added, duplicates: sendable.length - added, invalid, undeliverable, named: added > 0 ? named : 0 } }
 }
 
 // ── Run the pipeline over new prospects ───────────────────────────────────────

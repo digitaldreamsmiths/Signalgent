@@ -460,6 +460,8 @@ export async function hydrateProspects(
       resolution_confidence: raw.resolution_confidence,
       business_types: raw.business_types ?? [],
       location: raw.location,
+      // notes arrives via an out-of-band migration; select('*') simply lacks it before then.
+      notes: raw.notes ?? null,
       footprint: fp && typeof fp.award_count === 'number'
         ? { award_count: fp.award_count, sampled_total: fp.sampled_total ?? 0 }
         : null,
